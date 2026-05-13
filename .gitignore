@@ -1,0 +1,38 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+env/
+venv/
+ENV/
+.env/
+.venv/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Pytest cache
+.pytest_cache/
+
+# IDE / editor folders
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Local application data
+headers_auth.json
+saved_playlists.json
+saved_playlists.json.backup
+
+# Logs
+*.log
+
+# Jupyter notebooks
+.ipynb_checkpoints/
