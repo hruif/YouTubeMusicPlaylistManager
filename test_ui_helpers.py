@@ -3,7 +3,8 @@
 Unit tests for UI helper logic that does not require a Tk root window.
 """
 
-from ui import PlaylistManagerUI, PlaylistURLWindow
+from playlist_url_window import PlaylistURLWindow
+from ui import PlaylistManagerUI
 
 
 class FakeBool:
@@ -26,8 +27,10 @@ def make_manager():
     manager.use_display_windows_var = FakeBool(False)
     manager.sidebar_playlist_vars = []
     manager.display_playlist_vars = []
+    manager.active_find_entry = None
     manager.current_display_view = 'empty'
     manager._active_combined_refresh = None
+    manager.youtube_player = None
     return manager
 
 
@@ -50,6 +53,46 @@ def test_extract_playlist_name_handles_rich_header_title():
     assert manager._extract_playlist_name(playlist) == 'Nested Playlist Title'
 
 
+def test_extract_playlist_name_uses_direct_and_renderer_titles():
+    manager = make_manager()
+
+    assert manager._extract_playlist_name({'title': 'Direct Title'}) == 'Direct Title'
+    assert manager._extract_playlist_name({
+        'header': {
+            'musicResponsiveHeaderRenderer': {
+                'title': {'runs': [{'text': 'Renderer Title'}]}
+            }
+        }
+    }) == 'Renderer Title'
+
+
+def test_extract_track_metadata_keeps_playback_markers_and_thumbnail():
+    manager = make_manager()
+
+    video_ids, tracks = manager._extract_track_metadata({
+        'tracks': [
+            {
+                'videoId': 'yt1',
+                'title': 'Audio Track',
+                'artists': [{'name': 'Artist'}],
+                'videoType': 'MUSIC_VIDEO_TYPE_ATV',
+                'isAvailable': True,
+                'thumbnails': [
+                    {'url': 'small.jpg', 'width': 60, 'height': 60},
+                    {'url': 'large.jpg', 'width': 120, 'height': 120}
+                ]
+            }
+        ]
+    })
+
+    assert video_ids == {'yt1'}
+    assert tracks[0]['videoType'] == 'MUSIC_VIDEO_TYPE_ATV'
+    assert tracks[0]['isAvailable'] is True
+    assert tracks[0]['thumbnailUrl'] == 'large.jpg'
+    assert tracks[0]['queueStatus'] == 'YTM only'
+    assert tracks[0]['queuePlayable'] is False
+
+
 def test_normalize_legacy_playlist_entry_without_youtube_client():
     manager = make_manager()
     entry = manager._normalize_playlist_entry(
@@ -64,6 +107,45 @@ def test_normalize_legacy_playlist_entry_without_youtube_client():
     assert entry['id'] == 'PL123'
     assert entry['videos'] == {'vid1', 'vid2'}
     assert [track['videoId'] for track in entry['tracks']] == ['vid1', 'vid2']
+
+
+def test_serialize_playlist_entry_normalizes_sets_and_track_ids():
+    manager = make_manager()
+
+    serialized = manager._serialize_playlist_entry(
+        'spotify:SP123',
+        {
+            'source': 'spotify',
+            'id': 'spotify:SP123',
+            'name': 'Saved Spotify',
+            'videos': {'track2', 'track1'},
+            'tracks': [
+                {
+                    'id': 'spotify:track:track1',
+                    'name': 'Ignored Name',
+                    'title': 'Track One',
+                    'artist': 'Artist One'
+                }
+            ]
+        }
+    )
+
+    assert serialized == {
+        'source': 'spotify',
+        'id': 'SP123',
+        'name': 'Saved Spotify',
+        'videos': ['track1', 'track2'],
+        'tracks': [
+            {
+                'id': 'track1',
+                'name': 'Ignored Name',
+                'title': 'Track One',
+                'artist': 'Artist One',
+                'source': 'spotify',
+                'trackId': 'track1'
+            }
+        ]
+    }
 
 
 def test_find_matching_tracks_uses_cached_data_only():
@@ -142,6 +224,7 @@ def test_collect_combined_tracks_merges_duplicates_across_playlists():
     assert alpha_entry['appearance_count'] == 2
     assert alpha_entry['sources'] == {'youtube', 'spotify'}
     assert alpha_entry['playlists'] == {'Morning', 'Evening'}
+    assert manager._entry_playlist_occurrence_labels(alpha_entry) == ['YouTube: Morning', 'Spotify: Evening']
 
 
 def test_collect_combined_tracks_can_keep_duplicate_appearances():
@@ -280,6 +363,339 @@ def test_find_duplicate_entries_includes_repeats_inside_one_playlist():
     assert duplicates[0]['title'] == 'Repeated Song'
     assert duplicates[0]['appearance_count'] == 2
     assert duplicates[0]['playlists'] == {'One'}
+    assert manager._entry_playlist_occurrence_labels(duplicates[0]) == ['YouTube: One (2)']
+    assert manager._entry_playlist_occurrence_summaries(duplicates[0]) == [
+        {
+            'label': 'YouTube: One',
+            'count': 2,
+            'track_ids': ['yt1', 'yt2'],
+            'urls': [
+                'https://music.youtube.com/watch?v=yt1',
+                'https://music.youtube.com/watch?v=yt2'
+            ]
+        }
+    ]
+
+
+def test_playlist_occurrence_format_truncates_long_display():
+    manager = make_manager()
+    entry = {
+        'appearances': [
+            {'source': 'youtube', 'playlist': 'A Very Long Playlist Name', 'track': {}},
+            {'source': 'spotify', 'playlist': 'Another Very Long Playlist Name', 'track': {}}
+        ]
+    }
+
+    formatted = manager._format_playlist_occurrences(entry, limit=30)
+
+    assert len(formatted) <= 30
+    assert formatted.endswith('...')
+
+
+def test_entry_play_url_prefers_youtube_music():
+    manager = make_manager()
+    entry = {
+        'appearances': [
+            {
+                'source': 'spotify',
+                'playlist': 'Spotify List',
+                'track': {'id': 'sp1', 'trackId': 'sp1'}
+            },
+            {
+                'source': 'youtube',
+                'playlist': 'YouTube List',
+                'track': {'id': 'yt1', 'videoId': 'yt1'}
+            }
+        ]
+    }
+
+    assert manager._entry_play_url(entry) == 'https://music.youtube.com/watch?v=yt1'
+
+
+def test_track_play_url_handles_spotify_uri():
+    manager = make_manager()
+
+    assert (
+        manager._track_play_url('spotify', {'id': 'spotify:track:abc123'})
+        == 'https://open.spotify.com/track/abc123'
+    )
+
+
+def test_youtube_queue_actions_are_hidden_without_opt_in(monkeypatch):
+    manager = make_manager()
+
+    monkeypatch.delenv(PlaylistManagerUI.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, raising=False)
+    assert not manager._show_youtube_queue_actions()
+
+    monkeypatch.setenv(PlaylistManagerUI.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, '1')
+    assert manager._show_youtube_queue_actions()
+
+
+def test_playlist_url_builds_source_links():
+    manager = make_manager()
+
+    assert manager._playlist_url('youtube', 'PL123') == 'https://music.youtube.com/playlist?list=PL123'
+    assert manager._playlist_url('spotify', 'SP123') == 'https://open.spotify.com/playlist/SP123'
+
+
+def test_cached_track_id_count_ignores_duplicate_ids():
+    manager = make_manager()
+
+    assert manager._cached_track_id_count([
+        {'id': 'one'},
+        {'trackId': 'one'},
+        {'videoId': 'two'},
+        {'title': 'No ID'}
+    ]) == 2
+
+
+def test_youtube_queue_tracks_from_entries_prefers_youtube_and_filters_spotify():
+    manager = make_manager()
+    entries = [
+        {
+            'title': 'Shared Song',
+            'artist': 'Shared Artist',
+            'playlists': {'Spotify List', 'YouTube List'},
+            'appearances': [
+                {
+                    'source': 'spotify',
+                    'playlist': 'Spotify List',
+                    'track': {'id': 'sp1', 'trackId': 'sp1', 'title': 'Shared Song'}
+                },
+                {
+                    'source': 'youtube',
+                    'playlist': 'YouTube List',
+                    'track': {
+                        'id': 'yt1',
+                        'videoId': 'yt1',
+                        'title': 'Shared Song',
+                        'videoType': 'MUSIC_VIDEO_TYPE_OMV',
+                        'thumbnailUrl': 'https://example.com/thumb.jpg'
+                    }
+                }
+            ]
+        },
+        {
+            'title': 'Spotify Only',
+            'artist': 'Spotify Artist',
+            'playlists': {'Spotify List'},
+            'appearances': [
+                {
+                    'source': 'spotify',
+                    'playlist': 'Spotify List',
+                    'track': {'id': 'sp2', 'trackId': 'sp2', 'title': 'Spotify Only'}
+                }
+            ]
+        }
+    ]
+
+    queue_tracks = manager._youtube_queue_tracks_from_entries(entries)
+
+    assert queue_tracks == [
+        {
+            'videoId': 'yt1',
+            'title': 'Shared Song',
+            'artist': 'Shared Artist',
+            'playlist': 'YouTube: YouTube List',
+            'sourceUrl': 'https://music.youtube.com/watch?v=yt1',
+            'thumbnailUrl': 'https://example.com/thumb.jpg',
+            'playbackStatus': 'Queue OK'
+        }
+    ]
+
+
+def test_youtube_queue_tracks_skip_youtube_music_only_tracks():
+    manager = make_manager()
+    entries = [
+        {
+            'title': 'Audio Track',
+            'artist': 'Artist',
+            'playlists': {'YouTube List'},
+            'appearances': [
+                {
+                    'source': 'youtube',
+                    'playlist': 'YouTube List',
+                    'track': {
+                        'id': 'yt1',
+                        'videoId': 'yt1',
+                        'title': 'Audio Track',
+                        'videoType': 'MUSIC_VIDEO_TYPE_ATV'
+                    }
+                }
+            ]
+        },
+        {
+            'title': 'Video Track',
+            'artist': 'Artist',
+            'playlists': {'YouTube List'},
+            'appearances': [
+                {
+                    'source': 'youtube',
+                    'playlist': 'YouTube List',
+                    'track': {
+                        'id': 'yt2',
+                        'videoId': 'yt2',
+                        'title': 'Video Track',
+                        'videoType': 'MUSIC_VIDEO_TYPE_OMV'
+                    }
+                }
+            ]
+        }
+    ]
+
+    assert manager._entry_queue_status(entries[0]) == 'YTM only'
+    assert [track['videoId'] for track in manager._youtube_queue_tracks_from_entries(entries)] == ['yt2']
+
+
+def test_youtube_queue_tracks_skip_persisted_unavailable_tracks():
+    manager = make_manager()
+    entries = [
+        {
+            'title': 'Unavailable Track',
+            'artist': 'Artist',
+            'appearances': [
+                {
+                    'source': 'youtube',
+                    'playlist': 'YouTube List',
+                    'track': {
+                        'id': 'yt1',
+                        'videoId': 'yt1',
+                        'title': 'Unavailable Track',
+                        'queueStatus': 'Unavailable',
+                        'queuePlayable': False
+                    }
+                }
+            ]
+        },
+        {
+            'title': 'Playable Track',
+            'artist': 'Artist',
+            'appearances': [
+                {
+                    'source': 'youtube',
+                    'playlist': 'YouTube List',
+                    'track': {
+                        'id': 'yt2',
+                        'videoId': 'yt2',
+                        'title': 'Playable Track',
+                        'queueStatus': 'Queue OK',
+                        'queuePlayable': True
+                    }
+                }
+            ]
+        }
+    ]
+
+    assert manager._entry_queue_status(entries[0]) == 'Unavailable'
+    assert [track['videoId'] for track in manager._youtube_queue_tracks_from_entries(entries)] == ['yt2']
+
+
+def test_youtube_queue_tracks_from_entries_deduplicates_video_ids():
+    manager = make_manager()
+    entries = [
+        {
+            'title': 'First',
+            'artist': 'Artist',
+            'appearances': [
+                {'source': 'youtube', 'playlist': 'One', 'track': {'id': 'yt1', 'videoId': 'yt1'}}
+            ]
+        },
+        {
+            'title': 'First Again',
+            'artist': 'Artist',
+            'appearances': [
+                {'source': 'youtube', 'playlist': 'Two', 'track': {'id': 'yt1', 'videoId': 'yt1'}}
+            ]
+        }
+    ]
+
+    assert len(manager._youtube_queue_tracks_from_entries(entries)) == 1
+
+
+def test_youtube_queue_tracks_from_playlist_only_supports_youtube():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'YouTube Playlist',
+            'videos': {'yt1'},
+            'tracks': [
+                {
+                    'id': 'yt1',
+                    'videoId': 'yt1',
+                    'title': 'YouTube Song',
+                    'artist': 'YouTube Artist',
+                    'source': 'youtube',
+                    'videoType': 'MUSIC_VIDEO_TYPE_OMV'
+                }
+            ]
+        },
+        'spotify:SP1': {
+            'source': 'spotify',
+            'id': 'SP1',
+            'name': 'Spotify Playlist',
+            'videos': {'sp1'},
+            'tracks': [
+                {
+                    'id': 'sp1',
+                    'trackId': 'sp1',
+                    'title': 'Spotify Song',
+                    'artist': 'Spotify Artist',
+                    'source': 'spotify'
+                }
+            ]
+        }
+    }
+
+    assert manager._youtube_queue_tracks_from_playlist('spotify:SP1') == []
+    assert manager._youtube_queue_tracks_from_playlist('youtube:PL1') == [
+        {
+            'videoId': 'yt1',
+            'title': 'YouTube Song',
+            'artist': 'YouTube Artist',
+            'playlist': 'YouTube: YouTube Playlist',
+            'sourceUrl': 'https://music.youtube.com/watch?v=yt1',
+            'thumbnailUrl': None,
+            'playbackStatus': 'Queue OK'
+        }
+    ]
+
+
+def test_player_unavailable_report_persists_queue_marker(monkeypatch):
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': {'yt1'},
+            'tracks': [
+                {
+                    'id': 'yt1',
+                    'videoId': 'yt1',
+                    'title': 'Unavailable Track',
+                    'artist': 'Artist',
+                    'source': 'youtube'
+                }
+            ]
+        }
+    }
+    saved = []
+    refreshed = []
+
+    monkeypatch.setattr(manager, 'save_playlists', lambda: saved.append(True))
+    monkeypatch.setattr(manager, '_refresh_live_combined_if_active', lambda: refreshed.append(True))
+
+    manager._apply_youtube_track_unavailable({'videoId': 'yt1', 'errorCode': 150})
+
+    track = manager.saved_playlists['youtube:PL1']['tracks'][0]
+    assert track['queueStatus'] == 'Unavailable'
+    assert track['queuePlayable'] is False
+    assert track['queueUnavailableReason'] == 'iframe error 150'
+    assert manager._youtube_queue_tracks_from_playlist('youtube:PL1') == []
+    assert saved == [True]
+    assert refreshed == [True]
 
 
 def test_find_duplicate_songs_allows_one_selected_playlist(monkeypatch):

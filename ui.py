@@ -1,9 +1,13 @@
 import json
+import os
 import re
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import ttk, messagebox
 from ytmusicapi import YTMusic
+from playlist_url_window import PlaylistURLWindow
+from youtube_player import YouTubeQueuePlayer
 
 try:
     from spotapi import PublicPlaylist
@@ -14,11 +18,27 @@ except ImportError:
 
 
 class PlaylistManagerUI:
+    """Main Tk shell that coordinates playlist data, displays, and playback actions."""
+
     PLAYLIST_FILE = Path(__file__).with_name("saved_playlists.json")
     ASSETS_DIR = Path(__file__).with_name("assets")
+    WEB_DIR = Path(__file__).with_name("web")
+    YOUTUBE_PLAYER_FILE = WEB_DIR / "youtube_queue_player.html"
+    YOUTUBE_PLAYER_LAUNCHER = Path(__file__).with_name("youtube_player_window.py")
+    YOUTUBE_PLAYER_HOST = "127.0.0.1"
+    YOUTUBE_QUEUE_CACHE_LIMIT = 20
+    YOUTUBE_QUEUE_ACTIONS_ENV_VAR = "PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS"
+    PLAYLIST_DISPLAY_LIMIT = 140
     SOURCE_LABELS = {
         'youtube': 'YouTube',
         'spotify': 'Spotify'
+    }
+    YOUTUBE_MUSIC_ONLY_TYPES = {
+        'MUSIC_VIDEO_TYPE_ATV'
+    }
+    YOUTUBE_QUEUE_PLAYABLE_STATUSES = {
+        "Queue OK",
+        "Unknown"
     }
     COMBINED_SORT_OPTIONS = {
         'Title (A-Z)': 'title',
@@ -31,8 +51,8 @@ class PlaylistManagerUI:
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Music Public Playlist Manager")
-        self.root.geometry("900x620")
-        self.root.minsize(860, 580)
+        self.root.geometry("1180x720")
+        self.root.minsize(1020, 640)
         
         # Initialize YTMusic (no authentication needed for public playlists)
         try:
@@ -61,9 +81,12 @@ class PlaylistManagerUI:
         self.source_logo_images = self._build_source_logo_images()
         self.sidebar_playlist_vars = []
         self.display_playlist_vars = []
+        self.active_find_entry = None
         self.current_display_view = 'empty'
+        self.youtube_player = self._build_youtube_player()
         self.style = ttk.Style()
         self.style.configure("SourceLogo.Treeview", rowheight=32)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         
         self.main_frame = ttk.Frame(root, padding="14")
         self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -84,8 +107,8 @@ class PlaylistManagerUI:
         self.search_entry = ttk.Entry(self.sidebar_frame)
         self.search_entry.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
         self.search_entry.bind("<Return>", lambda e: self.on_search())
-        self.root.bind_all("<Control-f>", self._focus_sidebar_search)
-        self.root.bind_all("<Command-f>", self._focus_sidebar_search)
+        self.root.bind_all("<Control-f>", self._focus_active_find_or_sidebar)
+        self.root.bind_all("<Command-f>", self._focus_active_find_or_sidebar)
 
         button_frame = ttk.Frame(self.sidebar_frame)
         button_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -139,6 +162,65 @@ class PlaylistManagerUI:
         self.display_frame.rowconfigure(1, weight=1)
         self.refresh_sidebar_playlists()
         self.show_empty_display()
+
+    def _on_close(self):
+        self.youtube_player.shutdown()
+        self.root.destroy()
+
+    def _build_youtube_player(self):
+        return YouTubeQueuePlayer(
+            player_file=self.YOUTUBE_PLAYER_FILE,
+            launcher_file=self.YOUTUBE_PLAYER_LAUNCHER,
+            host=self.YOUTUBE_PLAYER_HOST,
+            queue_cache_limit=self.YOUTUBE_QUEUE_CACHE_LIMIT,
+            unavailable_callback=self._mark_youtube_track_unavailable
+        )
+
+    def _mark_youtube_track_unavailable(self, payload):
+        payload = dict(payload or {})
+        root = getattr(self, 'root', None)
+        if root is not None:
+            try:
+                root.after(0, lambda: self._apply_youtube_track_unavailable(payload))
+                return
+            except (RuntimeError, tk.TclError):
+                pass
+
+        self._apply_youtube_track_unavailable(payload)
+
+    def _apply_youtube_track_unavailable(self, payload):
+        video_id = str(payload.get('videoId') or '').strip()
+        if not video_id:
+            return
+
+        error_code = payload.get('errorCode')
+        unavailable_reason = f"iframe error {error_code}" if error_code is not None else "iframe unavailable"
+        changed = False
+        for pl_data in self.saved_playlists.values():
+            if pl_data.get('source') != 'youtube':
+                continue
+
+            for track in pl_data.get('tracks', []):
+                if not isinstance(track, dict):
+                    continue
+                if self._track_youtube_video_id('youtube', track) != video_id:
+                    continue
+
+                if (
+                    track.get('queuePlayable') is False
+                    and track.get('queueStatus') == "Unavailable"
+                    and track.get('queueUnavailableReason') == unavailable_reason
+                ):
+                    continue
+
+                track['queuePlayable'] = False
+                track['queueStatus'] = "Unavailable"
+                track['queueUnavailableReason'] = unavailable_reason
+                changed = True
+
+        if changed:
+            self.save_playlists()
+            self._refresh_live_combined_if_active()
     
     def load_playlists(self):
         """Load saved playlists from file"""
@@ -292,6 +374,10 @@ class PlaylistManagerUI:
 
             normalized.setdefault('title', 'Unknown Title')
             normalized.setdefault('artist', 'Unknown Artist')
+            if source == 'youtube' and (
+                'queueStatus' not in normalized or 'queuePlayable' not in normalized
+            ):
+                normalized.update(self._youtube_queue_marker(source, normalized))
             normalized_tracks.append(normalized)
 
         return normalized_tracks
@@ -309,16 +395,18 @@ class PlaylistManagerUI:
             return self._fallback_youtube_tracks(video_ids)
 
     def _fallback_youtube_tracks(self, video_ids):
-        return [
-            {
+        tracks = []
+        for video_id in sorted(video_ids):
+            track = {
                 'id': video_id,
                 'videoId': video_id,
                 'title': f'Song ID: {video_id}',
                 'artist': 'Unknown Artist',
                 'source': 'youtube'
             }
-            for video_id in sorted(video_ids)
-        ]
+            track.update(self._youtube_queue_marker('youtube', track))
+            tracks.append(track)
+        return tracks
 
     def _build_playlist_entry(self, source, playlist_id, playlist_name, item_ids, tracks):
         return {
@@ -420,14 +508,21 @@ class PlaylistManagerUI:
 
             title = track.get('title', 'Unknown Title')
             artist = self._extract_youtube_artist(track.get('artists', []))
+            thumbnails = track.get('thumbnails') if isinstance(track.get('thumbnails'), list) else []
 
-            tracks_data.append({
+            metadata = {
                 'id': video_id,
                 'videoId': video_id,
                 'title': title,
                 'artist': artist,
-                'source': 'youtube'
-            })
+                'source': 'youtube',
+                'videoType': track.get('videoType'),
+                'isAvailable': track.get('isAvailable'),
+                'thumbnails': thumbnails,
+                'thumbnailUrl': self._best_thumbnail_url(thumbnails)
+            }
+            metadata.update(self._youtube_queue_marker('youtube', metadata))
+            tracks_data.append(metadata)
 
         return video_ids, tracks_data
 
@@ -438,6 +533,24 @@ class PlaylistManagerUI:
                 return first_artist.get('name') or 'Unknown Artist'
             return str(first_artist)
         return 'Unknown Artist'
+
+    def _best_thumbnail_url(self, thumbnails):
+        if not thumbnails:
+            return None
+
+        valid_thumbnails = [
+            thumbnail
+            for thumbnail in thumbnails
+            if isinstance(thumbnail, dict) and thumbnail.get('url')
+        ]
+        if not valid_thumbnails:
+            return None
+
+        best_thumbnail = max(
+            valid_thumbnails,
+            key=lambda thumbnail: (thumbnail.get('width') or 0) * (thumbnail.get('height') or 0)
+        )
+        return best_thumbnail.get('url')
 
     def _get_spotify_playlist_name(self, info, fallback_name):
         if not info:
@@ -653,7 +766,17 @@ class PlaylistManagerUI:
             pass
         return "break"
 
+    def _focus_active_find_or_sidebar(self, _event=None):
+        if self.active_find_entry is not None:
+            try:
+                if self.active_find_entry.winfo_exists():
+                    return self._focus_widget(self.active_find_entry)
+            except tk.TclError:
+                self.active_find_entry = None
+        return self._focus_sidebar_search()
+
     def _register_display_find_entry(self, parent, find_entry):
+        self.active_find_entry = find_entry
         top_level = parent.winfo_toplevel()
 
         def focus_find(_event=None):
@@ -677,11 +800,150 @@ class PlaylistManagerUI:
         haystack = self._normalize_search_text(" ".join(str(value or "") for value in values))
         return all(term in haystack for term in terms)
 
+    def _selected_tree_entry(self, tree, entry_by_item):
+        selected_items = tree.selection()
+        if not selected_items:
+            return None
+        return entry_by_item.get(selected_items[0])
+
+    def _show_selected_entry_details(self, tree, entry_by_item):
+        entry = self._selected_tree_entry(tree, entry_by_item)
+        if not entry:
+            messagebox.showinfo("No Selection", "Select a song first.")
+            return
+        self.show_song_details_window(entry)
+
+    def _play_selected_tree_entry(self, tree, entry_by_item):
+        entry = self._selected_tree_entry(tree, entry_by_item)
+        if not entry:
+            messagebox.showinfo("No Selection", "Select a song first.")
+            return
+        self._play_entry(entry)
+
+    def _create_info_window(self, title, geometry="760x560", minsize=(660, 420)):
+        info_window = tk.Toplevel(self.root)
+        info_window.title(title)
+        info_window.geometry(geometry)
+        info_window.minsize(*minsize)
+
+        outer_frame = ttk.Frame(info_window, padding="18")
+        outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        outer_frame.columnconfigure(0, weight=1)
+        outer_frame.rowconfigure(1, weight=1)
+
+        content_canvas = tk.Canvas(outer_frame, borderwidth=0, highlightthickness=0)
+        y_scrollbar = ttk.Scrollbar(outer_frame, orient=tk.VERTICAL, command=content_canvas.yview)
+        content_frame = ttk.Frame(content_canvas)
+        content_window = content_canvas.create_window((0, 0), window=content_frame, anchor=tk.NW)
+        content_canvas.configure(yscrollcommand=y_scrollbar.set)
+
+        def update_scroll_region(_event=None):
+            content_canvas.configure(scrollregion=content_canvas.bbox("all"))
+
+        def update_content_width(event):
+            content_canvas.itemconfigure(content_window, width=event.width)
+
+        content_frame.bind("<Configure>", update_scroll_region)
+        content_canvas.bind("<Configure>", update_content_width)
+        content_canvas.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        y_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+
+        info_window.columnconfigure(0, weight=1)
+        info_window.rowconfigure(0, weight=1)
+        return info_window, outer_frame, content_frame
+
+    def _add_info_header(self, parent, title, subtitle=None, actions=None):
+        header_frame = ttk.Frame(parent)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 14))
+        header_frame.columnconfigure(0, weight=1)
+
+        title_label = ttk.Label(header_frame, text=title, font=("Helvetica", 15, "bold"))
+        title_label.grid(row=0, column=0, sticky=tk.W)
+
+        if subtitle:
+            subtitle_label = ttk.Label(header_frame, text=subtitle)
+            subtitle_label.grid(row=1, column=0, sticky=tk.W, pady=(2, 0))
+
+        if actions:
+            action_frame = ttk.Frame(header_frame)
+            action_frame.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
+            for index, (label, command) in enumerate(actions):
+                button = ttk.Button(action_frame, text=label, command=command)
+                button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
+
+    def _add_info_section(self, parent, title, row):
+        title_label = ttk.Label(parent, text=title, font=("Helvetica", 12, "bold"))
+        title_label.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(14, 6))
+        separator = ttk.Separator(parent, orient=tk.HORIZONTAL)
+        separator.grid(row=row + 1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 6))
+        return row + 2
+
+    def _add_info_row(self, parent, row, label, value, action=None):
+        label_widget = ttk.Label(parent, text=f"{label}:", width=18, anchor=tk.E)
+        label_widget.grid(row=row, column=0, sticky=tk.NE, padx=(0, 14), pady=3)
+
+        value_frame = ttk.Frame(parent)
+        value_frame.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+        value_frame.columnconfigure(0, weight=1)
+
+        value_widget = ttk.Label(value_frame, text=str(value), wraplength=520, justify=tk.LEFT)
+        value_widget.grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        if action:
+            action_label, command = action
+            button = ttk.Button(value_frame, text=action_label, command=command)
+            button.grid(row=0, column=1, sticky=tk.E, padx=(10, 0))
+
+        return row + 1
+
+    def show_song_details_window(self, entry):
+        details_window, outer_frame, content_frame = self._create_info_window("Song Details")
+        content_frame.columnconfigure(1, weight=1)
+
+        self._add_info_header(
+            outer_frame,
+            entry.get('title', 'Unknown Title'),
+            entry.get('artist', 'Unknown Artist'),
+            actions=[
+                ("Play", lambda: self._play_entry(entry)),
+                ("Close", details_window.destroy)
+            ]
+        )
+
+        row = 0
+        row = self._add_info_section(content_frame, "General", row)
+        row = self._add_info_row(content_frame, row, "Title", entry.get('title', 'Unknown Title'))
+        row = self._add_info_row(content_frame, row, "Artist", entry.get('artist', 'Unknown Artist'))
+        row = self._add_info_row(
+            content_frame,
+            row,
+            "Sources",
+            ", ".join(sorted(self._source_name(source) for source in entry.get('sources', []))) or "Unknown"
+        )
+        row = self._add_info_row(content_frame, row, "Playback", self._entry_queue_status(entry))
+
+        row = self._add_info_section(content_frame, "Playlist Appearances", row)
+        summaries = self._entry_playlist_occurrence_summaries(entry)
+        if not summaries:
+            row = self._add_info_row(content_frame, row, "Playlists", "Unknown")
+
+        for summary in summaries:
+            count = summary.get('count') or 1
+            occurrence_text = "1 occurrence" if count == 1 else f"{count} occurrences"
+            track_ids = ", ".join(summary.get('track_ids') or [])
+            row = self._add_info_row(
+                content_frame,
+                row,
+                summary['label'],
+                f"{occurrence_text}; Track IDs: {track_ids or 'Unknown'}",
+                action=("Open", lambda link=summary['urls'][0]: webbrowser.open(link)) if summary.get('urls') else None
+            )
+
     def _clear_display_frame(self):
         for child in self.display_frame.winfo_children():
             child.destroy()
 
-    def _open_display_window(self, title, build_display, geometry="900x620"):
+    def _open_display_window(self, title, build_display, geometry="1080x680"):
         display_window = tk.Toplevel(self.root)
         display_window.title(title)
         display_window.geometry(geometry)
@@ -694,7 +956,7 @@ class PlaylistManagerUI:
         build_display(display_frame)
         return display_window
 
-    def _show_display(self, title, build_display, geometry="900x620"):
+    def _show_display(self, title, build_display, geometry="1080x680"):
         if self.use_display_windows_var.get():
             self._open_display_window(title, build_display, geometry=geometry)
             if self.current_display_view != 'playlist_selection':
@@ -729,6 +991,7 @@ class PlaylistManagerUI:
     def show_empty_display(self):
         self.current_display_view = 'empty'
         self._active_combined_refresh = None
+        self.active_find_entry = None
         self._clear_display_frame()
 
         empty_frame = ttk.Frame(self.display_frame)
@@ -837,6 +1100,406 @@ class PlaylistManagerUI:
     def _playlist_label(self, playlist_key, pl_data):
         return pl_data.get('name', f'Playlist {playlist_key}')
 
+    def _playlist_source_label(self, source, playlist_label):
+        return f"{self._source_name(source)}: {playlist_label}"
+
+    def _track_play_url(self, source, track):
+        track_id = track.get('id') or track.get('trackId') or track.get('videoId')
+        if source == 'youtube':
+            video_id = track.get('videoId') or track_id
+            if video_id:
+                return f"https://music.youtube.com/watch?v={video_id}"
+        if source == 'spotify':
+            spotify_id = track.get('trackId') or track_id
+            if spotify_id:
+                if str(spotify_id).startswith('spotify:track:'):
+                    spotify_id = str(spotify_id).rsplit(':', 1)[1]
+                return f"https://open.spotify.com/track/{spotify_id}"
+        return None
+
+    def _playlist_url(self, source, playlist_id):
+        if not playlist_id:
+            return None
+        if source == 'youtube':
+            return f"https://music.youtube.com/playlist?list={playlist_id}"
+        if source == 'spotify':
+            return f"https://open.spotify.com/playlist/{playlist_id}"
+        return None
+
+    def _track_youtube_video_id(self, source, track):
+        if source != 'youtube' or not isinstance(track, dict):
+            return None
+        video_id = track.get('videoId') or track.get('id')
+        return str(video_id) if video_id else None
+
+    def _computed_youtube_track_queue_status(self, source, track):
+        if source != 'youtube':
+            return "External"
+        if not isinstance(track, dict) or not self._track_youtube_video_id(source, track):
+            return "No video ID"
+        if track.get('isAvailable') is False:
+            return "Unavailable"
+
+        video_type = track.get('videoType') or track.get('musicVideoType')
+        if video_type in self.YOUTUBE_MUSIC_ONLY_TYPES:
+            return "YTM only"
+        if video_type:
+            return "Queue OK"
+        return "Unknown"
+
+    def _youtube_queue_marker(self, source, track):
+        status = self._computed_youtube_track_queue_status(source, track)
+        return {
+            'queueStatus': status,
+            'queuePlayable': status in self.YOUTUBE_QUEUE_PLAYABLE_STATUSES
+        }
+
+    def _youtube_track_queue_status(self, source, track):
+        if source != 'youtube':
+            return "External"
+        if not isinstance(track, dict) or not self._track_youtube_video_id(source, track):
+            return "No video ID"
+
+        stored_status = track.get('queueStatus')
+        if track.get('queuePlayable') is False:
+            return stored_status or "Unavailable"
+        if stored_status in {"Unavailable", "YTM only", "No video ID"}:
+            return stored_status
+
+        return self._computed_youtube_track_queue_status(source, track)
+
+    def _youtube_track_queue_playable(self, source, track):
+        return self._youtube_track_queue_status(source, track) in self.YOUTUBE_QUEUE_PLAYABLE_STATUSES
+
+    def _entry_queue_status(self, entry):
+        statuses = []
+        has_youtube = False
+        for appearance in entry.get('appearances', []):
+            source = appearance.get('source')
+            if source != 'youtube':
+                continue
+
+            has_youtube = True
+            status = self._youtube_track_queue_status(source, appearance.get('track', {}))
+            statuses.append(status)
+            if status == "Queue OK":
+                return "Queue OK"
+
+        if "Unknown" in statuses:
+            return "Unknown"
+        if "YTM only" in statuses:
+            return "YTM only"
+        if "Unavailable" in statuses:
+            return "Unavailable"
+        track = entry.get('track') if isinstance(entry.get('track'), dict) else None
+        if track:
+            return self._youtube_track_queue_status(track.get('source'), track)
+        return "External" if not has_youtube else "No video ID"
+
+    def _youtube_queue_track_from_entry(self, entry):
+        # Merged rows can contain both sources; only YouTube has queue playback without OAuth.
+        appearances = entry.get('appearances', [])
+        for appearance in appearances:
+            source = appearance.get('source')
+            track = appearance.get('track', {})
+            video_id = self._track_youtube_video_id(source, track)
+            if not video_id or not self._youtube_track_queue_playable(source, track):
+                continue
+
+            return {
+                'videoId': video_id,
+                'title': entry.get('title') or track.get('title') or 'Unknown Title',
+                'artist': entry.get('artist') or track.get('artist') or 'Unknown Artist',
+                'playlist': self._playlist_source_label(source, appearance.get('playlist', 'Unknown Playlist')),
+                'sourceUrl': self._track_play_url(source, track),
+                'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
+                'playbackStatus': self._youtube_track_queue_status(source, track)
+            }
+
+        track = entry.get('track', {})
+        source = track.get('source')
+        video_id = self._track_youtube_video_id(source, track)
+        if not video_id or not self._youtube_track_queue_playable(source, track):
+            return None
+
+        return {
+            'videoId': video_id,
+            'title': entry.get('title') or track.get('title') or 'Unknown Title',
+            'artist': entry.get('artist') or track.get('artist') or 'Unknown Artist',
+            'playlist': self._format_playlist_occurrences(entry, limit=None) or 'Unknown Playlist',
+            'sourceUrl': self._track_play_url(source, track),
+            'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
+            'playbackStatus': self._youtube_track_queue_status(source, track)
+        }
+
+    def _youtube_queue_tracks_from_entries(self, entries):
+        queue_tracks = []
+        seen_video_ids = set()
+        for entry in entries:
+            queue_track = self._youtube_queue_track_from_entry(entry)
+            if not queue_track:
+                continue
+
+            video_id = queue_track['videoId']
+            if video_id in seen_video_ids:
+                continue
+
+            queue_tracks.append(queue_track)
+            seen_video_ids.add(video_id)
+
+        return queue_tracks
+
+    def _youtube_queue_tracks_from_playlist(self, playlist_key):
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            return []
+
+        source, _playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        if source != 'youtube':
+            return []
+
+        playlist_name = pl_data.get('name', 'Unnamed Playlist')
+        queue_tracks = []
+        tracks = pl_data.get('tracks') or self._fallback_youtube_tracks(pl_data.get('videos', set()))
+        for track in tracks:
+            video_id = self._track_youtube_video_id(source, track)
+            if not video_id or not self._youtube_track_queue_playable(source, track):
+                continue
+
+            queue_tracks.append({
+                'videoId': video_id,
+                'title': track.get('title') or 'Unknown Title',
+                'artist': track.get('artist') or 'Unknown Artist',
+                'playlist': self._playlist_source_label(source, playlist_name),
+                'sourceUrl': self._track_play_url(source, track),
+                'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
+                'playbackStatus': self._youtube_track_queue_status(source, track)
+            })
+
+        return queue_tracks
+
+    def _open_youtube_queue_player(self, title, queue_tracks):
+        if not queue_tracks:
+            messagebox.showinfo(
+                "YouTube Queue",
+                "No YouTube tracks are available for this queue. Spotify queue playback requires Spotify OAuth, so Spotify is limited to external links for now."
+            )
+            return
+
+        try:
+            # The player module prefers a native pywebview window and falls back to a browser tab.
+            self.youtube_player.open_queue(title, queue_tracks)
+        except Exception as e:
+            messagebox.showerror("YouTube Player", f"Failed to start the YouTube player: {e}")
+
+    def _play_entries_as_youtube_queue(self, entries, title):
+        self._open_youtube_queue_player(title, self._youtube_queue_tracks_from_entries(entries))
+
+    def _show_youtube_queue_actions(self):
+        value = os.environ.get(self.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, "")
+        return value.lower() in {"1", "true", "yes", "on"}
+
+    def _play_playlist_youtube_queue(self, playlist_key):
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showinfo("No Selection", "Select a saved playlist first.")
+            return
+
+        source, _playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        if source != 'youtube':
+            messagebox.showinfo(
+                "Spotify Playback Restricted",
+                "Spotify queue playback requires Spotify OAuth, so Spotify playlists are limited to external links for now."
+            )
+            return
+
+        playlist_name = pl_data.get('name', 'Unnamed Playlist')
+        self._open_youtube_queue_player(
+            playlist_name,
+            self._youtube_queue_tracks_from_playlist(playlist_key)
+        )
+
+    def _open_playlist_url(self, playlist_key):
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showinfo("No Selection", "Select a saved playlist first.")
+            return
+
+        source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        url = self._playlist_url(source, playlist_id)
+        if not url:
+            messagebox.showinfo("No Playlist Link", "No playable source link is available for this playlist.")
+            return
+        webbrowser.open(url)
+
+    def _entry_play_url(self, entry):
+        appearances = entry.get('appearances', [])
+        for preferred_source in ('youtube', 'spotify'):
+            for appearance in appearances:
+                if appearance.get('source') == preferred_source:
+                    url = self._track_play_url(preferred_source, appearance.get('track', {}))
+                    if url:
+                        return url
+
+        for appearance in appearances:
+            url = self._track_play_url(appearance.get('source'), appearance.get('track', {}))
+            if url:
+                return url
+        for source in entry.get('sources', []):
+            url = self._track_play_url(source, entry.get('track', {}))
+            if url:
+                return url
+        return None
+
+    def _open_entry_play_url(self, entry):
+        url = self._entry_play_url(entry)
+        if not url:
+            messagebox.showinfo("No Playback Link", "No playable source link is available for this song.")
+            return
+        webbrowser.open(url)
+
+    def _play_entry(self, entry):
+        youtube_queue_tracks = self._youtube_queue_tracks_from_entries([entry])
+        if youtube_queue_tracks:
+            self._open_youtube_queue_player(entry.get('title', 'YouTube Queue'), youtube_queue_tracks)
+            return
+
+        self._open_entry_play_url(entry)
+
+    def _entry_playlist_occurrence_labels(self, entry):
+        labels = []
+        for summary in self._entry_playlist_occurrence_summaries(entry):
+            count = summary.get('count') or 1
+            suffix = f" ({count})" if count > 1 else ""
+            labels.append(f"{summary['label']}{suffix}")
+        return labels
+
+    def _entry_playlist_occurrence_summaries(self, entry):
+        summaries = []
+        grouped = {}
+
+        for appearance in entry.get('appearances', []):
+            source = appearance.get('source', 'youtube')
+            playlist = appearance.get('playlist', 'Unknown Playlist')
+            group_key = (source, playlist)
+            if group_key not in grouped:
+                grouped[group_key] = {
+                    'label': self._playlist_source_label(source, playlist),
+                    'count': 0,
+                    'track_ids': [],
+                    'urls': []
+                }
+                summaries.append(grouped[group_key])
+
+            summary = grouped[group_key]
+            summary['count'] += 1
+            track = appearance.get('track', {})
+            track_id = track.get('id') or track.get('trackId') or track.get('videoId')
+            if track_id and track_id not in summary['track_ids']:
+                summary['track_ids'].append(track_id)
+
+            url = self._track_play_url(source, track)
+            if url and url not in summary['urls']:
+                summary['urls'].append(url)
+
+        if summaries:
+            return summaries
+
+        return [
+            {
+                'label': playlist,
+                'count': 1,
+                'track_ids': [],
+                'urls': []
+            }
+            for playlist in sorted(entry.get('playlists', []))
+        ]
+
+    def _format_playlist_occurrences(self, entry, limit=None):
+        text = "; ".join(self._entry_playlist_occurrence_labels(entry))
+        if limit is None or len(text) <= limit:
+            return text
+        return text[:max(0, limit - 3)].rstrip() + "..."
+
+    def _cached_track_id_count(self, tracks):
+        return len({
+            track.get('id') or track.get('trackId') or track.get('videoId')
+            for track in tracks
+            if isinstance(track, dict) and (track.get('id') or track.get('trackId') or track.get('videoId'))
+        })
+
+    def _cached_queue_status_counts(self, source, tracks):
+        counts = {}
+        for track in tracks:
+            status = self._youtube_track_queue_status(source, track)
+            counts[status] = counts.get(status, 0) + 1
+        return counts
+
+    def show_playlist_details_window(self, playlist_key):
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showinfo("No Selection", "Select a saved playlist first.")
+            return
+
+        source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        source_name = self._source_name(source)
+        playlist_name = pl_data.get('name', 'Unnamed Playlist')
+        videos = pl_data.get('videos', set())
+        tracks = pl_data.get('tracks', [])
+        playlist_url = self._playlist_url(source, playlist_id)
+
+        details_window, outer_frame, content_frame = self._create_info_window("Playlist Info", geometry="720x500")
+        content_frame.columnconfigure(1, weight=1)
+
+        actions = []
+        if source == 'youtube' and tracks and self._show_youtube_queue_actions():
+            actions.append(("Play Queue", lambda: self._play_playlist_youtube_queue(playlist_key)))
+        if playlist_url:
+            actions.append(("Open", lambda: webbrowser.open(playlist_url)))
+        actions.append(("Close", details_window.destroy))
+        self._add_info_header(outer_frame, playlist_name, source_name, actions=actions)
+
+        row = 0
+        row = self._add_info_section(content_frame, "General", row)
+        row = self._add_info_row(content_frame, row, "Name", playlist_name)
+        row = self._add_info_row(content_frame, row, "Source", source_name)
+        row = self._add_info_row(content_frame, row, "Playlist ID", playlist_id)
+        row = self._add_info_row(content_frame, row, "Storage Key", playlist_key)
+        row = self._add_info_row(
+            content_frame,
+            row,
+            "Playlist Link",
+            playlist_url or "Unavailable",
+            action=("Open", lambda: webbrowser.open(playlist_url)) if playlist_url else None
+        )
+
+        row = self._add_info_section(content_frame, "Cached Data", row)
+        row = self._add_info_row(content_frame, row, "Saved Item IDs", len(videos))
+        row = self._add_info_row(content_frame, row, "Cached Tracks", len(tracks))
+        row = self._add_info_row(content_frame, row, "Unique Cached Tracks", self._cached_track_id_count(tracks))
+        row = self._add_info_row(content_frame, row, "Metadata Cached", "Yes" if tracks else "No")
+        if source == 'youtube' and tracks:
+            status_counts = self._cached_queue_status_counts(source, tracks)
+            row = self._add_info_row(content_frame, row, "Queue-Playable Tracks", status_counts.get("Queue OK", 0) + status_counts.get("Unknown", 0))
+            row = self._add_info_row(content_frame, row, "YTM-Only Tracks", status_counts.get("YTM only", 0))
+
+        if tracks:
+            first_track = tracks[0]
+            last_track = tracks[-1]
+            row = self._add_info_section(content_frame, "Track Snapshot", row)
+            row = self._add_info_row(
+                content_frame,
+                row,
+                "First Track",
+                f"{first_track.get('title', 'Unknown Title')} - {first_track.get('artist', 'Unknown Artist')}"
+            )
+            row = self._add_info_row(
+                content_frame,
+                row,
+                "Last Track",
+                f"{last_track.get('title', 'Unknown Title')} - {last_track.get('artist', 'Unknown Artist')}"
+            )
+
     def _combined_track_key(self, track):
         title = track.get('title', '')
         artist = track.get('artist', '')
@@ -875,10 +1538,21 @@ class PlaylistManagerUI:
                 if not merge_duplicates:
                     entry_key = f"{playlist_key}:{track_order}:{entry_key}"
 
+                # Keep each appearance so duplicate rows can show repeated playlist membership later.
+                appearance = {
+                    'playlist_key': playlist_key,
+                    'playlist': playlist_label,
+                    'source': source,
+                    'track': track,
+                    'playlist_order': playlist_order,
+                    'track_order': track_order
+                }
+
                 if merge_duplicates and entry_key in merged_entries:
                     entry = merged_entries[entry_key]
                     entry['playlists'].add(playlist_label)
                     entry['sources'].add(source)
+                    entry['appearances'].append(appearance)
                     entry['appearance_count'] += 1
                     continue
 
@@ -889,6 +1563,7 @@ class PlaylistManagerUI:
                     'artist': artist,
                     'playlists': {playlist_label},
                     'sources': {source},
+                    'appearances': [appearance],
                     'playlist_order': playlist_order,
                     'track_order': track_order,
                     'appearance_count': 1
@@ -977,9 +1652,11 @@ class PlaylistManagerUI:
             results_label.grid(row=0, column=0, sticky=tk.W)
 
             display_find_var = tk.StringVar()
-            find_label, find_entry = self._create_display_find_controls(header_frame, display_find_var)
-            find_label.grid(row=0, column=1, sticky=tk.E, padx=(12, 4))
-            find_entry.grid(row=0, column=2, sticky=tk.E)
+            find_frame = ttk.Frame(header_frame)
+            find_frame.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+            find_label, find_entry = self._create_display_find_controls(find_frame, display_find_var)
+            find_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+            find_entry.grid(row=0, column=1, sticky=tk.W)
 
             results_text = tk.Text(parent, height=18, width=90, state=tk.NORMAL)
             results_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -1059,9 +1736,37 @@ class PlaylistManagerUI:
         title.grid(row=0, column=0, sticky=tk.W)
 
         display_find_var = tk.StringVar()
-        find_label, find_entry = self._create_display_find_controls(header_frame, display_find_var)
-        find_label.grid(row=0, column=1, sticky=tk.E, padx=(12, 4))
-        find_entry.grid(row=0, column=2, sticky=tk.E)
+        find_frame = ttk.Frame(header_frame)
+        find_frame.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+        find_label, find_entry = self._create_display_find_controls(find_frame, display_find_var)
+        find_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+        find_entry.grid(row=0, column=1, sticky=tk.W)
+
+        playlist_by_item = {}
+
+        def selected_playlist_key():
+            selected_items = playlists_tree.selection()
+            if not selected_items:
+                messagebox.showinfo("No Selection", "Select a saved playlist first.")
+                return None
+            return playlist_by_item.get(selected_items[0])
+
+        def show_selected_playlist_details():
+            playlist_key = selected_playlist_key()
+            if playlist_key:
+                self.show_playlist_details_window(playlist_key)
+
+        details_button = ttk.Button(header_frame, text="Details", command=show_selected_playlist_details)
+        details_button.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=(8, 0))
+
+        if self._show_youtube_queue_actions():
+            def play_selected_playlist_queue():
+                playlist_key = selected_playlist_key()
+                if playlist_key:
+                    self._play_playlist_youtube_queue(playlist_key)
+
+            play_queue_button = ttk.Button(header_frame, text="Play YouTube Queue", command=play_selected_playlist_queue)
+            play_queue_button.grid(row=1, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
 
         table_frame = ttk.Frame(parent)
         table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -1093,11 +1798,11 @@ class PlaylistManagerUI:
         playlists_tree.heading('id', text='ID')
 
         playlists_tree.column('#0', width=38, minwidth=38, stretch=False, anchor=tk.CENTER)
-        playlists_tree.column('name', width=260, minwidth=160)
+        playlists_tree.column('name', width=260, minwidth=160, stretch=False)
         playlists_tree.column('source', width=120, minwidth=90, stretch=False)
         playlists_tree.column('songs', width=80, minwidth=70, stretch=False, anchor=tk.CENTER)
         playlists_tree.column('tracks', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
-        playlists_tree.column('id', width=260, minwidth=160)
+        playlists_tree.column('id', width=260, minwidth=160, stretch=False)
 
         playlist_rows = []
         for playlist_key, pl_data in self.saved_playlists.items():
@@ -1111,16 +1816,17 @@ class PlaylistManagerUI:
                 len(tracks),
                 pl_data.get('id', playlist_key)
             )
-            playlist_rows.append((source, row_values))
+            playlist_rows.append((playlist_key, source, row_values))
 
         def refresh_playlist_rows(*_):
+            playlist_by_item.clear()
             for item_id in playlists_tree.get_children():
                 playlists_tree.delete(item_id)
 
             visible_rows = [
                 row
                 for row in playlist_rows
-                if self._matches_find_query(row[1], display_find_var.get())
+                if self._matches_find_query(row[2], display_find_var.get())
             ]
 
             if not visible_rows:
@@ -1131,14 +1837,16 @@ class PlaylistManagerUI:
                 )
                 return
 
-            for source, row_values in visible_rows:
-                playlists_tree.insert(
+            for playlist_key, source, row_values in visible_rows:
+                item_id = playlists_tree.insert(
                     '',
                     tk.END,
                     image=self._source_logo_image(source),
                     values=row_values
                 )
+                playlist_by_item[item_id] = playlist_key
 
+        playlists_tree.bind("<Double-1>", lambda _event: show_selected_playlist_details())
         display_find_var.trace_add("write", refresh_playlist_rows)
         refresh_playlist_rows()
 
@@ -1214,7 +1922,7 @@ class PlaylistManagerUI:
 
             header_frame = ttk.Frame(parent)
             header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-            header_frame.columnconfigure(0, weight=1)
+            header_frame.columnconfigure(4, weight=1)
 
             title_text = "Combined Songs" if live else f"Combined Songs ({playlist_count} playlists)"
             title = ttk.Label(header_frame, text=title_text, font=("Helvetica", 15, "bold"))
@@ -1226,7 +1934,7 @@ class PlaylistManagerUI:
             results_playlist_keys = self._selected_sidebar_playlist_keys if live else playlist_keys
             self._build_combined_songs_results(results_frame, results_playlist_keys, live=live)
 
-        self._show_display("Combined Songs", build_combined_display, geometry="900x560")
+        self._show_display("Combined Songs", build_combined_display, geometry="1080x620")
 
     def _set_playlist_selection(self, playlist_vars, selected):
         for _, selected_var in playlist_vars:
@@ -1272,6 +1980,7 @@ class PlaylistManagerUI:
             widget.bind("<Button-4>", on_mousewheel)
             widget.bind("<Button-5>", on_mousewheel)
 
+        # Bind both the canvas and row widgets so scrolling works over the whole list area.
         checkbox_frame.bind("<Configure>", update_scroll_region)
         canvas.bind("<Configure>", update_checkbox_width)
         for widget in (list_frame, canvas, checkbox_frame):
@@ -1315,41 +2024,37 @@ class PlaylistManagerUI:
         return playlist_vars
 
     def _build_combined_songs_results(self, parent, playlist_keys, live=False):
-        parent.columnconfigure(5, weight=1)
+        parent.columnconfigure(0, weight=1)
         parent.rowconfigure(1, weight=1)
 
-        sort_label = ttk.Label(parent, text="Sort by:")
-        sort_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6), pady=(0, 10))
+        toolbar_frame = ttk.Frame(parent)
+        toolbar_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        toolbar_frame.columnconfigure(5, weight=1)
+
+        sort_label = ttk.Label(toolbar_frame, text="Sort by:")
+        sort_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6), pady=(0, 6))
 
         sort_var = tk.StringVar(value='Title (A-Z)')
         sort_combo = ttk.Combobox(
-            parent,
+            toolbar_frame,
             textvariable=sort_var,
             values=list(self.COMBINED_SORT_OPTIONS.keys()),
             state='readonly',
             width=24
         )
-        sort_combo.grid(row=0, column=1, sticky=tk.W, pady=(0, 10))
-
-        merge_duplicates_var = tk.BooleanVar(value=True)
-        merge_duplicates_check = ttk.Checkbutton(
-            parent,
-            text="Merge duplicate songs",
-            variable=merge_duplicates_var
-        )
-        merge_duplicates_check.grid(row=0, column=2, sticky=tk.W, padx=12, pady=(0, 10))
+        sort_combo.grid(row=0, column=1, sticky=tk.W, pady=(0, 6))
 
         display_find_var = tk.StringVar()
-        find_label, find_entry = self._create_display_find_controls(parent, display_find_var)
-        find_label.grid(row=0, column=3, sticky=tk.E, padx=(12, 4), pady=(0, 10))
-        find_entry.grid(row=0, column=4, sticky=tk.E, pady=(0, 10))
+        find_label, find_entry = self._create_display_find_controls(toolbar_frame, display_find_var)
+        find_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 6))
+        find_entry.grid(row=1, column=1, sticky=(tk.W, tk.E))
 
         count_var = tk.StringVar(value="")
-        count_label = ttk.Label(parent, textvariable=count_var)
-        count_label.grid(row=0, column=5, sticky=tk.E, pady=(0, 10))
+        count_label = ttk.Label(toolbar_frame, textvariable=count_var)
+        count_label.grid(row=0, column=5, sticky=tk.E, pady=(0, 6))
 
         table_frame = ttk.Frame(parent)
-        table_frame.grid(row=1, column=0, columnspan=6, sticky=(tk.W, tk.E, tk.N, tk.S))
+        table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         y_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL)
         y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1359,7 +2064,7 @@ class PlaylistManagerUI:
 
         songs_tree = ttk.Treeview(
             table_frame,
-            columns=('title', 'artist', 'playlists', 'count'),
+            columns=('title', 'artist', 'playback', 'playlists'),
             show='tree headings',
             style="SourceLogo.Treeview",
             yscrollcommand=y_scrollbar.set,
@@ -1373,21 +2078,45 @@ class PlaylistManagerUI:
         songs_tree.heading('#0', text='')
         songs_tree.heading('title', text='Title')
         songs_tree.heading('artist', text='Artist')
+        songs_tree.heading('playback', text='Playback')
         songs_tree.heading('playlists', text='Playlists')
-        songs_tree.heading('count', text='Count')
 
         songs_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
-        songs_tree.column('title', width=260, minwidth=160)
-        songs_tree.column('artist', width=190, minwidth=120)
-        songs_tree.column('playlists', width=360, minwidth=180)
-        songs_tree.column('count', width=70, minwidth=60, stretch=False, anchor=tk.CENTER)
+        songs_tree.column('title', width=260, minwidth=160, stretch=False)
+        songs_tree.column('artist', width=190, minwidth=120, stretch=False)
+        songs_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
+        songs_tree.column('playlists', width=560, minwidth=220, stretch=False)
+
+        entry_by_item = {}
+        visible_entries = []
+
+        # Button commands read this list so queued playback follows the current sort/find view.
+        details_button = ttk.Button(
+            toolbar_frame,
+            text="Details",
+            command=lambda: self._show_selected_entry_details(songs_tree, entry_by_item)
+        )
+        details_button.grid(row=1, column=2, sticky=tk.W, padx=(10, 4))
+
+        play_button = ttk.Button(
+            toolbar_frame,
+            text="Play",
+            command=lambda: self._play_selected_tree_entry(songs_tree, entry_by_item)
+        )
+        play_button.grid(row=1, column=3, sticky=tk.W, padx=4)
+
+        if self._show_youtube_queue_actions():
+            play_queue_button = ttk.Button(
+                toolbar_frame,
+                text="Play YouTube Queue",
+                command=lambda: self._play_entries_as_youtube_queue(visible_entries, "Combined Songs")
+            )
+            play_queue_button.grid(row=1, column=4, sticky=tk.W, padx=(4, 0))
 
         def refresh_results(*_):
+            nonlocal visible_entries
             selected_playlist_keys = playlist_keys() if callable(playlist_keys) else playlist_keys
-            entries = self._collect_combined_tracks(
-                selected_playlist_keys,
-                merge_duplicates=merge_duplicates_var.get()
-            )
+            entries = self._collect_combined_tracks(selected_playlist_keys, merge_duplicates=True)
             entries = self._sort_combined_tracks(entries, sort_var.get())
             filtered_entries = [
                 entry
@@ -1396,13 +2125,16 @@ class PlaylistManagerUI:
                     (
                         entry['title'],
                         entry['artist'],
-                        ', '.join(sorted(entry['playlists'])),
+                        self._entry_queue_status(entry),
+                        self._format_playlist_occurrences(entry, limit=None),
                         ', '.join(sorted(self._source_name(source) for source in entry['sources']))
                     ),
                     display_find_var.get()
                 )
             ]
+            visible_entries = filtered_entries
 
+            entry_by_item.clear()
             for item_id in songs_tree.get_children():
                 songs_tree.delete(item_id)
 
@@ -1417,14 +2149,14 @@ class PlaylistManagerUI:
                 )
             else:
                 for entry in filtered_entries:
-                    playlists = ', '.join(sorted(entry['playlists']))
-                    count = entry['appearance_count'] if entry['appearance_count'] > 1 else ''
-                    songs_tree.insert(
+                    playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
+                    item_id = songs_tree.insert(
                         '',
                         tk.END,
                         image=self._source_logo_for_sources(entry['sources']),
-                        values=(entry['title'], entry['artist'], playlists, count)
+                        values=(entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
                     )
+                    entry_by_item[item_id] = entry
 
             if display_find_var.get().strip() and len(filtered_entries) != len(entries):
                 count_var.set(f"{len(filtered_entries)} of {len(entries)} songs")
@@ -1432,7 +2164,7 @@ class PlaylistManagerUI:
                 count_var.set(f"{len(entries)} songs")
 
         sort_combo.bind("<<ComboboxSelected>>", refresh_results)
-        merge_duplicates_check.config(command=refresh_results)
+        songs_tree.bind("<Double-1>", lambda _event: self._show_selected_entry_details(songs_tree, entry_by_item))
         display_find_var.trace_add("write", refresh_results)
         if live:
             self._active_combined_refresh = refresh_results
@@ -1468,9 +2200,11 @@ class PlaylistManagerUI:
             title.grid(row=0, column=0, sticky=tk.W)
 
             display_find_var = tk.StringVar()
-            find_label, find_entry = self._create_display_find_controls(header_frame, display_find_var)
-            find_label.grid(row=0, column=1, sticky=tk.E, padx=(12, 4))
-            find_entry.grid(row=0, column=2, sticky=tk.E)
+            find_frame = ttk.Frame(header_frame)
+            find_frame.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+            find_label, find_entry = self._create_display_find_controls(find_frame, display_find_var)
+            find_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+            find_entry.grid(row=0, column=1, sticky=tk.W)
 
             table_frame = ttk.Frame(parent)
             table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -1483,7 +2217,7 @@ class PlaylistManagerUI:
 
             duplicates_tree = ttk.Treeview(
                 table_frame,
-                columns=('title', 'artist'),
+                columns=('title', 'artist', 'playback', 'playlists'),
                 show='tree headings',
                 style="SourceLogo.Treeview",
                 yscrollcommand=y_scrollbar.set,
@@ -1497,12 +2231,44 @@ class PlaylistManagerUI:
             duplicates_tree.heading('#0', text='')
             duplicates_tree.heading('title', text='Title')
             duplicates_tree.heading('artist', text='Artist')
+            duplicates_tree.heading('playback', text='Playback')
+            duplicates_tree.heading('playlists', text='Playlists')
 
             duplicates_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
-            duplicates_tree.column('title', width=360, minwidth=180)
-            duplicates_tree.column('artist', width=260, minwidth=140)
+            duplicates_tree.column('title', width=260, minwidth=160, stretch=False)
+            duplicates_tree.column('artist', width=190, minwidth=120, stretch=False)
+            duplicates_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
+            duplicates_tree.column('playlists', width=560, minwidth=220, stretch=False)
+
+            entry_by_item = {}
+            visible_entries = []
+
+            # Queue playback intentionally uses the filtered duplicate rows currently on screen.
+            details_button = ttk.Button(
+                header_frame,
+                text="Details",
+                command=lambda: self._show_selected_entry_details(duplicates_tree, entry_by_item)
+            )
+            details_button.grid(row=1, column=1, sticky=tk.W, padx=(10, 4), pady=(8, 0))
+
+            play_button = ttk.Button(
+                header_frame,
+                text="Play",
+                command=lambda: self._play_selected_tree_entry(duplicates_tree, entry_by_item)
+            )
+            play_button.grid(row=1, column=2, sticky=tk.W, padx=4, pady=(8, 0))
+
+            if self._show_youtube_queue_actions():
+                play_queue_button = ttk.Button(
+                    header_frame,
+                    text="Play YouTube Queue",
+                    command=lambda: self._play_entries_as_youtube_queue(visible_entries, "Selected Playlist Duplicates")
+                )
+                play_queue_button.grid(row=1, column=3, sticky=tk.W, padx=4, pady=(8, 0))
 
             def refresh_duplicate_rows(*_):
+                nonlocal visible_entries
+                entry_by_item.clear()
                 for item_id in duplicates_tree.get_children():
                     duplicates_tree.delete(item_id)
 
@@ -1513,7 +2279,8 @@ class PlaylistManagerUI:
                         (
                             entry['title'],
                             entry['artist'],
-                            ', '.join(sorted(entry['playlists'])),
+                            self._entry_queue_status(entry),
+                            self._format_playlist_occurrences(entry, limit=None),
                             ', '.join(sorted(self._source_name(source) for source in entry['sources']))
                         ),
                         display_find_var.get()
@@ -1534,22 +2301,25 @@ class PlaylistManagerUI:
                     duplicates_tree.insert(
                         '',
                         tk.END,
-                        values=(message, '')
+                        values=(message, '', '', '')
                     )
                     return
 
                 for entry in visible_entries:
-                    duplicates_tree.insert(
+                    playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
+                    item_id = duplicates_tree.insert(
                         '',
                         tk.END,
                         image=self._source_logo_for_sources(entry['sources']),
-                        values=(entry['title'], entry['artist'])
+                        values=(entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
                     )
+                    entry_by_item[item_id] = entry
 
+            duplicates_tree.bind("<Double-1>", lambda _event: self._show_selected_entry_details(duplicates_tree, entry_by_item))
             display_find_var.trace_add("write", refresh_duplicate_rows)
             refresh_duplicate_rows()
 
-        self._show_display("Selected Playlist Duplicates", build_duplicate_display, geometry="900x560")
+        self._show_display("Selected Playlist Duplicates", build_duplicate_display, geometry="1080x620")
     
     def find_duplicate_songs(self):
         """Find and display songs that appear multiple times in selected playlists"""
@@ -1673,126 +2443,3 @@ class PlaylistManagerUI:
         
         except Exception as e:
             messagebox.showerror("Error", f"Failed to update playlists: {e}")
-
-
-class PlaylistURLWindow:
-    def __init__(self, parent, ytmusic, saved_playlists, parent_ui, source='youtube'):
-        self.source = source
-        self.window = tk.Toplevel(parent)
-        self.window.title("Add Spotify Playlist URL" if self.source == 'spotify' else "Add YouTube Playlist URL")
-        self.window.geometry("500x220")
-        self.ytmusic = ytmusic
-        self.saved_playlists = saved_playlists
-        self.parent_ui = parent_ui
-        
-        # Main frame
-        main_frame = ttk.Frame(self.window, padding="20")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Title
-        title_text = "Paste Spotify Playlist URL" if self.source == 'spotify' else "Paste YouTube Playlist URL"
-        title = ttk.Label(main_frame, text=title_text, font=("Helvetica", 12, "bold"))
-        title.grid(row=0, column=0, columnspan=2, pady=10)
-        
-        # URL label
-        url_label = ttk.Label(main_frame, text="Playlist URL:")
-        url_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
-        
-        # URL entry
-        self.url_entry = ttk.Entry(main_frame, width=50)
-        self.url_entry.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
-        self.url_entry.bind("<Return>", lambda e: self.on_submit())
-        
-        # Submit button
-        submit_text = "Add Spotify Playlist" if self.source == 'spotify' else "Add YouTube Playlist"
-        submit_button = ttk.Button(main_frame, text=submit_text, command=self.on_submit)
-        submit_button.grid(row=3, column=0, columnspan=2, pady=10)
-        
-        # Configure grid weights
-        self.window.columnconfigure(0, weight=1)
-        self.window.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-    
-    def on_submit(self):
-        url = self.url_entry.get().strip()
-        if not url:
-            messagebox.showwarning("Input", "Please enter a playlist URL")
-            return
-
-        if self.source == 'youtube' and not self.ytmusic:
-            messagebox.showerror("Error", "YTMusic not initialized")
-            return
-
-        if self.source == 'spotify' and not self.parent_ui.spotapi_available:
-            messagebox.showerror(
-                "Error",
-                "Spotify support is not available. Install spotapi (pip install spotapi) to enable adding public Spotify playlists."
-            )
-            return
-
-        try:
-            playlist_id = self._extract_playlist_id(url)
-            if not playlist_id:
-                messagebox.showerror("Error", "Invalid playlist URL format")
-                return
-
-            if self.source == 'youtube':
-                playlist_entry = self.parent_ui._fetch_youtube_playlist_entry(playlist_id)
-            else:
-                playlist_entry = self.parent_ui._fetch_spotify_playlist_entry(playlist_id)
-
-            playlist_name = playlist_entry['name']
-            saved_count = len(playlist_entry['videos'])
-            store_key = self.parent_ui._playlist_storage_key(self.source, playlist_id)
-            self.saved_playlists[store_key] = playlist_entry
-            self.parent_ui.save_playlists()
-            self.parent_ui.refresh_playlist_selectors(
-                selected_keys=set(self.parent_ui.saved_playlists.keys())
-            )
-            self.parent_ui._refresh_live_combined_if_active()
-
-            messagebox.showinfo("Success", f"Added playlist: {playlist_name}\n({saved_count} songs)")
-            self.window.destroy()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to add playlist: {e}")
-    
-    def _extract_playlist_id(self, url):
-        if self.source == 'spotify':
-            return self._extract_spotify_playlist_id(url)
-        return self._extract_youtube_playlist_id(url)
-
-    def _extract_youtube_playlist_id(self, url):
-        """Extract playlist ID from YouTube Music URL"""
-        # Handle different URL formats
-        patterns = [
-            r'list=([a-zA-Z0-9_-]+)',  # ?list=ID
-            r'playlist/([a-zA-Z0-9_-]+)',  # /playlist/ID
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-
-        # If URL is just the ID
-        if len(url) > 20 and '/' not in url:
-            return url
-
-        return None
-
-    def _extract_spotify_playlist_id(self, url):
-        """Extract playlist ID from Spotify URL"""
-        patterns = [
-            r'playlist/([A-Za-z0-9]+)',
-            r'spotify:playlist:([A-Za-z0-9]+)',
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-
-        if len(url) == 22 and re.fullmatch(r'[A-Za-z0-9]+', url):
-            return url
-
-        return None
