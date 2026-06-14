@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Test playlist persistence functionality
+Test playlist persistence functionality.
 """
 
 import json
-import os
+import tempfile
+from pathlib import Path
 
-def test_playlist_persistence():
+
+def test_playlist_persistence(tmp_path):
     print("Testing playlist persistence...")
 
-    # Sample playlist data
     test_playlists = {
         'PL1': {
             'name': 'My Favorites',
@@ -21,71 +22,52 @@ def test_playlist_persistence():
         }
     }
 
-    test_file = 'test_playlists.json'
+    test_file = tmp_path / 'test_playlists.json'
 
-    try:
-        # Test saving
-        print("Testing save...")
-        with open(test_file, 'w', encoding='utf-8') as f:
-            json.dump(test_playlists, f, indent=2, ensure_ascii=False)
-        print("✓ Save successful")
+    print("Testing save...")
+    with test_file.open('w', encoding='utf-8') as f:
+        json.dump(test_playlists, f, indent=2, ensure_ascii=False)
+    print("✓ Save successful")
 
-        # Test loading
-        print("Testing load...")
-        with open(test_file, 'r', encoding='utf-8') as f:
-            loaded_data = json.load(f)
+    print("Testing load...")
+    with test_file.open('r', encoding='utf-8') as f:
+        loaded_data = json.load(f)
 
-        # Verify data integrity
-        if loaded_data == test_playlists:
-            print("✓ Load successful - data integrity verified")
-        else:
-            print("✗ Data integrity check failed")
-            print(f"Original: {test_playlists}")
-            print(f"Loaded: {loaded_data}")
+    assert loaded_data == test_playlists
+    print("✓ Load successful - data integrity verified")
 
-        # Test with video sets (our actual data structure)
-        print("Testing with sets...")
-        test_playlists_sets = {
-            'PL1': {
-                'name': 'My Favorites',
-                'videos': {'vid1', 'vid2', 'vid3'}  # set
-            }
+    print("Testing with sets...")
+    test_playlists_sets = {
+        'PL1': {
+            'name': 'My Favorites',
+            'videos': {'vid1', 'vid2', 'vid3'}
+        }
+    }
+
+    json_data = {}
+    for pl_id, pl_data in test_playlists_sets.items():
+        json_data[pl_id] = {
+            'name': pl_data['name'],
+            'videos': sorted(pl_data['videos'])
         }
 
-        # Convert sets to lists for JSON (since sets aren't JSON serializable)
-        json_data = {}
-        for pl_id, pl_data in test_playlists_sets.items():
-            json_data[pl_id] = {
-                'name': pl_data['name'],
-                'videos': list(pl_data['videos'])  # convert set to list
-            }
+    with test_file.open('w', encoding='utf-8') as f:
+        json.dump(json_data, f, indent=2, ensure_ascii=False)
 
-        with open(test_file, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, indent=2, ensure_ascii=False)
+    with test_file.open('r', encoding='utf-8') as f:
+        loaded_json = json.load(f)
 
-        # Load and convert back to sets
-        with open(test_file, 'r', encoding='utf-8') as f:
-            loaded_json = json.load(f)
+    reconstructed = {}
+    for pl_id, pl_data in loaded_json.items():
+        reconstructed[pl_id] = {
+            'name': pl_data['name'],
+            'videos': set(pl_data['videos'])
+        }
 
-        reconstructed = {}
-        for pl_id, pl_data in loaded_json.items():
-            reconstructed[pl_id] = {
-                'name': pl_data['name'],
-                'videos': set(pl_data['videos'])  # convert list back to set
-            }
+    assert reconstructed == test_playlists_sets
+    print("✓ Set conversion successful")
 
-        if reconstructed == test_playlists_sets:
-            print("✓ Set conversion successful")
-        else:
-            print("✗ Set conversion failed")
-
-    except Exception as e:
-        print(f"✗ Error: {e}")
-    finally:
-        # Clean up
-        if os.path.exists(test_file):
-            os.remove(test_file)
-            print("✓ Cleanup completed")
 
 if __name__ == "__main__":
-    test_playlist_persistence()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_playlist_persistence(Path(temp_dir))

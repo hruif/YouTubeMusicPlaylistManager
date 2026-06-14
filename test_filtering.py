@@ -49,6 +49,14 @@ def test_playlist_filtering():
         artist = song.get('artists', [{}])[0].get('name', 'Unknown')
         print(f"{i}. {title} by {artist} - Found in: {', '.join(playlists)}")
 
+    assert len(filtered_results) == 3
+    assert filtered_results[0][0]['videoId'] == 'vid1'
+    assert filtered_results[0][1] == ['My Favorites']
+    assert filtered_results[1][0]['videoId'] == 'vid2'
+    assert filtered_results[1][1] == ['My Favorites', 'Chill Music']
+    assert filtered_results[2][0]['videoId'] == 'vid4'
+    assert filtered_results[2][1] == ['Chill Music']
+
     print("✓ Playlist filtering logic works correctly")
 
 if __name__ == "__main__":

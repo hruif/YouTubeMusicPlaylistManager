@@ -18,10 +18,10 @@ def test_ytmusic():
         else:
             print("⚠ Search returned no results")
 
-        return True
+        assert isinstance(results, list)
     except Exception as e:
         print(f"✗ Error: {e}")
-        return False
+        raise
 
 def test_playlist_parsing():
     print("Testing playlist URL parsing...")
@@ -54,7 +54,11 @@ def test_playlist_parsing():
 if __name__ == "__main__":
     print("=== YouTube Music Public Playlist Manager Test ===\n")
 
-    success = test_ytmusic()
+    try:
+        test_ytmusic()
+        success = True
+    except Exception:
+        success = False
     print()
     test_playlist_parsing()
 

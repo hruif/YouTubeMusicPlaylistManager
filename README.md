@@ -6,10 +6,11 @@ Only basic functionality currently. Searching for songs reveals which playlists 
 
 ## Features
 
-- **Add Public Playlists**: Import any public YouTube Music playlist by URL
+- **Add YouTube Playlists**: Import any public YouTube Music playlist by URL
+- **Add Spotify Playlists**: Import public Spotify playlists by URL using SpotAPI
 - **Persistent Storage**: Playlists are automatically saved and loaded between sessions
 - **Smart Search**: Search for songs and see which of your playlists contain them
-- **No Authentication**: Works with public playlists only (no login required)
+- **Source Icons**: Spotify and YouTube playlists are shown with different icons for easy differentiation
 
 ## Usage
 
@@ -19,9 +20,9 @@ Only basic functionality currently. Searching for songs reveals which playlists 
    ```
 
 2. **Add playlists**:
-   - Click "Add Public Playlist URL"
-   - Paste a YouTube Music playlist URL
-   - The playlist name and songs are automatically saved
+   - Click "Add YouTube Playlist URL" to add a public YouTube Music playlist
+   - Click "Add Spotify Playlist URL" to add a public Spotify playlist using SpotAPI
+   - Paste the playlist URL and the playlist name and songs are automatically saved
 
 3. **Search songs**:
    - Type a song name in the search bar
@@ -37,18 +38,32 @@ Only basic functionality currently. Searching for songs reveals which playlists 
 Playlists are stored in `saved_playlists.json` in the following format:
 ```json
 {
-  "PLAYLIST_ID": {
+  "youtube:PLAYLIST_ID": {
+    "source": "youtube",
+    "id": "PLAYLIST_ID",
     "name": "Playlist Name",
-    "videos": ["videoId1", "videoId2", ...]
+    "videos": ["videoId1", "videoId2"],
+    "tracks": [
+      {
+        "id": "videoId1",
+        "videoId": "videoId1",
+        "title": "Song Title",
+        "artist": "Artist Name",
+        "source": "youtube"
+      }
+    ]
   }
 }
 ```
+
+Spotify playlists use the same shape with a `spotify:PLAYLIST_ID` key and `trackId` values.
 
 ## Requirements
 
 - Python 3.10+
 - ytmusicapi
 - tkinter (built-in with Python)
+- spotapi (optional, for public Spotify playlist support)
 
 ## Installation
 
@@ -56,3 +71,19 @@ Playlists are stored in `saved_playlists.json` in the following format:
 pip install ytmusicapi
 python main.py
 ```
+
+## Optional Spotify support
+
+To use Spotify playlist import, install `spotapi`:
+
+```bash
+pip install spotapi
+```
+
+Then run:
+
+```bash
+python main.py
+```
+
+> Note: `spotapi` fetches public Spotify playlist information without requiring Spotify Web API credentials. Review the library's licensing and usage terms before using it.
