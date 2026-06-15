@@ -15,7 +15,6 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 - **Display Pane**: Use the right side to show search results, saved playlists, duplicate results, settings, or a combined song table
 - **Playlist Info**: Double-click saved playlists to inspect source, IDs, cache stats, and playlist links
 - **Live Combined Song View**: Select playlists in the sidebar and browse their combined songs in a sortable table
-- **Temporary YouTube Music Queues**: Create a private temporary YouTube Music playlist from selected YouTube playlists and open it on the official site
 - **Selected Duplicate Finder**: Find songs that appear more than once in the selected playlist set, including repeats inside a single playlist
 - **Song Details and Playback Links**: Open full playlist-occurrence details and launch YouTube Music or Spotify links for playable tracks
 - **Display Find**: Press Ctrl+F to search within the active display
@@ -67,7 +66,12 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Select playlists in the sidebar, or the right-side playlist display when display window mode is enabled
    - Click "Update Selected Playlists" to refresh only those playlists
 
-8. **Play selected YouTube playlists in YouTube Music**:
+8. **Play selected YouTube playlists in YouTube Music** (experimental, hidden by default):
+   - Known limitation: this does not reliably play music. The app can create a private
+     temporary playlist and open it, but most YouTube Music tracks will not actually stream
+     from the resulting queue because there is no official YouTube Music streaming API. The
+     "Play in YouTube Music" button is therefore hidden unless you launch the app with
+     `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1` (see Installation), and is intended for debugging.
    - Open Settings and connect YouTube Music once
    - In Google Cloud, create an OAuth Client ID with application type "TVs and Limited Input devices"
    - Desktop OAuth clients do not work with ytmusicapi's device sign-in flow
@@ -138,7 +142,7 @@ Install `pywebview` with the same Python interpreter that runs the app if you wa
 python -m pip install pywebview
 ```
 
-The experimental bulk YouTube queue buttons are hidden by default because most YouTube Music tracks cannot play through the official embed player. To test them manually, run the app with:
+The experimental YouTube queue actions — including the "Play in YouTube Music" button and the bulk queue buttons — are hidden by default because most YouTube Music tracks cannot play through the official embed player or temporary-queue workaround. They are debug-only. To show them manually, run the app with:
 
 ```bash
 PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1 python main.py

@@ -152,8 +152,13 @@ class PlaylistManagerUI:
         combined_songs_button = ttk.Button(button_frame, text="View Combined Songs", command=self.open_combined_songs_selector)
         combined_songs_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
-        play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+        # "Play in YouTube Music" creates a private temporary playlist via OAuth, but most
+        # YouTube Music tracks will not actually play through the resulting queue (no official
+        # streaming API). It is hidden alongside the other experimental queue actions and only
+        # appears when PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS is set, for debugging.
+        if self._show_youtube_queue_actions():
+            play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
+            play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
         settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
