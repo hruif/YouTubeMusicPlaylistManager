@@ -1,10 +1,11 @@
 import json
+import re
 import time
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ytmusicapi import YTMusic
+from ytmusicapi import YTMusic, setup as setup_browser_auth
 from ytmusicapi.auth.oauth import OAuthCredentials
 from ytmusicapi.auth.oauth.token import RefreshingToken
 
@@ -43,6 +44,22 @@ class TemporaryPlaylistRecord:
 class YouTubeMusicAccount:
     """Owns YouTube Music OAuth files and temporary playlist bookkeeping."""
 
+    BROWSER_AUTH_HEADER_ALLOWLIST = {
+        "accept",
+        "accept-language",
+        "authorization",
+        "content-type",
+        "cookie",
+        "origin",
+        "user-agent",
+        "x-client-data",
+        "x-goog-authuser",
+        "x-goog-visitor-id",
+        "x-origin",
+        "x-youtube-bootstrap-logged-in",
+        "x-youtube-client-name",
+        "x-youtube-client-version",
+    }
     REQUIRED_TOKEN_FIELDS = (
         "access_token",
         "refresh_token",
@@ -56,18 +73,22 @@ class YouTubeMusicAccount:
         self,
         client_file=None,
         token_file=None,
+        browser_auth_file=None,
         temporary_playlists_file=None,
         ytmusic_cls=YTMusic,
         credentials_cls=OAuthCredentials,
+        browser_setup_func=setup_browser_auth,
         opener=webbrowser.open,
     ):
         self.client_file = Path(client_file or private_user_data_path("ytmusic_oauth_client.json"))
         self.token_file = Path(token_file or private_user_data_path("ytmusic_oauth_token.json"))
+        self.browser_auth_file = Path(browser_auth_file or private_user_data_path("ytmusic_browser_auth.json"))
         self.temporary_playlists_file = Path(
             temporary_playlists_file or private_user_data_path("temporary_youtube_playlists.json")
         )
         self.ytmusic_cls = ytmusic_cls
         self.credentials_cls = credentials_cls
+        self.browser_setup_func = browser_setup_func
         self.opener = opener
 
     def load_client_credentials(self):
@@ -128,6 +149,136 @@ class YouTubeMusicAccount:
 
     def is_ready(self):
         return self.has_client_credentials() and self.has_token()
+
+    def load_browser_auth_data(self):
+        try:
+            with self.browser_auth_file.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        data = self._sanitize_browser_auth_data(data)
+        normalized_keys = {str(key).lower() for key in data}
+        if not {"cookie", "x-goog-authuser"}.issubset(normalized_keys):
+            return None
+        return data
+
+    def has_browser_auth(self):
+        return self.load_browser_auth_data() is not None
+
+    def store_browser_auth_headers(self, headers_raw):
+        headers_raw = str(headers_raw or "").strip()
+        if not headers_raw:
+            raise ValueError("Paste request headers copied from a logged-in music.youtube.com request.")
+
+        headers_raw = self._normalize_browser_auth_input(headers_raw)
+        self.browser_auth_file.parent.mkdir(parents=True, exist_ok=True)
+        self.browser_setup_func(filepath=str(self.browser_auth_file), headers_raw=headers_raw)
+        self.repair_browser_auth_file()
+        if not self.has_browser_auth():
+            raise RuntimeError(f"The YouTube Music browser headers could not be saved at {self.browser_auth_file}.")
+        return self.browser_auth_file
+
+    def repair_browser_auth_file(self):
+        try:
+            with self.browser_auth_file.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        sanitized = self._sanitize_browser_auth_data(data)
+        if sanitized != data:
+            with self.browser_auth_file.open("w", encoding="utf-8") as file:
+                json.dump(sanitized, file, ensure_ascii=True, indent=4, sort_keys=True)
+        return sanitized
+
+    def _sanitize_browser_auth_data(self, data):
+        sanitized = {}
+        for key, value in (data or {}).items():
+            normalized_key = str(key).lower().strip()
+            if normalized_key not in self.BROWSER_AUTH_HEADER_ALLOWLIST:
+                continue
+            if value in (None, ""):
+                continue
+            sanitized[normalized_key] = str(value)
+        return sanitized
+
+    def _normalize_browser_auth_input(self, headers_raw):
+        headers = self._extract_headers_from_json_or_fetch(headers_raw)
+        if not headers:
+            return headers_raw
+
+        return "\n".join(
+            f"{key}: {value}"
+            for key, value in headers.items()
+            if value not in (None, "")
+        )
+
+    def _extract_headers_from_json_or_fetch(self, text):
+        object_text = self._extract_headers_object_text(text)
+        if object_text is None and text.lstrip().startswith("{"):
+            object_text = text.strip()
+        if object_text is None:
+            return None
+
+        try:
+            headers = json.loads(self._remove_json_trailing_commas(object_text))
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(headers, dict):
+            return None
+        return {str(key): str(value) for key, value in headers.items()}
+
+    def _extract_headers_object_text(self, text):
+        match = re.search(r'["\']?headers["\']?\s*:\s*\{', text)
+        if not match:
+            return None
+
+        opening_brace = text.find("{", match.start())
+        if opening_brace < 0:
+            return None
+
+        depth = 0
+        quote = None
+        escaped = False
+        for index in range(opening_brace, len(text)):
+            char = text[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+                continue
+            if char in {"'", '"'}:
+                quote = char
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[opening_brace:index + 1]
+        return None
+
+    def _remove_json_trailing_commas(self, text):
+        return re.sub(r",(\s*[}\]])", r"\1", text)
+
+    def build_browser_authenticated_client(self):
+        if not self.repair_browser_auth_file() or not self.has_browser_auth():
+            raise RuntimeError("YouTube Music browser headers have not been saved yet.")
+
+        return self.ytmusic_cls(auth=str(self.browser_auth_file))
 
     def build_oauth_credentials(self):
         credentials = self.load_client_credentials()
@@ -194,6 +345,10 @@ class YouTubeMusicAccount:
         for path in [self.token_file, self.client_file if forget_client else None]:
             if path and path.exists():
                 path.unlink()
+
+    def disconnect_browser_auth(self):
+        if self.browser_auth_file.exists():
+            self.browser_auth_file.unlink()
 
     def playlist_url(self, playlist_id):
         return f"https://music.youtube.com/playlist?list={playlist_id}"

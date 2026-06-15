@@ -67,15 +67,14 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Click "Update Selected Playlists" to refresh only those playlists
 
 8. **Play selected YouTube playlists in YouTube Music** (experimental, hidden by default):
-   - Known limitation: this does not reliably play music. The app can create a private
-     temporary playlist and open it, but most YouTube Music tracks will not actually stream
-     from the resulting queue because there is no official YouTube Music streaming API. The
-     "Play in YouTube Music" button is therefore hidden unless you launch the app with
-     `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1` (see Installation), and is intended for debugging.
-   - Open Settings and connect YouTube Music once
-   - In Google Cloud, create an OAuth Client ID with application type "TVs and Limited Input devices"
-   - Desktop OAuth clients do not work with ytmusicapi's device sign-in flow
-   - If your OAuth app is External and in Testing mode, add your Google account under Google Auth Platform > Audience > Test users
+   - Known limitation: this queue workaround is fragile. The local embedded player cannot
+     reliably stream YouTube Music tracks, so the app instead tries to create a private
+     temporary playlist and open it on the official YouTube Music site. The "Play in YouTube Music"
+     button is hidden unless you launch the app with `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1`
+     (see Installation), and is intended for debugging.
+   - In the debug app, click "Queue Headers" in the sidebar, or open Settings and choose "Set Queue Headers"
+   - Open music.youtube.com while signed in, copy a logged-in POST `/browse` request in browser developer tools, and paste it into the app. In Chrome, "Copy as fetch (Node.js)" can be pasted directly.
+   - Use "Test Saved Headers" before trying to create a queue
    - Select one or more YouTube Music playlists
    - Click "Play in YouTube Music"
    - The app creates a private temporary playlist, opens it on music.youtube.com, and remembers it for cleanup
@@ -91,10 +90,11 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 
 When running from source, playlists are stored in `saved_playlists.json` next to the code. In the packaged macOS app, playlists are stored in `~/Library/Application Support/YouTube Music Playlist Manager/saved_playlists.json`.
 
-YouTube Music OAuth files and temporary playlist cleanup records are stored in the operating system's application-support folder, not in the repository:
+YouTube Music auth files and temporary playlist cleanup records are stored in the operating system's application-support folder, not in the repository:
 
 - `ytmusic_oauth_client.json`
 - `ytmusic_oauth_token.json`
+- `ytmusic_browser_auth.json`
 - `temporary_youtube_playlists.json`
 
 The playlist file uses the following format:
@@ -142,7 +142,7 @@ Install `pywebview` with the same Python interpreter that runs the app if you wa
 python -m pip install pywebview
 ```
 
-The experimental YouTube queue actions — including the "Play in YouTube Music" button and the bulk queue buttons — are hidden by default because most YouTube Music tracks cannot play through the official embed player or temporary-queue workaround. They are debug-only. To show them manually, run the app with:
+The experimental YouTube queue actions — including the "Play in YouTube Music" button and the bulk queue buttons — are hidden by default because most YouTube Music tracks cannot play through the official embed player or temporary-queue workaround. They are debug-only. Temporary playlist creation uses ytmusicapi browser-header auth rather than the official YouTube Data API, avoiding quota usage but requiring fresh copied browser headers when Google changes or expires the session. To show the actions manually, run the app with:
 
 ```bash
 PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1 python main.py

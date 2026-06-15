@@ -17,7 +17,6 @@ from app_info import APP_NAME, APP_VERSION
 from app_paths import resource_path, user_data_path
 from playlist_url_window import PlaylistURLWindow
 from update_checker import UpdateChecker
-from youtube_data_api import YouTubeDataApiClient
 from youtube_music_account import YouTubeMusicAccount
 from youtube_player import YouTubeQueuePlayer
 
@@ -100,7 +99,10 @@ class PlaylistManagerUI:
         self.current_display_view = 'empty'
         self.update_checker = UpdateChecker()
         self.youtube_account = YouTubeMusicAccount(opener=self._open_external_url)
+        self.youtube_queue_auth_error = None
+        self.youtube_queue_headers_verified = False
         self.authenticated_ytmusic = self._build_authenticated_ytmusic()
+        self.browser_authenticated_ytmusic = self._build_browser_authenticated_ytmusic()
         self.youtube_player = self._build_youtube_player()
         self._configure_window_icon(self.root)
         self.style = ttk.Style()
@@ -152,16 +154,22 @@ class PlaylistManagerUI:
         combined_songs_button = ttk.Button(button_frame, text="View Combined Songs", command=self.open_combined_songs_selector)
         combined_songs_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        # "Play in YouTube Music" creates a private temporary playlist via OAuth, but most
+        # "Play in YouTube Music" creates a private temporary playlist via browser headers, but most
         # YouTube Music tracks will not actually play through the resulting queue (no official
         # streaming API). It is hidden alongside the other experimental queue actions and only
         # appears when PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS is set, for debugging.
+        next_button_row = 6
         if self._show_youtube_queue_actions():
             play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
-            play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+            play_youtube_music_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=2)
+            next_button_row += 1
+
+            queue_headers_button = ttk.Button(button_frame, text="Queue Headers", command=self.show_youtube_music_browser_auth_display)
+            queue_headers_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=2)
+            next_button_row += 1
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
+        settings_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
 
         self.playlist_selector_container = ttk.LabelFrame(self.sidebar_frame, text="Playlists", padding=(6, 4))
         self.playlist_selector_container.grid(row=5, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -314,14 +322,29 @@ class PlaylistManagerUI:
             self.authenticated_ytmusic = self._build_authenticated_ytmusic()
         return self.authenticated_ytmusic
 
-    def _youtube_data_api_client(self):
-        return YouTubeDataApiClient(
-            client_file=self.youtube_account.client_file,
-            token_file=self.youtube_account.token_file,
-        )
+    def _build_browser_authenticated_ytmusic(self):
+        if not self.youtube_account.has_browser_auth():
+            return None
+
+        try:
+            return self.youtube_account.build_browser_authenticated_client()
+        except Exception as e:
+            print(f"Could not initialize YouTube Music browser-auth client: {e}")
+            return None
+
+    def _youtube_music_queue_client(self):
+        if self.browser_authenticated_ytmusic is None:
+            self.browser_authenticated_ytmusic = self._build_browser_authenticated_ytmusic()
+        return self.browser_authenticated_ytmusic
 
     def _is_youtube_music_connected(self):
         return self.authenticated_ytmusic is not None or self.youtube_account.is_ready()
+
+    def _is_youtube_music_queue_connected(self):
+        return (
+            self.youtube_queue_auth_error is None
+            and (self.browser_authenticated_ytmusic is not None or self.youtube_account.has_browser_auth())
+        )
 
     def _youtube_music_auth_status(self):
         if self._is_youtube_music_connected():
@@ -331,6 +354,17 @@ class PlaylistManagerUI:
         if self.youtube_account.has_client_credentials():
             return "OAuth client saved, sign-in needed"
         return "Not connected"
+
+    def _youtube_music_queue_auth_status(self):
+        if self.youtube_queue_auth_error:
+            return "Saved browser headers failed, refresh needed"
+        if self.youtube_queue_headers_verified:
+            return "Browser headers verified"
+        if self._is_youtube_music_queue_connected():
+            return "Browser headers saved"
+        if self.youtube_account.browser_auth_file.exists():
+            return "Saved browser headers invalid, refresh needed"
+        return "Not configured"
 
     def _mark_youtube_track_unavailable(self, payload):
         payload = dict(payload or {})
@@ -1170,6 +1204,9 @@ class PlaylistManagerUI:
     def _clear_display_frame(self):
         for child in self.display_frame.winfo_children():
             child.destroy()
+        for index in range(12):
+            self.display_frame.rowconfigure(index, weight=0)
+            self.display_frame.columnconfigure(index, weight=0)
 
     def _open_display_window(self, title, build_display, geometry="1080x680"):
         display_window = tk.Toplevel(self.root)
@@ -1337,8 +1374,47 @@ class PlaylistManagerUI:
             if not temp_records:
                 cleanup_button.state(["disabled"])
 
+            queue_frame = ttk.LabelFrame(parent, text="Experimental YouTube Music Queue", padding="12")
+            queue_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            queue_frame.columnconfigure(0, weight=1)
+
+            queue_status_label = ttk.Label(
+                queue_frame,
+                text=f"Status: {self._youtube_music_queue_auth_status()}"
+            )
+            queue_status_label.grid(row=0, column=0, sticky=tk.W)
+
+            queue_description = ttk.Label(
+                queue_frame,
+                text=(
+                    "The hidden debug queue feature uses copied YouTube Music browser request headers, "
+                    "not the YouTube Data API. Refresh these headers if temporary playlist creation fails."
+                ),
+                wraplength=520
+            )
+            queue_description.grid(row=1, column=0, sticky=tk.W, pady=(6, 0))
+
+            queue_actions = ttk.Frame(queue_frame)
+            queue_actions.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
+
+            queue_headers_button = ttk.Button(
+                queue_actions,
+                text="Set Queue Headers",
+                command=self.show_youtube_music_browser_auth_display
+            )
+            queue_headers_button.grid(row=0, column=0, sticky=tk.E, padx=(0, 6))
+
+            clear_queue_headers_button = ttk.Button(
+                queue_actions,
+                text="Clear Headers",
+                command=self.disconnect_youtube_music_browser_auth
+            )
+            clear_queue_headers_button.grid(row=0, column=1, sticky=tk.E)
+            if not self.youtube_account.has_browser_auth():
+                clear_queue_headers_button.state(["disabled"])
+
             updates_frame = ttk.LabelFrame(parent, text="Updates", padding="12")
-            updates_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            updates_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
             updates_frame.columnconfigure(0, weight=1)
 
             version_label = ttk.Label(updates_frame, text=f"Current version: {APP_VERSION}")
@@ -1351,10 +1427,177 @@ class PlaylistManagerUI:
             )
             check_button.grid(row=0, column=1, sticky=tk.E, padx=(12, 0))
 
-        self._show_display("Settings", build_settings_display, geometry="760x460")
+        self._show_display("Settings", build_settings_display, geometry="800x560")
 
     def show_youtube_music_auth_display(self):
         self._show_display("Connect YouTube Music", self._build_youtube_music_auth_display, geometry="820x620")
+
+    def show_youtube_music_browser_auth_display(self):
+        self._show_display("Set YouTube Music Queue Headers", self._build_youtube_music_browser_auth_display, geometry="860x660")
+
+    def _build_youtube_music_browser_auth_display(self, parent):
+        self.current_display_view = 'youtube_browser_auth'
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(3, weight=1)
+
+        status_var = tk.StringVar(value=f"Status: {self._youtube_music_queue_auth_status()}")
+
+        title = ttk.Label(parent, text="Set YouTube Music Queue Headers", font=("Helvetica", 15, "bold"))
+        title.grid(row=0, column=0, sticky=tk.W, pady=(0, 12))
+
+        intro = ttk.Label(
+            parent,
+            text=(
+                "Temporary playlist creation is currently more reliable with ytmusicapi browser headers "
+                "than with ytmusicapi OAuth. These headers stay on this computer and are used only by "
+                "the hidden debug queue feature."
+            ),
+            wraplength=760
+        )
+        intro.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+
+        steps_frame = ttk.LabelFrame(parent, text="Copy Headers", padding="12")
+        steps_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        steps_frame.columnconfigure(0, weight=1)
+
+        steps_text = ttk.Label(
+            steps_frame,
+            text=(
+                "Open music.youtube.com while signed in, open your browser developer tools, go to Network, "
+                "reload YouTube Music, select a logged-in POST /browse request, then paste either the raw "
+                "request headers or Chrome's full \"Copy as fetch (Node.js)\" output below."
+            ),
+            wraplength=740
+        )
+        steps_text.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 8))
+
+        open_music_button = ttk.Button(
+            steps_frame,
+            text="Open YouTube Music",
+            command=lambda: self._open_external_url("https://music.youtube.com/")
+        )
+        open_music_button.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
+
+        docs_button = ttk.Button(
+            steps_frame,
+            text="Browser Auth Help",
+            command=lambda: self._open_external_url("https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html")
+        )
+        docs_button.grid(row=1, column=1, sticky=tk.W)
+
+        headers_frame = ttk.LabelFrame(parent, text="Request Headers", padding="8")
+        headers_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 12))
+        headers_frame.columnconfigure(0, weight=1)
+        headers_frame.rowconfigure(0, weight=1)
+
+        headers_text = tk.Text(headers_frame, height=12, wrap=tk.NONE)
+        headers_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        headers_scrollbar = ttk.Scrollbar(headers_frame, orient=tk.VERTICAL, command=headers_text.yview)
+        headers_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        headers_text.configure(yscrollcommand=headers_scrollbar.set)
+
+        status_label = ttk.Label(parent, textvariable=status_var)
+        status_label.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        actions_frame = ttk.Frame(parent)
+        actions_frame.grid(row=5, column=0, sticky=(tk.W, tk.E))
+        actions_frame.columnconfigure(3, weight=1)
+
+        save_button = ttk.Button(
+            actions_frame,
+            text="Save Headers",
+            command=lambda: self.save_youtube_music_browser_headers(headers_text, status_var, test_button)
+        )
+        save_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
+
+        test_button = ttk.Button(
+            actions_frame,
+            text="Test Saved Headers",
+            command=lambda: self.test_youtube_music_browser_headers(status_var, test_button)
+        )
+        test_button.grid(row=0, column=1, sticky=tk.W, padx=(0, 8))
+        if not self.youtube_account.has_browser_auth():
+            test_button.state(["disabled"])
+
+        back_button = ttk.Button(actions_frame, text="Back to Settings", command=self.show_settings_display)
+        back_button.grid(row=0, column=2, sticky=tk.W)
+
+    def save_youtube_music_browser_headers(self, headers_text, status_var, test_button=None):
+        headers_raw = headers_text.get("1.0", tk.END).strip()
+        try:
+            self.youtube_account.store_browser_auth_headers(headers_raw)
+            self.youtube_queue_auth_error = None
+            self.youtube_queue_headers_verified = False
+            self.browser_authenticated_ytmusic = self._build_browser_authenticated_ytmusic()
+            if self.browser_authenticated_ytmusic is None:
+                raise RuntimeError("The saved headers could not initialize a YouTube Music session.")
+        except Exception as e:
+            self.youtube_queue_auth_error = str(e)
+            status_var.set(f"Status: headers not saved - {e}")
+            return
+
+        if test_button:
+            test_button.state(["!disabled"])
+        status_var.set("Status: browser headers saved. Use Test Saved Headers to verify them.")
+
+    def test_youtube_music_browser_headers(self, status_var, test_button=None):
+        client = self._youtube_music_queue_client()
+        if client is None:
+            status_var.set("Status: no saved browser headers. Paste headers and save them first.")
+            return
+
+        if test_button:
+            test_button.state(["disabled"])
+        status_var.set("Status: testing saved browser headers...")
+
+        def worker():
+            try:
+                client.get_library_playlists(limit=1)
+            except Exception as e:
+                self.root.after(0, lambda error=e: finish(False, error))
+                return
+            self.root.after(0, lambda: finish(True, None))
+
+        def finish(success, error):
+            if test_button:
+                test_button.state(["!disabled"])
+            if success:
+                self.youtube_queue_auth_error = None
+                self.youtube_queue_headers_verified = True
+                status_var.set("Status: browser headers worked.")
+            else:
+                self.youtube_queue_headers_verified = False
+                self.browser_authenticated_ytmusic = None
+                self.youtube_queue_auth_error = self._format_browser_auth_test_error(error)
+                status_var.set(f"Status: browser headers failed - {self.youtube_queue_auth_error}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _format_browser_auth_test_error(self, error):
+        error_text = str(error)
+        if "Expecting value" in error_text:
+            return (
+                "YouTube Music did not return a usable API response. In Chrome, copy a logged-in "
+                "POST /browse request from music.youtube.com using Copy as fetch (Node.js), then save again."
+            )
+        if "401" in error_text or "Unauthorized" in error_text:
+            return "the saved browser session is not authorized. Sign in to music.youtube.com and copy fresh /browse headers."
+        return error_text
+
+    def _is_browser_auth_refresh_error(self, error):
+        error_text = str(error)
+        return (
+            "Expecting value" in error_text
+            or "401" in error_text
+            or "Unauthorized" in error_text
+            or "browser auth" in error_text
+        )
+
+    def _mark_youtube_queue_auth_failed(self, error):
+        self.youtube_queue_headers_verified = False
+        self.browser_authenticated_ytmusic = None
+        self.youtube_queue_auth_error = self._format_browser_auth_test_error(error)
 
     def _build_youtube_music_auth_display(self, parent):
         self.current_display_view = 'youtube_auth'
@@ -1373,8 +1616,9 @@ class PlaylistManagerUI:
         intro = ttk.Label(
             parent,
             text=(
-                "YouTube Music queue creation uses ytmusicapi OAuth. Create a TV and Limited Input OAuth client "
-                "in Google Cloud once, paste its client ID and secret here, then sign in with the code."
+                "This OAuth sign-in is kept for account experiments and future features. The hidden temporary "
+                "queue feature currently uses Settings > Set Queue Headers because ytmusicapi OAuth playlist "
+                "writes can fail with HTTP 400."
             ),
             wraplength=720
         )
@@ -1387,7 +1631,7 @@ class PlaylistManagerUI:
         setup_text = ttk.Label(
             setup_frame,
             text=(
-                "Enable the YouTube Data API, then create an OAuth Client ID with application type "
+                "If you still want to test OAuth, create an OAuth Client ID with application type "
                 "\"TVs and Limited Input devices\". Desktop OAuth clients will fail with this sign-in flow. "
                 "If your OAuth app is External and in Testing mode, add your Google account under "
                 "Audience > Test users. Copy the TV client ID and client secret below."
@@ -1396,33 +1640,26 @@ class PlaylistManagerUI:
         )
         setup_text.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 8))
 
-        api_button = ttk.Button(
-            setup_frame,
-            text="Open YouTube Data API",
-            command=lambda: self._open_external_url("https://console.cloud.google.com/apis/library/youtube.googleapis.com")
-        )
-        api_button.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
-
         credentials_button = ttk.Button(
             setup_frame,
             text="Open Credentials",
             command=lambda: self._open_external_url("https://console.cloud.google.com/apis/credentials")
         )
-        credentials_button.grid(row=1, column=1, sticky=tk.W, padx=(0, 8))
+        credentials_button.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
 
         help_button = ttk.Button(
             setup_frame,
             text="OAuth Help",
             command=lambda: self._open_external_url("https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html")
         )
-        help_button.grid(row=1, column=2, sticky=tk.W)
+        help_button.grid(row=1, column=1, sticky=tk.W)
 
         audience_button = ttk.Button(
             setup_frame,
             text="Open Audience",
             command=lambda: self._open_external_url("https://console.cloud.google.com/auth/audience")
         )
-        audience_button.grid(row=1, column=3, sticky=tk.W, padx=(8, 0))
+        audience_button.grid(row=1, column=2, sticky=tk.W, padx=(8, 0))
 
         credentials_frame = ttk.LabelFrame(parent, text="OAuth Client", padding="12")
         credentials_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
@@ -1688,6 +1925,25 @@ class PlaylistManagerUI:
         self.youtube_account.disconnect()
         self.authenticated_ytmusic = None
         messagebox.showinfo("YouTube Music Account", "YouTube Music has been disconnected.")
+        self.show_settings_display()
+
+    def disconnect_youtube_music_browser_auth(self):
+        if not self.youtube_account.has_browser_auth():
+            messagebox.showinfo("YouTube Music Queue", "No queue browser headers are saved.")
+            return
+
+        should_disconnect = messagebox.askyesno(
+            "Clear Queue Headers",
+            "Remove the saved YouTube Music browser request headers from this computer?"
+        )
+        if not should_disconnect:
+            return
+
+        self.youtube_account.disconnect_browser_auth()
+        self.browser_authenticated_ytmusic = None
+        self.youtube_queue_auth_error = None
+        self.youtube_queue_headers_verified = False
+        messagebox.showinfo("YouTube Music Queue", "YouTube Music queue headers have been cleared.")
         self.show_settings_display()
 
     def _find_matching_tracks(self, query):
@@ -1973,25 +2229,28 @@ class PlaylistManagerUI:
             if not should_continue:
                 return
 
-        if not self._is_youtube_music_connected():
+        if not self._is_youtube_music_queue_connected():
             should_connect = messagebox.askyesno(
-                "Connect YouTube Music",
-                "Creating a temporary YouTube Music playlist requires sign-in. Connect YouTube Music now?"
+                "Set Queue Headers",
+                (
+                    "Creating a temporary YouTube Music playlist currently requires copied "
+                    "YouTube Music browser request headers. Set queue headers now?"
+                )
             )
             if should_connect:
-                self.show_youtube_music_auth_display()
+                self.show_youtube_music_browser_auth_display()
             return
 
         self._create_temporary_youtube_music_playlist(youtube_playlists)
 
     def _create_temporary_youtube_music_playlist(self, youtube_playlists):
-        client = self._youtube_music_client()
+        client = self._youtube_music_queue_client()
         if client is None:
             messagebox.showerror(
                 "YouTube Music",
-                "The saved YouTube Music sign-in could not be loaded. Please reconnect YouTube Music in Settings."
+                "The saved YouTube Music queue headers could not be loaded. Refresh them in Settings."
             )
-            self.show_youtube_music_auth_display()
+            self.show_youtube_music_browser_auth_display()
             return
 
         progress_window = tk.Toplevel(self.root)
@@ -2087,36 +2346,31 @@ class PlaylistManagerUI:
         return title, temp_playlist_id, skipped_video_ids
 
     def _create_seeded_temporary_youtube_playlist(self, client, title, description, video_ids, set_status):
-        set_status("Creating private playlist...")
-        try:
-            temp_playlist_id = client.create_playlist(
-                title,
-                description,
-                privacy_status="PRIVATE",
-                video_ids=[video_ids[0]],
-            )
-            if not isinstance(temp_playlist_id, str) or not temp_playlist_id:
-                raise RuntimeError(temp_playlist_id)
-            return temp_playlist_id, video_ids[1:], 1, None
-        except Exception as ytmusic_error:
-            set_status("YouTube Music create failed; trying YouTube Data API...")
+        seed_errors = []
+        for index, seed_video_id in enumerate(video_ids):
+            set_status(f"Creating private playlist with seed song {index + 1} of {len(video_ids)}...")
             try:
-                data_api_client = self._youtube_data_api_client()
-                temp_playlist_id = data_api_client.create_playlist(
+                temp_playlist_id = client.create_playlist(
                     title,
                     description,
-                    privacy_status="private",
+                    privacy_status="PRIVATE",
+                    video_ids=[seed_video_id],
                 )
-                # The playlist now exists, but the YouTube Music create-with-song call failed.
-                # Keep that error so it can be reported if every add also fails (the same
-                # underlying cause usually breaks both create-with-song and add_playlist_items).
-                return temp_playlist_id, video_ids, 0, str(ytmusic_error)
-            except Exception as data_api_error:
-                raise RuntimeError(
-                    "Could not create the temporary playlist. "
-                    f"YouTube Music error: {ytmusic_error}. "
-                    f"YouTube Data API error: {data_api_error}"
-                ) from data_api_error
+                if not isinstance(temp_playlist_id, str) or not temp_playlist_id:
+                    raise RuntimeError(temp_playlist_id)
+                remaining_video_ids = video_ids[:index] + video_ids[index + 1:]
+                return temp_playlist_id, remaining_video_ids, 1, None
+            except Exception as ytmusic_error:
+                seed_errors.append(f"{seed_video_id}: {ytmusic_error}")
+
+        error_details = " | ".join(seed_errors[:3])
+        if len(seed_errors) > 3:
+            error_details += f" | {len(seed_errors) - 3} more seed errors"
+        raise RuntimeError(
+            "Could not create the temporary playlist with ytmusicapi browser auth. "
+            "Refresh the queue headers in Settings, then try again. "
+            f"YouTube Music error: {error_details or 'all seed songs were rejected'}"
+        )
 
     def _no_songs_added_error_message(self, seed_error, skipped_video_ids):
         base = "No songs could be added to the temporary playlist."
@@ -2189,10 +2443,6 @@ class PlaylistManagerUI:
     def _delete_temporary_youtube_playlist_best_effort(self, client, playlist_id):
         with contextlib.suppress(Exception):
             client.delete_playlist(playlist_id)
-            return
-
-        with contextlib.suppress(Exception):
-            self._youtube_data_api_client().delete_playlist(playlist_id)
 
     def _temporary_youtube_playlist_video_ids(self, youtube_playlists):
         video_entries = []
@@ -2246,6 +2496,20 @@ class PlaylistManagerUI:
             progress_window.destroy()
 
         if error:
+            if self._is_browser_auth_refresh_error(error):
+                self._mark_youtube_queue_auth_failed(error)
+                should_refresh = messagebox.askyesno(
+                    "Refresh Queue Headers",
+                    (
+                        "YouTube Music rejected the saved queue headers or returned a non-API response.\n\n"
+                        f"{self.youtube_queue_auth_error}\n\n"
+                        "Open Queue Headers now?"
+                    )
+                )
+                if should_refresh:
+                    self.show_youtube_music_browser_auth_display()
+                return
+
             messagebox.showerror("YouTube Music", f"Failed to create the temporary playlist: {error}")
             return
 
@@ -2279,13 +2543,13 @@ class PlaylistManagerUI:
             messagebox.showinfo("Temporary Playlists", "There are no temporary YouTube Music playlists to delete.")
             return
 
-        client = self._youtube_music_client()
+        client = self._youtube_music_queue_client()
         if client is None:
             messagebox.showerror(
                 "YouTube Music",
-                "Reconnect YouTube Music before deleting temporary playlists."
+                "Refresh YouTube Music queue headers before deleting temporary playlists."
             )
-            self.show_youtube_music_auth_display()
+            self.show_youtube_music_browser_auth_display()
             return
 
         if prompt:

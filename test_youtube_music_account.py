@@ -34,18 +34,34 @@ class FakeCredentials:
 
 
 class FakeYTMusic:
-    def __init__(self, auth, oauth_credentials):
+    def __init__(self, auth, oauth_credentials=None):
         self.auth = auth
         self.oauth_credentials = oauth_credentials
+
+
+def fake_browser_setup(filepath=None, headers_raw=None):
+    assert "cookie:" in headers_raw.lower()
+    with open(filepath, "w", encoding="utf-8") as file:
+        json.dump(
+            {
+                "cookie": "SID=fake",
+                "x-goog-authuser": "0",
+                "user-agent": "test",
+            },
+            file,
+        )
+    return "{}"
 
 
 def make_account(tmp_path):
     return YouTubeMusicAccount(
         client_file=tmp_path / "client.json",
         token_file=tmp_path / "token.json",
+        browser_auth_file=tmp_path / "browser.json",
         temporary_playlists_file=tmp_path / "temporary.json",
         ytmusic_cls=FakeYTMusic,
         credentials_cls=FakeCredentials,
+        browser_setup_func=fake_browser_setup,
         opener=lambda _url: None,
     )
 
@@ -77,6 +93,94 @@ def test_youtube_music_account_saves_client_and_token(tmp_path):
     assert client.auth == str(tmp_path / "token.json")
     assert client.oauth_credentials.client_id == "client-id"
     assert client.oauth_credentials.client_secret == "client-secret"
+
+
+def test_youtube_music_account_saves_browser_headers_for_queue(tmp_path):
+    account = make_account(tmp_path)
+
+    assert not account.has_browser_auth()
+
+    auth_path = account.store_browser_auth_headers(
+        "cookie: SID=fake\nx-goog-authuser: 0\nuser-agent: test"
+    )
+
+    assert auth_path == tmp_path / "browser.json"
+    assert account.has_browser_auth()
+    assert account.load_browser_auth_data()["cookie"] == "SID=fake"
+
+    client = account.build_browser_authenticated_client()
+    assert client.auth == str(tmp_path / "browser.json")
+    assert client.oauth_credentials is None
+
+
+def test_youtube_music_account_accepts_chrome_copy_as_fetch_headers(tmp_path):
+    account = make_account(tmp_path)
+
+    fetch_text = '''
+fetch("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+  "headers": {
+    "accept": "*/*",
+    "authorization": "SAPISIDHASH fake",
+    "content-type": "application/json",
+    "x-goog-authuser": "0",
+    "x-origin": "https://music.youtube.com",
+    "cookie": "SID=fake"
+  },
+  "body": "{}",
+  "method": "POST"
+});
+'''
+
+    account.store_browser_auth_headers(fetch_text)
+
+    assert account.has_browser_auth()
+
+
+def test_youtube_music_account_accepts_trimmed_browser_header_json(tmp_path):
+    account = make_account(tmp_path)
+
+    account.store_browser_auth_headers(
+        '''
+{
+  "Accept": "*/*",
+  "Authorization": "SAPISIDHASH fake",
+  "Content-Type": "application/json",
+  "X-Goog-AuthUser": "0",
+  "x-origin": "https://music.youtube.com",
+  "Cookie": "SID=fake",
+}
+'''
+    )
+
+    assert account.has_browser_auth()
+
+
+def test_youtube_music_account_sanitizes_chrome_header_noise(tmp_path):
+    account = make_account(tmp_path)
+
+    dirty_headers = {
+        "accept": "*/*",
+        "authorization": "SAPISIDHASH fake",
+        "content-type": "application/json",
+        "cookie": "SID=fake",
+        "x-goog-authuser": "0",
+        "Decoded": "{",
+        "music.youtube.com": "",
+        "/youtubei/v1/browse?prettyPrint=false": "",
+        "priority": "u=1",
+    }
+    account.browser_auth_file.write_text(json.dumps(dirty_headers), encoding="utf-8")
+
+    assert account.has_browser_auth()
+
+    account.build_browser_authenticated_client()
+    saved = json.loads(account.browser_auth_file.read_text(encoding="utf-8"))
+
+    assert "cookie" in saved
+    assert "x-goog-authuser" in saved
+    assert "decoded" not in saved
+    assert "priority" not in saved
+    assert "/youtubei/v1/browse?prettyPrint=false" not in saved
 
 
 def test_youtube_music_account_rejects_incomplete_tokens(tmp_path):

@@ -3,6 +3,8 @@
 Unit tests for UI helper logic that does not require a Tk root window.
 """
 
+from pathlib import Path
+
 from playlist_url_window import PlaylistURLWindow
 from ui import PlaylistManagerUI
 
@@ -21,23 +23,32 @@ class FakeBool:
 class FakeTemporaryPlaylistAccount:
     def __init__(self):
         self.records = []
+        self.browser_auth_file = Path("/tmp/nonexistent-ytmusic-browser-auth.json")
 
     def remember_temporary_playlist(self, playlist_id, title, source_playlists):
         self.records.append((playlist_id, title, source_playlists))
 
+    def has_browser_auth(self):
+        return False
+
+    def disconnect_browser_auth(self):
+        pass
+
 
 class FakeTemporaryPlaylistClient:
-    def __init__(self, fail_create=False, fail_add=False, failing_video_ids=None):
+    def __init__(self, fail_create=False, fail_add=False, failing_video_ids=None, failing_create_video_ids=None):
         self.fail_create = fail_create
         self.fail_add = fail_add
         self.failing_video_ids = set(failing_video_ids or [])
+        self.failing_create_video_ids = set(failing_create_video_ids or [])
         self.create_calls = []
         self.add_calls = []
         self.deleted = []
 
     def create_playlist(self, *args, **kwargs):
         self.create_calls.append((args, kwargs))
-        if self.fail_create:
+        video_ids = set(kwargs.get("video_ids") or [])
+        if self.fail_create or self.failing_create_video_ids.intersection(video_ids):
             raise RuntimeError("Server returned HTTP 400: Bad Request.")
         return "TEMP_PLAYLIST"
 
@@ -51,15 +62,6 @@ class FakeTemporaryPlaylistClient:
     def delete_playlist(self, playlist_id):
         self.deleted.append(playlist_id)
         return "STATUS_SUCCEEDED"
-
-
-class FakeYouTubeDataApiClient:
-    def __init__(self):
-        self.create_calls = []
-
-    def create_playlist(self, title, description, privacy_status="private"):
-        self.create_calls.append((title, description, privacy_status))
-        return "DATA_API_TEMP_PLAYLIST"
 
 
 def make_manager():
@@ -76,6 +78,10 @@ def make_manager():
     manager._active_combined_refresh = None
     manager.youtube_player = None
     manager.youtube_account = FakeTemporaryPlaylistAccount()
+    manager.authenticated_ytmusic = None
+    manager.browser_authenticated_ytmusic = None
+    manager.youtube_queue_auth_error = None
+    manager.youtube_queue_headers_verified = False
     return manager
 
 
@@ -922,7 +928,7 @@ def test_temporary_youtube_playlist_creation_uses_cached_video_ids():
     assert client.deleted == []
     assert manager.youtube_account.records[0][0] == "TEMP_PLAYLIST"
     assert manager.youtube_account.records[0][2][0]["id"] == "PL1"
-    assert statuses[0] == "Creating private playlist..."
+    assert statuses[0] == "Creating private playlist with seed song 1 of 3..."
 
 
 def test_temporary_youtube_playlist_creation_skips_rejected_individual_songs():
@@ -958,7 +964,7 @@ def test_temporary_youtube_playlist_creation_skips_rejected_individual_songs():
     assert manager.youtube_account.records[0][0] == "TEMP_PLAYLIST"
 
 
-def test_temporary_youtube_playlist_creation_falls_back_to_data_api_create(monkeypatch):
+def test_temporary_youtube_playlist_creation_retries_rejected_seed_song():
     manager = make_manager()
     manager.saved_playlists = {
         'youtube:PL1': {
@@ -972,9 +978,7 @@ def test_temporary_youtube_playlist_creation_falls_back_to_data_api_create(monke
             ]
         }
     }
-    client = FakeTemporaryPlaylistClient(fail_create=True)
-    data_api_client = FakeYouTubeDataApiClient()
-    monkeypatch.setattr(manager, '_youtube_data_api_client', lambda: data_api_client)
+    client = FakeTemporaryPlaylistClient(failing_create_video_ids={'video1'})
 
     title, playlist_id, skipped = manager._create_temporary_youtube_music_playlist_sync(
         client,
@@ -982,15 +986,22 @@ def test_temporary_youtube_playlist_creation_falls_back_to_data_api_create(monke
         lambda _status: None,
     )
 
-    assert playlist_id == "DATA_API_TEMP_PLAYLIST"
-    assert data_api_client.create_calls == [
-        (title, "Temporary private playlist created by YouTube Music Playlist Manager.", "private")
+    assert playlist_id == "TEMP_PLAYLIST"
+    assert client.create_calls == [
+        (
+            (title, "Temporary private playlist created by YouTube Music Playlist Manager."),
+            {"privacy_status": "PRIVATE", "video_ids": ["video1"]},
+        ),
+        (
+            (title, "Temporary private playlist created by YouTube Music Playlist Manager."),
+            {"privacy_status": "PRIVATE", "video_ids": ["video2"]},
+        ),
     ]
     assert client.add_calls == [
-        ("DATA_API_TEMP_PLAYLIST", ["video1", "video2"], False),
+        ("TEMP_PLAYLIST", ["video1"], False),
     ]
     assert skipped == []
-    assert manager.youtube_account.records[0][0] == "DATA_API_TEMP_PLAYLIST"
+    assert manager.youtube_account.records[0][0] == "TEMP_PLAYLIST"
 
 
 def test_temporary_youtube_playlist_video_ids_prefer_queue_ok_seed():
@@ -1025,7 +1036,7 @@ def test_temporary_youtube_playlist_video_ids_prefer_queue_ok_seed():
     assert video_ids == ['queue-ok', 'ytm-only']
 
 
-def test_temporary_youtube_playlist_creation_deletes_playlist_when_every_song_fails(monkeypatch):
+def test_temporary_youtube_playlist_creation_reports_create_failure():
     manager = make_manager()
     manager.saved_playlists = {
         'youtube:PL1': {
@@ -1039,9 +1050,7 @@ def test_temporary_youtube_playlist_creation_deletes_playlist_when_every_song_fa
             ]
         }
     }
-    client = FakeTemporaryPlaylistClient(fail_create=True, fail_add=True)
-    data_api_client = FakeYouTubeDataApiClient()
-    monkeypatch.setattr(manager, '_youtube_data_api_client', lambda: data_api_client)
+    client = FakeTemporaryPlaylistClient(fail_create=True)
 
     try:
         manager._create_temporary_youtube_music_playlist_sync(
@@ -1050,11 +1059,12 @@ def test_temporary_youtube_playlist_creation_deletes_playlist_when_every_song_fa
             lambda _status: None,
         )
     except RuntimeError as error:
-        assert "No songs could be added" in str(error)
+        assert "Could not create the temporary playlist" in str(error)
+        assert "browser auth" in str(error)
     else:
-        raise AssertionError("Temporary playlist creation should fail when every song is rejected")
+        raise AssertionError("Temporary playlist creation should fail when every seed song is rejected")
 
-    assert client.deleted == ["DATA_API_TEMP_PLAYLIST"]
+    assert client.deleted == []
     assert manager.youtube_account.records == []
 
 
@@ -1083,6 +1093,24 @@ def test_temporary_youtube_playlist_creation_requires_cached_video_ids():
         raise AssertionError("Temporary playlist creation should require cached song ids")
 
     assert client.create_calls == []
+
+
+def test_youtube_queue_auth_status_reports_failed_saved_headers():
+    manager = make_manager()
+    manager.youtube_queue_auth_error = "bad headers"
+    manager.browser_authenticated_ytmusic = object()
+
+    assert not manager._is_youtube_music_queue_connected()
+    assert manager._youtube_music_queue_auth_status() == "Saved browser headers failed, refresh needed"
+
+
+def test_format_browser_auth_test_error_explains_json_decode_failure():
+    manager = make_manager()
+
+    message = manager._format_browser_auth_test_error("Expecting value: line 1 column 1 (char 0)")
+
+    assert "POST /browse" in message
+    assert "Copy as fetch" in message
 
 
 def test_format_youtube_oauth_error_mentions_tv_client_for_bad_client():
