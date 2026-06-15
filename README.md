@@ -196,3 +196,15 @@ python main.py
 ```
 
 > Note: `spotapi` fetches public Spotify playlist information without requiring Spotify Web API credentials. Review the library's licensing and usage terms before using it.
+
+## Contributing & development
+
+Working on the project (or handing it off to another person or AI agent)? Start here:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development workflow, the debug-first → release
+  feature lifecycle, and conventions.
+- [`STATUS.md`](STATUS.md) — living board of planned / in-progress / shipped work and known bugs.
+- [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — manual test checklists that complement `pytest`.
+
+AI agents are pointed to the same material via [`CLAUDE.md`](CLAUDE.md) and
+[`AGENTS.md`](AGENTS.md).
