@@ -2,7 +2,7 @@
 
 YouTube Music for some reason removes the functionality of being able to easily see which playlists a song/video is a part of. Had to put something together to save myself 10 hours when fixing my playlists - fully vibe-coded.
 
-Only basic functionality currently. Searching for songs reveals which playlists they are in. You can also combine selected playlists and find duplicates within the current selection.
+Only relatively basic functionality currently. You can search through playlists and get various info. Streaming the music to a web player directly doesn't seem to work due to no official YouTube Music API. Trying to get a workaround to more conveniently make queues.
 
 ## Features
 
