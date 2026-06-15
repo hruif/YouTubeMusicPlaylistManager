@@ -264,3 +264,40 @@ def test_youtube_music_account_tracks_temporary_playlists(tmp_path):
 
     account.forget_temporary_playlists(["PL_TEMP"])
     assert account.load_temporary_playlists() == []
+
+
+def test_forget_temporary_playlists_keeps_other_records(tmp_path):
+    account = make_account(tmp_path)
+
+    account.remember_temporary_playlist("PL_A", "Queue A", [])
+    account.remember_temporary_playlist("PL_B", "Queue B", [])
+
+    account.forget_temporary_playlists(["PL_A"])
+
+    remaining = account.load_temporary_playlists()
+    assert [record.playlist_id for record in remaining] == ["PL_B"]
+
+
+def test_save_temporary_playlists_is_atomic(tmp_path):
+    account = make_account(tmp_path)
+
+    account.remember_temporary_playlist("PL_TEMP", "Queue", [])
+
+    # No leftover temp file from the atomic write, and the data is valid JSON.
+    tmp_file = account.temporary_playlists_file.with_suffix(
+        account.temporary_playlists_file.suffix + ".tmp"
+    )
+    assert not tmp_file.exists()
+    with account.temporary_playlists_file.open(encoding="utf-8") as file:
+        assert isinstance(json.load(file), list)
+
+
+def test_corrupt_temporary_playlists_file_is_ignored(tmp_path):
+    account = make_account(tmp_path)
+    account.temporary_playlists_file.write_text("not json", encoding="utf-8")
+
+    assert account.load_temporary_playlists() == []
+
+    # A subsequent write recovers the file.
+    account.remember_temporary_playlist("PL_TEMP", "Queue", [])
+    assert [record.playlist_id for record in account.load_temporary_playlists()] == ["PL_TEMP"]

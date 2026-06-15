@@ -79,16 +79,21 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Click "Play in YouTube Music"
    - The app creates a private temporary playlist, opens it on music.youtube.com, and remembers it for cleanup
    - Spotify playlists are skipped for this flow for now
-   - When finished, open Settings and click "Delete Temporary"
 
-9. **Check for app updates**:
+9. **Manage temporary playlists**:
+   - Open Settings and click "View Temporary Playlists" to see each temporary playlist's title, when it was created (so you can tell how out of date it is), and which playlists it was merged from. Open or delete individual playlists, or use "Delete All".
+   - When you close the app, it offers to delete any leftover temporary playlists. Tick "Always delete temporary playlists when I close the app" to make this automatic; the preference is saved in `app_settings.json`.
+   - If you skip cleanup, the app reminds you about leftover temporary playlists shortly after the next launch.
+   - Only one copy of the app runs at a time so two windows cannot race while creating, adding to, or deleting temporary playlists.
+
+10. **Check for app updates**:
    - The app checks for newer GitHub Releases shortly after startup
    - Open Settings and click "Check for Updates" to check manually
    - If an update is available, the app prompts before opening the release download page
 
 ## Data Storage
 
-When running from source, playlists are stored in `saved_playlists.json` next to the code. In the packaged macOS app, playlists are stored in `~/Library/Application Support/YouTube Music Playlist Manager/saved_playlists.json`.
+When running from source, playlists and `app_settings.json` (which remembers preferences such as "always delete temporary playlists on exit") are stored next to the code. A short-lived `instance.lock` file in the same folder enforces the single-instance guard. In the packaged macOS app, these live in `~/Library/Application Support/YouTube Music Playlist Manager/`.
 
 YouTube Music auth files and temporary playlist cleanup records are stored in the operating system's application-support folder, not in the repository:
 

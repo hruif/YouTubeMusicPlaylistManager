@@ -15,6 +15,7 @@ from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
 from app_info import APP_NAME, APP_VERSION
 from app_paths import resource_path, user_data_path
+from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT
 from playlist_url_window import PlaylistURLWindow
 from update_checker import UpdateChecker
 from youtube_music_account import YouTubeMusicAccount
@@ -91,6 +92,11 @@ class PlaylistManagerUI:
             # Could add a status label here if desired
 
         self.use_display_windows_var = tk.BooleanVar(value=False)
+        self.app_settings = AppSettings()
+        self.auto_delete_temp_on_exit_var = tk.BooleanVar(
+            value=self.app_settings.get_bool(AUTO_DELETE_TEMP_ON_EXIT, False)
+        )
+        self._closing = False
         self.app_icon_image = self._load_app_icon_image()
         self.source_logo_images = self._build_source_logo_images()
         self.sidebar_playlist_vars = []
@@ -199,8 +205,169 @@ class PlaylistManagerUI:
         self._schedule_temporary_playlist_cleanup_prompt()
 
     def _on_close(self):
+        if self._closing:
+            return
+
+        records = self.youtube_account.load_temporary_playlists()
+        if not records:
+            self._finalize_close()
+            return
+
+        if self.auto_delete_temp_on_exit_var.get():
+            self._closing = True
+            self._delete_temporary_playlists_then_close(records)
+            return
+
+        choice = self._ask_delete_temporary_on_exit(records)
+        if choice == "cancel":
+            return
+        if choice == "delete":
+            self._closing = True
+            self._delete_temporary_playlists_then_close(records)
+        else:
+            self._finalize_close()
+
+    def _finalize_close(self):
         self.youtube_player.shutdown()
         self.root.destroy()
+
+    def _ask_delete_temporary_on_exit(self, records):
+        """Modal exit prompt. Returns 'delete', 'keep', or 'cancel'. A checkbox
+        lets the user opt into always deleting on exit without being asked again."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Temporary YouTube Music Playlists")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        self._configure_window_icon(dialog)
+
+        frame = ttk.Frame(dialog, padding="18")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        frame.columnconfigure(0, weight=1)
+
+        count = len(records)
+        message = ttk.Label(
+            frame,
+            text=(
+                f"{count} temporary YouTube Music playlist{'' if count == 1 else 's'} "
+                f"{'is' if count == 1 else 'are'} still on your account.\n\n"
+                "Delete them now so they don't pile up?"
+            ),
+            wraplength=420,
+            justify=tk.LEFT,
+        )
+        message.grid(row=0, column=0, sticky=tk.W)
+
+        always_var = tk.BooleanVar(value=False)
+        always_check = ttk.Checkbutton(
+            frame,
+            text="Always delete temporary playlists when I close the app",
+            variable=always_var,
+        )
+        always_check.grid(row=1, column=0, sticky=tk.W, pady=(12, 0))
+
+        result = {"choice": "cancel"}
+
+        def choose(value):
+            # The checkbox means "always delete from now on", so it only takes
+            # effect alongside the delete action.
+            if value == "delete" and always_var.get():
+                self.auto_delete_temp_on_exit_var.set(True)
+                self.app_settings.set(AUTO_DELETE_TEMP_ON_EXIT, True)
+            result["choice"] = value
+            dialog.destroy()
+
+        button_row = ttk.Frame(frame)
+        button_row.grid(row=2, column=0, sticky=tk.E, pady=(16, 0))
+
+        cancel_button = ttk.Button(button_row, text="Cancel", command=lambda: choose("cancel"))
+        cancel_button.grid(row=0, column=0, padx=(0, 6))
+        keep_button = ttk.Button(button_row, text="Keep and Close", command=lambda: choose("keep"))
+        keep_button.grid(row=0, column=1, padx=(0, 6))
+        delete_button = ttk.Button(button_row, text="Delete and Close", command=lambda: choose("delete"))
+        delete_button.grid(row=0, column=2)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose("cancel"))
+        dialog.grab_set()
+        delete_button.focus_set()
+        self.root.wait_window(dialog)
+        return result["choice"]
+
+    def _delete_temporary_playlists_then_close(self, records):
+        client = self._youtube_music_queue_client()
+        if client is None:
+            messagebox.showwarning(
+                "Temporary Playlists",
+                "Couldn't delete the temporary playlists because the YouTube Music queue "
+                "headers are missing or expired. They remain on your account — delete them "
+                "next time from Settings > Temporary Playlists.",
+            )
+            self._finalize_close()
+            return
+
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Deleting Temporary Playlists")
+        progress_window.geometry("430x150")
+        progress_window.resizable(False, False)
+        progress_window.protocol("WM_DELETE_WINDOW", lambda: None)
+        self._configure_window_icon(progress_window)
+
+        main_frame = ttk.Frame(progress_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value="Deleting temporary playlists...")
+        status_label = ttk.Label(main_frame, textvariable=status_var)
+        status_label.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+
+        progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=320)
+        progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        progress_bar.start(12)
+
+        state = {"finished": False}
+
+        def finalize_once():
+            if state["finished"]:
+                return
+            state["finished"] = True
+            if progress_window.winfo_exists():
+                progress_window.destroy()
+            self._finalize_close()
+
+        def worker():
+            deleted_ids = []
+            for index, record in enumerate(records, start=1):
+                with contextlib.suppress(Exception):
+                    self.root.after(
+                        0,
+                        lambda record=record, index=index: status_var.set(
+                            f"Deleting {index} of {len(records)}: {record.title}"
+                        ),
+                    )
+                try:
+                    response = client.delete_playlist(record.playlist_id)
+                    if isinstance(response, dict) and "status" in response and "SUCCEEDED" not in response["status"]:
+                        raise RuntimeError(response)
+                    deleted_ids.append(record.playlist_id)
+                except Exception:
+                    continue
+
+            if deleted_ids:
+                with contextlib.suppress(Exception):
+                    self.youtube_account.forget_temporary_playlists(deleted_ids)
+
+            with contextlib.suppress(Exception):
+                self.root.after(0, finalize_once)
+
+        threading.Thread(target=worker, daemon=True).start()
+        # Safety valve: never trap the user in an un-closable window if the
+        # network hangs or YouTube Music stops responding.
+        self.root.after(20000, finalize_once)
+
+    def _on_auto_delete_temp_changed(self):
+        self.app_settings.set(
+            AUTO_DELETE_TEMP_ON_EXIT,
+            bool(self.auto_delete_temp_on_exit_var.get()),
+        )
 
     def _load_app_icon_image(self):
         icon_path = self.ASSETS_DIR / "app_icon.png"
@@ -418,27 +585,96 @@ class PlaylistManagerUI:
         self.root.after(1500, lambda: self.check_for_updates(silent=True))
 
     def _schedule_temporary_playlist_cleanup_prompt(self):
-        if not self._is_youtube_music_connected():
-            return
         if not self.youtube_account.load_temporary_playlists():
             return
-        self.root.after(3500, self._prompt_for_temporary_playlist_cleanup)
+        self.root.after(3500, self._handle_startup_temporary_playlists)
 
-    def _prompt_for_temporary_playlist_cleanup(self):
+    def _handle_startup_temporary_playlists(self):
         records = self.youtube_account.load_temporary_playlists()
         if not records:
             return
+
+        if self.auto_delete_temp_on_exit_var.get():
+            # The preference is "always delete on exit"; clean up anything a
+            # previous crash left behind, but only if we can actually reach
+            # YouTube Music (otherwise leave them for a later manual cleanup).
+            if self._is_youtube_music_queue_connected():
+                self.delete_temporary_youtube_playlists(prompt=False)
+            return
+
+        self._prompt_for_temporary_playlist_cleanup(records)
+
+    def _prompt_for_temporary_playlist_cleanup(self, records=None):
+        if records is None:
+            records = self.youtube_account.load_temporary_playlists()
+        if not records:
+            return
+
+        listed = "\n".join(
+            f"• {record.title} — {self._format_relative_age(record.created_at)}"
+            f"{self._temp_playlist_sources_suffix(record)}"
+            for record in records[:8]
+        )
+        if len(records) > 8:
+            listed += f"\n• …and {len(records) - 8} more"
 
         should_delete = messagebox.askyesno(
             "Temporary YouTube Music Playlists",
             (
                 f"{len(records)} temporary playlist"
-                f"{'' if len(records) == 1 else 's'} from a previous queue session are still saved.\n\n"
-                "Delete them now?"
+                f"{'' if len(records) == 1 else 's'} from previous queue sessions are still on "
+                "your account:\n\n"
+                f"{listed}\n\n"
+                "Delete them now? (You can also review them later in Settings > Temporary Playlists.)"
             )
         )
         if should_delete:
             self.delete_temporary_youtube_playlists(prompt=False)
+
+    def _format_relative_age(self, created_at):
+        try:
+            created_at = int(created_at)
+        except (TypeError, ValueError):
+            created_at = 0
+        if created_at <= 0:
+            return "unknown age"
+
+        seconds = max(0, int(time.time()) - created_at)
+        minutes = seconds // 60
+        hours = minutes // 60
+        days = hours // 24
+        if days >= 1:
+            return f"{days} day{'' if days == 1 else 's'} ago"
+        if hours >= 1:
+            return f"{hours} hour{'' if hours == 1 else 's'} ago"
+        if minutes >= 1:
+            return f"{minutes} minute{'' if minutes == 1 else 's'} ago"
+        return "just now"
+
+    def _temp_playlist_sources_text(self, record):
+        names = []
+        for source in getattr(record, "source_playlists", None) or []:
+            if not isinstance(source, dict):
+                continue
+            name = str(source.get("name") or "").strip()
+            source_kind = str(source.get("source") or "").strip().lower()
+            prefix = {"youtube": "YouTube", "spotify": "Spotify"}.get(source_kind, "")
+            if name:
+                names.append(f"{prefix}: {name}" if prefix else name)
+        return ", ".join(names)
+
+    def _temp_playlist_sources_suffix(self, record):
+        sources = self._temp_playlist_sources_text(record)
+        return f" (from {sources})" if sources else ""
+
+    def _format_temp_playlist_created_at(self, created_at):
+        try:
+            created_at = int(created_at)
+        except (TypeError, ValueError):
+            created_at = 0
+        if created_at <= 0:
+            return "Unknown"
+        return datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M")
 
     def check_for_updates(self, silent=False):
         def worker():
@@ -1339,15 +1575,8 @@ class PlaylistManagerUI:
             status_label = ttk.Label(account_frame, text=f"Status: {self._youtube_music_auth_status()}")
             status_label.grid(row=0, column=0, sticky=tk.W)
 
-            temp_records = self.youtube_account.load_temporary_playlists()
-            temp_label = ttk.Label(
-                account_frame,
-                text=f"Temporary playlists waiting for cleanup: {len(temp_records)}"
-            )
-            temp_label.grid(row=1, column=0, sticky=tk.W, pady=(6, 0))
-
             account_actions = ttk.Frame(account_frame)
-            account_actions.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
+            account_actions.grid(row=0, column=1, sticky=tk.E, padx=(12, 0))
 
             connect_button = ttk.Button(
                 account_actions,
@@ -1361,21 +1590,52 @@ class PlaylistManagerUI:
                 text="Disconnect",
                 command=self.disconnect_youtube_music
             )
-            disconnect_button.grid(row=0, column=1, sticky=tk.E, padx=(0, 6))
+            disconnect_button.grid(row=0, column=1, sticky=tk.E)
             if not self._is_youtube_music_connected():
                 disconnect_button.state(["disabled"])
 
+            temp_frame = ttk.LabelFrame(parent, text="Temporary Playlists", padding="12")
+            temp_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            temp_frame.columnconfigure(0, weight=1)
+
+            temp_records = self.youtube_account.load_temporary_playlists()
+            temp_label = ttk.Label(
+                temp_frame,
+                text=f"Temporary playlists on your account: {len(temp_records)}"
+            )
+            temp_label.grid(row=0, column=0, sticky=tk.W)
+
+            auto_delete_check = ttk.Checkbutton(
+                temp_frame,
+                text="Delete temporary playlists automatically when I close the app",
+                variable=self.auto_delete_temp_on_exit_var,
+                command=self._on_auto_delete_temp_changed
+            )
+            auto_delete_check.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
+
+            temp_actions = ttk.Frame(temp_frame)
+            temp_actions.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
+
+            view_temp_button = ttk.Button(
+                temp_actions,
+                text="View Temporary Playlists",
+                command=self.show_temporary_playlists_display
+            )
+            view_temp_button.grid(row=0, column=0, sticky=tk.E, padx=(0, 6))
+            if not temp_records:
+                view_temp_button.state(["disabled"])
+
             cleanup_button = ttk.Button(
-                account_actions,
-                text="Delete Temporary",
+                temp_actions,
+                text="Delete All",
                 command=self.delete_temporary_youtube_playlists
             )
-            cleanup_button.grid(row=0, column=2, sticky=tk.E)
+            cleanup_button.grid(row=0, column=1, sticky=tk.E)
             if not temp_records:
                 cleanup_button.state(["disabled"])
 
             queue_frame = ttk.LabelFrame(parent, text="Experimental YouTube Music Queue", padding="12")
-            queue_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            queue_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
             queue_frame.columnconfigure(0, weight=1)
 
             queue_status_label = ttk.Label(
@@ -1414,7 +1674,7 @@ class PlaylistManagerUI:
                 clear_queue_headers_button.state(["disabled"])
 
             updates_frame = ttk.LabelFrame(parent, text="Updates", padding="12")
-            updates_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            updates_frame.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
             updates_frame.columnconfigure(0, weight=1)
 
             version_label = ttk.Label(updates_frame, text=f"Current version: {APP_VERSION}")
@@ -1427,7 +1687,127 @@ class PlaylistManagerUI:
             )
             check_button.grid(row=0, column=1, sticky=tk.E, padx=(12, 0))
 
-        self._show_display("Settings", build_settings_display, geometry="800x560")
+        self._show_display("Settings", build_settings_display, geometry="800x660")
+
+    def show_temporary_playlists_display(self):
+        self._show_display(
+            "Temporary Playlists",
+            self._build_temporary_playlists_display,
+            geometry="820x520",
+        )
+
+    def _build_temporary_playlists_display(self, parent):
+        self.current_display_view = 'temporary_playlists'
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+
+        title = ttk.Label(parent, text="Temporary Playlists", font=("Helvetica", 15, "bold"))
+        title.grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+
+        records = self.youtube_account.load_temporary_playlists()
+        description = ttk.Label(
+            parent,
+            text=(
+                "Private playlists created by the queue feature. The timestamp shows how "
+                "out of date a queue is, and 'Merged from' lists the playlists it was built "
+                "from. Delete them when you no longer need them."
+            ),
+            wraplength=760,
+            justify=tk.LEFT,
+        )
+        description.grid(row=1, column=0, sticky=tk.W, pady=(0, 10))
+
+        if not records:
+            empty_label = ttk.Label(parent, text="There are no temporary playlists right now.")
+            empty_label.grid(row=2, column=0, sticky=(tk.W, tk.N), pady=(4, 0))
+            back_button = ttk.Button(parent, text="Back to Settings", command=self.show_settings_display)
+            back_button.grid(row=3, column=0, sticky=tk.W, pady=(12, 0))
+            return
+
+        tree_frame = ttk.Frame(parent)
+        tree_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
+        columns = ("title", "created", "age", "sources")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
+        tree.heading("title", text="Playlist")
+        tree.heading("created", text="Created")
+        tree.heading("age", text="Age")
+        tree.heading("sources", text="Merged from")
+        tree.column("title", width=220, anchor=tk.W)
+        tree.column("created", width=130, anchor=tk.W)
+        tree.column("age", width=110, anchor=tk.W)
+        tree.column("sources", width=300, anchor=tk.W)
+        tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        for record in records:
+            tree.insert(
+                "",
+                tk.END,
+                iid=record.playlist_id,
+                values=(
+                    record.title,
+                    self._format_temp_playlist_created_at(record.created_at),
+                    self._format_relative_age(record.created_at),
+                    self._temp_playlist_sources_text(record) or "—",
+                ),
+            )
+
+        records_by_id = {record.playlist_id: record for record in records}
+
+        def selected_records():
+            return [records_by_id[item] for item in tree.selection() if item in records_by_id]
+
+        def open_selected():
+            chosen = selected_records()
+            if not chosen:
+                messagebox.showinfo("Temporary Playlists", "Select a playlist first.")
+                return
+            for record in chosen:
+                self.youtube_account.open_playlist(record.playlist_id)
+
+        def delete_selected():
+            chosen = selected_records()
+            if not chosen:
+                messagebox.showinfo("Temporary Playlists", "Select a playlist to delete first.")
+                return
+            should_delete = messagebox.askyesno(
+                "Delete Temporary Playlists",
+                (
+                    f"Delete {len(chosen)} selected temporary playlist"
+                    f"{'' if len(chosen) == 1 else 's'} from your account?"
+                ),
+            )
+            if should_delete:
+                self.delete_temporary_youtube_playlists(prompt=False, records=chosen)
+
+        tree.bind("<Double-1>", lambda event: open_selected())
+
+        actions = ttk.Frame(parent)
+        actions.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+
+        back_button = ttk.Button(actions, text="Back to Settings", command=self.show_settings_display)
+        back_button.grid(row=0, column=0, sticky=tk.W)
+
+        right_actions = ttk.Frame(actions)
+        right_actions.grid(row=0, column=1, sticky=tk.E)
+        actions.columnconfigure(1, weight=1)
+
+        open_button = ttk.Button(right_actions, text="Open Selected", command=open_selected)
+        open_button.grid(row=0, column=0, padx=(0, 6))
+        delete_button = ttk.Button(right_actions, text="Delete Selected", command=delete_selected)
+        delete_button.grid(row=0, column=1, padx=(0, 6))
+        delete_all_button = ttk.Button(
+            right_actions,
+            text="Delete All",
+            command=self.delete_temporary_youtube_playlists,
+        )
+        delete_all_button.grid(row=0, column=2)
 
     def show_youtube_music_auth_display(self):
         self._show_display("Connect YouTube Music", self._build_youtube_music_auth_display, geometry="820x620")
@@ -2537,8 +2917,9 @@ class PlaylistManagerUI:
         if self.current_display_view == 'settings':
             self.show_settings_display()
 
-    def delete_temporary_youtube_playlists(self, prompt=True):
-        records = self.youtube_account.load_temporary_playlists()
+    def delete_temporary_youtube_playlists(self, prompt=True, records=None):
+        if records is None:
+            records = self.youtube_account.load_temporary_playlists()
         if not records:
             messagebox.showinfo("Temporary Playlists", "There are no temporary YouTube Music playlists to delete.")
             return
@@ -2633,6 +3014,8 @@ class PlaylistManagerUI:
 
         if self.current_display_view == 'settings':
             self.show_settings_display()
+        elif self.current_display_view == 'temporary_playlists':
+            self.show_temporary_playlists_display()
 
     def _play_playlist_youtube_queue(self, playlist_key):
         pl_data = self.saved_playlists.get(playlist_key)

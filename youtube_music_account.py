@@ -1,7 +1,9 @@
 import json
+import os
 import re
 import time
 import webbrowser
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -371,37 +373,70 @@ class YouTubeMusicAccount:
 
     def save_temporary_playlists(self, records):
         self.temporary_playlists_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.temporary_playlists_file.open("w", encoding="utf-8") as file:
+        tmp_path = self.temporary_playlists_file.with_suffix(
+            self.temporary_playlists_file.suffix + ".tmp"
+        )
+        with tmp_path.open("w", encoding="utf-8") as file:
             json.dump([record.as_dict() for record in records], file, indent=2)
+        os.replace(tmp_path, self.temporary_playlists_file)
+
+    @contextmanager
+    def _temporary_playlists_lock(self):
+        """Serialize read-modify-write of the records file across processes so a
+        second instance cannot clobber records while one is being added/removed."""
+        self.temporary_playlists_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.temporary_playlists_file.with_suffix(
+            self.temporary_playlists_file.suffix + ".lock"
+        )
+        handle = lock_path.open("w")
+        try:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except ImportError:
+                pass
+            yield
+        finally:
+            try:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            handle.close()
 
     def remember_temporary_playlist(self, playlist_id, title, source_playlists):
         playlist_id = str(playlist_id or "").strip()
         if not playlist_id:
             raise ValueError("Temporary playlist ID is required.")
 
-        records = [
-            record
-            for record in self.load_temporary_playlists()
-            if record.playlist_id != playlist_id
-        ]
-        record = TemporaryPlaylistRecord(
-            playlist_id=playlist_id,
-            title=title or "Temporary Playlist",
-            created_at=int(time.time()),
-            source_playlists=source_playlists or [],
-        )
-        records.insert(0, record)
-        self.save_temporary_playlists(records)
+        with self._temporary_playlists_lock():
+            records = [
+                record
+                for record in self.load_temporary_playlists()
+                if record.playlist_id != playlist_id
+            ]
+            record = TemporaryPlaylistRecord(
+                playlist_id=playlist_id,
+                title=title or "Temporary Playlist",
+                created_at=int(time.time()),
+                source_playlists=source_playlists or [],
+            )
+            records.insert(0, record)
+            self.save_temporary_playlists(records)
         return record
 
     def forget_temporary_playlists(self, playlist_ids):
         playlist_ids = {str(playlist_id) for playlist_id in playlist_ids}
-        records = [
-            record
-            for record in self.load_temporary_playlists()
-            if record.playlist_id not in playlist_ids
-        ]
-        self.save_temporary_playlists(records)
+        with self._temporary_playlists_lock():
+            records = [
+                record
+                for record in self.load_temporary_playlists()
+                if record.playlist_id not in playlist_ids
+            ]
+            self.save_temporary_playlists(records)
 
     def clear_temporary_playlist_records(self):
-        self.save_temporary_playlists([])
+        with self._temporary_playlists_lock():
+            self.save_temporary_playlists([])

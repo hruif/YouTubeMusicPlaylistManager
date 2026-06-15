@@ -4,6 +4,7 @@ Unit tests for UI helper logic that does not require a Tk root window.
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from playlist_url_window import PlaylistURLWindow
 from ui import PlaylistManagerUI
@@ -1220,3 +1221,33 @@ def test_sorted_playlist_items_orders_by_name_then_source():
         'youtube:PL1',
         'youtube:PL2'
     ]
+
+
+def test_format_relative_age_buckets_by_largest_unit():
+    import time as _time
+
+    manager = make_manager()
+    now = int(_time.time())
+
+    assert manager._format_relative_age(now) == 'just now'
+    assert manager._format_relative_age(now - 5 * 60) == '5 minutes ago'
+    assert manager._format_relative_age(now - 2 * 3600) == '2 hours ago'
+    assert manager._format_relative_age(now - 3 * 86400) == '3 days ago'
+    assert manager._format_relative_age(0) == 'unknown age'
+
+
+def test_temp_playlist_sources_text_prefixes_known_sources():
+    manager = make_manager()
+    record = SimpleNamespace(
+        source_playlists=[
+            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
+            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
+            {'id': 'X', 'name': '', 'source': 'youtube'},
+        ]
+    )
+
+    assert manager._temp_playlist_sources_text(record) == 'YouTube: Morning, Spotify: Evening'
+
+    empty_record = SimpleNamespace(source_playlists=[])
+    assert manager._temp_playlist_sources_text(empty_record) == ''
+    assert manager._temp_playlist_sources_suffix(empty_record) == ''
