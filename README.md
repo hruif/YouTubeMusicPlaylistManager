@@ -78,7 +78,8 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Select one or more YouTube Music playlists, then click "Play in YouTube Music" in the sidebar.
      The first time, the app offers to open the header setup for you.
    - The app creates a private temporary playlist, opens it on music.youtube.com, and remembers it
-     for cleanup. Songs that YouTube Music rejects are skipped and reported.
+     for cleanup. Songs that YouTube Music rejects (deleted, private, or region-locked tracks) are
+     skipped and reported; duplicates across playlists are merged automatically.
    - Spotify playlists are skipped for this flow for now.
 
 9. **Manage temporary playlists**:

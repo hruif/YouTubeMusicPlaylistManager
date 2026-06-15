@@ -2641,9 +2641,23 @@ class PlaylistManagerUI:
             for video_id in sorted(self._coerce_id_set(pl_data.get('videos'))):
                 video_entries.append((str(video_id), True))
 
-        video_ids = [video_id for video_id, _preferred in video_entries]
-        for index, (_video_id, preferred) in enumerate(video_entries):
-            if preferred:
+        # De-duplicate while preserving first-seen order. A song that appears in
+        # several selected playlists must only be sent once; YouTube Music rejects
+        # re-adds of a video already in the playlist, which would otherwise show up
+        # as "skipped" songs. A video is treated as a preferred seed if any of its
+        # occurrences is preferred.
+        video_ids = []
+        preferred_by_id = {}
+        for video_id, preferred in video_entries:
+            if video_id in preferred_by_id:
+                if preferred:
+                    preferred_by_id[video_id] = True
+                continue
+            preferred_by_id[video_id] = preferred
+            video_ids.append(video_id)
+
+        for index, video_id in enumerate(video_ids):
+            if preferred_by_id.get(video_id):
                 return [video_ids[index]] + video_ids[:index] + video_ids[index + 1:]
         return video_ids
 
@@ -2699,10 +2713,14 @@ class PlaylistManagerUI:
         if skipped_video_ids:
             examples = ", ".join(item["video_id"] for item in skipped_video_ids[:5])
             more = "..." if len(skipped_video_ids) > 5 else ""
+            reasons = self._summarize_skip_reasons(skipped_video_ids)
+            reason_message = f"\nMost common reason(s): {reasons}." if reasons else ""
             skipped_message = (
                 f"\n\nSkipped {len(skipped_video_ids)} song"
                 f"{'' if len(skipped_video_ids) == 1 else 's'} that YouTube Music rejected"
                 f" ({examples}{more})."
+                "\nThis usually means the track is unavailable, private, or region-locked."
+                f"{reason_message}"
             )
 
         messagebox.showinfo(
@@ -2716,6 +2734,16 @@ class PlaylistManagerUI:
 
         if self.current_display_view == 'settings':
             self.show_settings_display()
+
+    def _summarize_skip_reasons(self, skipped_video_ids, limit=3):
+        distinct = []
+        for item in skipped_video_ids or []:
+            reason = str((item or {}).get("error") or "").strip()
+            if reason and reason not in distinct:
+                distinct.append(reason)
+            if len(distinct) >= limit:
+                break
+        return " | ".join(distinct)
 
     def delete_temporary_youtube_playlists(self, prompt=True, records=None):
         if records is None:

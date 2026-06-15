@@ -787,6 +787,42 @@ def test_temporary_youtube_playlist_video_ids_prefer_queue_ok_seed():
     assert video_ids == ['queue-ok', 'ytm-only']
 
 
+def test_temporary_youtube_playlist_video_ids_dedupes_across_playlists():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube', 'id': 'PL1', 'name': 'A', 'videos': set(),
+            'tracks': [{'videoId': 'a'}, {'videoId': 'b'}],
+        },
+        'youtube:PL2': {
+            'source': 'youtube', 'id': 'PL2', 'name': 'B', 'videos': set(),
+            'tracks': [{'videoId': 'b'}, {'videoId': 'c'}],
+        },
+    }
+
+    video_ids = manager._temporary_youtube_playlist_video_ids([
+        {'key': 'youtube:PL1', 'id': 'PL1', 'name': 'A', 'source': 'youtube'},
+        {'key': 'youtube:PL2', 'id': 'PL2', 'name': 'B', 'source': 'youtube'},
+    ])
+
+    # 'b' appears in both playlists but must only be sent once.
+    assert video_ids == ['a', 'b', 'c']
+
+
+def test_summarize_skip_reasons_lists_distinct_reasons():
+    manager = make_manager()
+    skipped = [
+        {'video_id': 'x', 'error': 'HTTP 409: already in playlist'},
+        {'video_id': 'y', 'error': 'HTTP 409: already in playlist'},
+        {'video_id': 'z', 'error': 'HTTP 400: unavailable'},
+    ]
+
+    assert manager._summarize_skip_reasons(skipped) == (
+        'HTTP 409: already in playlist | HTTP 400: unavailable'
+    )
+    assert manager._summarize_skip_reasons([]) == ''
+
+
 def test_temporary_youtube_playlist_creation_reports_create_failure():
     manager = make_manager()
     manager.saved_playlists = {
