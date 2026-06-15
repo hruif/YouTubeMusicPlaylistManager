@@ -1,12 +1,24 @@
+import contextlib
 import json
 import os
 import re
+import subprocess
+import sys
+import threading
+import time
 import tkinter as tk
 import webbrowser
-from pathlib import Path
+from datetime import datetime
 from tkinter import ttk, messagebox
 from ytmusicapi import YTMusic
+from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
+
+from app_info import APP_NAME, APP_VERSION
+from app_paths import resource_path, user_data_path
 from playlist_url_window import PlaylistURLWindow
+from update_checker import UpdateChecker
+from youtube_data_api import YouTubeDataApiClient
+from youtube_music_account import YouTubeMusicAccount
 from youtube_player import YouTubeQueuePlayer
 
 try:
@@ -20,15 +32,17 @@ except ImportError:
 class PlaylistManagerUI:
     """Main Tk shell that coordinates playlist data, displays, and playback actions."""
 
-    PLAYLIST_FILE = Path(__file__).with_name("saved_playlists.json")
-    ASSETS_DIR = Path(__file__).with_name("assets")
-    WEB_DIR = Path(__file__).with_name("web")
+    PLAYLIST_FILE = user_data_path("saved_playlists.json")
+    ASSETS_DIR = resource_path("assets")
+    WEB_DIR = resource_path("web")
     YOUTUBE_PLAYER_FILE = WEB_DIR / "youtube_queue_player.html"
-    YOUTUBE_PLAYER_LAUNCHER = Path(__file__).with_name("youtube_player_window.py")
+    YOUTUBE_PLAYER_LAUNCHER = resource_path("youtube_player_window.py")
     YOUTUBE_PLAYER_HOST = "127.0.0.1"
     YOUTUBE_QUEUE_CACHE_LIMIT = 20
     YOUTUBE_QUEUE_ACTIONS_ENV_VAR = "PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS"
+    DISABLE_UPDATE_CHECK_ENV_VAR = "PLAYLIST_MANAGER_DISABLE_UPDATE_CHECK"
     PLAYLIST_DISPLAY_LIMIT = 140
+    YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE = 50
     SOURCE_LABELS = {
         'youtube': 'YouTube',
         'spotify': 'Spotify'
@@ -50,7 +64,7 @@ class PlaylistManagerUI:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("YouTube Music Public Playlist Manager")
+        self.root.title(APP_NAME)
         self.root.geometry("1180x720")
         self.root.minsize(1020, 640)
         
@@ -78,13 +92,19 @@ class PlaylistManagerUI:
             # Could add a status label here if desired
 
         self.use_display_windows_var = tk.BooleanVar(value=False)
+        self.app_icon_image = self._load_app_icon_image()
         self.source_logo_images = self._build_source_logo_images()
         self.sidebar_playlist_vars = []
         self.display_playlist_vars = []
         self.active_find_entry = None
         self.current_display_view = 'empty'
+        self.update_checker = UpdateChecker()
+        self.youtube_account = YouTubeMusicAccount(opener=self._open_external_url)
+        self.authenticated_ytmusic = self._build_authenticated_ytmusic()
         self.youtube_player = self._build_youtube_player()
+        self._configure_window_icon(self.root)
         self.style = ttk.Style()
+        self._configure_button_feedback()
         self.style.configure("SourceLogo.Treeview", rowheight=32)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         
@@ -117,23 +137,23 @@ class PlaylistManagerUI:
         search_button = ttk.Button(button_frame, text="Search", command=self.on_search)
         search_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        add_playlist_button = ttk.Button(button_frame, text="Add YouTube Playlist URL", command=self.open_playlist_window)
+        add_playlist_button = ttk.Button(button_frame, text="Add Playlist URL", command=self.open_playlist_window)
         add_playlist_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        add_spotify_button = ttk.Button(button_frame, text="Add Spotify Playlist URL", command=self.open_spotify_playlist_window)
-        add_spotify_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
-
         view_playlists_button = ttk.Button(button_frame, text="View Saved Playlists", command=self.view_saved_playlists)
-        view_playlists_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
+        view_playlists_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
 
         find_duplicates_button = ttk.Button(button_frame, text="Find Duplicates in Selection", command=self.find_duplicate_songs)
-        find_duplicates_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
+        find_duplicates_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
 
         update_selected_button = ttk.Button(button_frame, text="Update Selected Playlists", command=self.update_selected_playlists)
-        update_selected_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
+        update_selected_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
 
         combined_songs_button = ttk.Button(button_frame, text="View Combined Songs", command=self.open_combined_songs_selector)
-        combined_songs_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+        combined_songs_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
+
+        play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
+        play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
         settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
@@ -162,10 +182,108 @@ class PlaylistManagerUI:
         self.display_frame.rowconfigure(1, weight=1)
         self.refresh_sidebar_playlists()
         self.show_empty_display()
+        self._schedule_initial_update_check()
+        self._schedule_temporary_playlist_cleanup_prompt()
 
     def _on_close(self):
         self.youtube_player.shutdown()
         self.root.destroy()
+
+    def _load_app_icon_image(self):
+        icon_path = self.ASSETS_DIR / "app_icon.png"
+        if not icon_path.exists():
+            return None
+        try:
+            return tk.PhotoImage(file=str(icon_path))
+        except tk.TclError:
+            return None
+
+    def _configure_window_icon(self, window):
+        if getattr(self, 'app_icon_image', None) is None:
+            return
+        try:
+            window.iconphoto(True, self.app_icon_image)
+        except tk.TclError:
+            pass
+
+    def _configure_button_feedback(self):
+        try:
+            self.style.configure("TButton", padding=(7, 4))
+            self.style.map(
+                "TButton",
+                background=[
+                    ("pressed", "#cfe3ff"),
+                    ("active", "#eaf2ff"),
+                ],
+                foreground=[
+                    ("disabled", "#8a8a8a"),
+                    ("pressed", "#0b4f9c"),
+                    ("active", "#0b4f9c"),
+                ],
+                relief=[
+                    ("pressed", "sunken"),
+                    ("!pressed", "raised"),
+                ],
+            )
+        except tk.TclError:
+            pass
+
+        self.root.bind_class("TButton", "<Enter>", self._button_feedback_enter, add="+")
+        self.root.bind_class("TButton", "<Leave>", self._button_feedback_leave, add="+")
+        self.root.bind_class("TButton", "<ButtonPress-1>", self._button_feedback_press, add="+")
+        self.root.bind_class("TButton", "<ButtonRelease-1>", self._button_feedback_release, add="+")
+
+    def _button_feedback_enter(self, event):
+        widget = event.widget
+        if not hasattr(widget, "state") or widget.instate(["disabled"]):
+            return
+        widget.state(["active"])
+        with contextlib.suppress(tk.TclError):
+            widget.configure(cursor="pointinghand" if sys.platform == "darwin" else "hand2")
+
+    def _button_feedback_leave(self, event):
+        self._reset_button_feedback(event.widget)
+
+    def _button_feedback_press(self, event):
+        widget = event.widget
+        if not hasattr(widget, "state") or widget.instate(["disabled"]):
+            return
+        widget.state(["pressed"])
+        with contextlib.suppress(tk.TclError):
+            widget.update_idletasks()
+
+    def _button_feedback_release(self, event):
+        widget = event.widget
+        if not hasattr(widget, "state"):
+            return
+        self.root.after(140, lambda: self._reset_button_feedback(widget))
+
+    def _reset_button_feedback(self, widget):
+        if not hasattr(widget, "state"):
+            return
+        with contextlib.suppress(tk.TclError):
+            widget.state(["!pressed", "!active"])
+            widget.configure(cursor="")
+
+    def _open_external_url(self, url):
+        url = str(url or "").strip()
+        if not url:
+            return False
+
+        try:
+            if webbrowser.open_new_tab(url):
+                return True
+        except Exception:
+            pass
+
+        if sys.platform == "darwin":
+            try:
+                subprocess.Popen(["open", url])
+                return True
+            except Exception:
+                pass
+
+        return False
 
     def _build_youtube_player(self):
         return YouTubeQueuePlayer(
@@ -175,6 +293,39 @@ class PlaylistManagerUI:
             queue_cache_limit=self.YOUTUBE_QUEUE_CACHE_LIMIT,
             unavailable_callback=self._mark_youtube_track_unavailable
         )
+
+    def _build_authenticated_ytmusic(self):
+        if not self.youtube_account.is_ready():
+            return None
+
+        try:
+            return self.youtube_account.build_authenticated_client()
+        except Exception as e:
+            print(f"Could not initialize authenticated YouTube Music client: {e}")
+            return None
+
+    def _youtube_music_client(self):
+        if self.authenticated_ytmusic is None:
+            self.authenticated_ytmusic = self._build_authenticated_ytmusic()
+        return self.authenticated_ytmusic
+
+    def _youtube_data_api_client(self):
+        return YouTubeDataApiClient(
+            client_file=self.youtube_account.client_file,
+            token_file=self.youtube_account.token_file,
+        )
+
+    def _is_youtube_music_connected(self):
+        return self.authenticated_ytmusic is not None or self.youtube_account.is_ready()
+
+    def _youtube_music_auth_status(self):
+        if self._is_youtube_music_connected():
+            return "Connected"
+        if self.youtube_account.token_file.exists():
+            return "Saved token incomplete, reconnect needed"
+        if self.youtube_account.has_client_credentials():
+            return "OAuth client saved, sign-in needed"
+        return "Not connected"
 
     def _mark_youtube_track_unavailable(self, payload):
         payload = dict(payload or {})
@@ -221,6 +372,65 @@ class PlaylistManagerUI:
         if changed:
             self.save_playlists()
             self._refresh_live_combined_if_active()
+
+    def _schedule_initial_update_check(self):
+        if os.environ.get(self.DISABLE_UPDATE_CHECK_ENV_VAR, "").lower() in {"1", "true", "yes", "on"}:
+            return
+        self.root.after(1500, lambda: self.check_for_updates(silent=True))
+
+    def _schedule_temporary_playlist_cleanup_prompt(self):
+        if not self._is_youtube_music_connected():
+            return
+        if not self.youtube_account.load_temporary_playlists():
+            return
+        self.root.after(3500, self._prompt_for_temporary_playlist_cleanup)
+
+    def _prompt_for_temporary_playlist_cleanup(self):
+        records = self.youtube_account.load_temporary_playlists()
+        if not records:
+            return
+
+        should_delete = messagebox.askyesno(
+            "Temporary YouTube Music Playlists",
+            (
+                f"{len(records)} temporary playlist"
+                f"{'' if len(records) == 1 else 's'} from a previous queue session are still saved.\n\n"
+                "Delete them now?"
+            )
+        )
+        if should_delete:
+            self.delete_temporary_youtube_playlists(prompt=False)
+
+    def check_for_updates(self, silent=False):
+        def worker():
+            try:
+                update_info = self.update_checker.check()
+            except Exception as error:
+                if not silent:
+                    self.root.after(0, lambda error=error: messagebox.showerror("Update Check Failed", str(error)))
+                return
+
+            self.root.after(0, lambda: self._handle_update_result(update_info, silent))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_update_result(self, update_info, silent):
+        if update_info is None:
+            if not silent:
+                messagebox.showinfo("No Update Available", f"{APP_NAME} {APP_VERSION} is up to date.")
+            return
+
+        should_open = messagebox.askyesno(
+            "Update Available",
+            (
+                f"{update_info.title} is available.\n\n"
+                f"Installed version: {APP_VERSION}\n"
+                f"Latest version: {update_info.version}\n\n"
+                "Open the download page?"
+            )
+        )
+        if should_open:
+            self._open_external_url(update_info.url)
     
     def load_playlists(self):
         """Load saved playlists from file"""
@@ -431,7 +641,7 @@ class PlaylistManagerUI:
         """Save playlists to file"""
         try:
             json_data = {}
-            for playlist_key, pl_data in self.saved_playlists.items():
+            for playlist_key, pl_data in self._sorted_playlist_items():
                 source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
                 store_key = self._playlist_storage_key(source, playlist_id)
                 json_data[store_key] = self._serialize_playlist_entry(playlist_key, pl_data)
@@ -713,6 +923,17 @@ class PlaylistManagerUI:
     def _source_name(self, source):
         return self.SOURCE_LABELS.get(source, source.title() if source else 'Unknown')
 
+    def _sorted_playlist_items(self):
+        def sort_key(item):
+            playlist_key, pl_data = item
+            return (
+                self._normalize_search_text(pl_data.get('name', '')),
+                self._normalize_search_text(self._source_name(pl_data.get('source', 'youtube'))),
+                str(playlist_key).lower()
+            )
+
+        return sorted(self.saved_playlists.items(), key=sort_key)
+
     def _build_source_logo_images(self):
         return {
             'sidebar': {
@@ -825,6 +1046,7 @@ class PlaylistManagerUI:
         info_window.title(title)
         info_window.geometry(geometry)
         info_window.minsize(*minsize)
+        self._configure_window_icon(info_window)
 
         outer_frame = ttk.Frame(info_window, padding="18")
         outer_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -920,7 +1142,8 @@ class PlaylistManagerUI:
             "Sources",
             ", ".join(sorted(self._source_name(source) for source in entry.get('sources', []))) or "Unknown"
         )
-        row = self._add_info_row(content_frame, row, "Playback", self._entry_queue_status(entry))
+        if self._show_youtube_queue_actions():
+            row = self._add_info_row(content_frame, row, "Playback", self._entry_queue_status(entry))
 
         row = self._add_info_section(content_frame, "Playlist Appearances", row)
         summaries = self._entry_playlist_occurrence_summaries(entry)
@@ -936,7 +1159,7 @@ class PlaylistManagerUI:
                 row,
                 summary['label'],
                 f"{occurrence_text}; Track IDs: {track_ids or 'Unknown'}",
-                action=("Open", lambda link=summary['urls'][0]: webbrowser.open(link)) if summary.get('urls') else None
+                action=("Open", lambda link=summary['urls'][0]: self._open_external_url(link)) if summary.get('urls') else None
             )
 
     def _clear_display_frame(self):
@@ -947,6 +1170,7 @@ class PlaylistManagerUI:
         display_window = tk.Toplevel(self.root)
         display_window.title(title)
         display_window.geometry(geometry)
+        self._configure_window_icon(display_window)
 
         display_frame = ttk.Frame(display_window, padding="20")
         display_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -1066,7 +1290,400 @@ class PlaylistManagerUI:
             )
             description.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
 
-        self._show_display("Settings", build_settings_display, geometry="620x260")
+            account_frame = ttk.LabelFrame(parent, text="YouTube Music Account", padding="12")
+            account_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            account_frame.columnconfigure(0, weight=1)
+
+            status_label = ttk.Label(account_frame, text=f"Status: {self._youtube_music_auth_status()}")
+            status_label.grid(row=0, column=0, sticky=tk.W)
+
+            temp_records = self.youtube_account.load_temporary_playlists()
+            temp_label = ttk.Label(
+                account_frame,
+                text=f"Temporary playlists waiting for cleanup: {len(temp_records)}"
+            )
+            temp_label.grid(row=1, column=0, sticky=tk.W, pady=(6, 0))
+
+            account_actions = ttk.Frame(account_frame)
+            account_actions.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
+
+            connect_button = ttk.Button(
+                account_actions,
+                text="Reconnect" if self._is_youtube_music_connected() else "Connect",
+                command=self.show_youtube_music_auth_display
+            )
+            connect_button.grid(row=0, column=0, sticky=tk.E, padx=(0, 6))
+
+            disconnect_button = ttk.Button(
+                account_actions,
+                text="Disconnect",
+                command=self.disconnect_youtube_music
+            )
+            disconnect_button.grid(row=0, column=1, sticky=tk.E, padx=(0, 6))
+            if not self._is_youtube_music_connected():
+                disconnect_button.state(["disabled"])
+
+            cleanup_button = ttk.Button(
+                account_actions,
+                text="Delete Temporary",
+                command=self.delete_temporary_youtube_playlists
+            )
+            cleanup_button.grid(row=0, column=2, sticky=tk.E)
+            if not temp_records:
+                cleanup_button.state(["disabled"])
+
+            updates_frame = ttk.LabelFrame(parent, text="Updates", padding="12")
+            updates_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
+            updates_frame.columnconfigure(0, weight=1)
+
+            version_label = ttk.Label(updates_frame, text=f"Current version: {APP_VERSION}")
+            version_label.grid(row=0, column=0, sticky=tk.W)
+
+            check_button = ttk.Button(
+                updates_frame,
+                text="Check for Updates",
+                command=lambda: self.check_for_updates(silent=False)
+            )
+            check_button.grid(row=0, column=1, sticky=tk.E, padx=(12, 0))
+
+        self._show_display("Settings", build_settings_display, geometry="760x460")
+
+    def show_youtube_music_auth_display(self):
+        self._show_display("Connect YouTube Music", self._build_youtube_music_auth_display, geometry="820x620")
+
+    def _build_youtube_music_auth_display(self, parent):
+        self.current_display_view = 'youtube_auth'
+        parent.columnconfigure(0, weight=1)
+
+        saved_credentials = self.youtube_account.load_client_credentials() or {}
+        client_id_var = tk.StringVar(value=saved_credentials.get("client_id", ""))
+        client_secret_var = tk.StringVar(value=saved_credentials.get("client_secret", ""))
+        status_var = tk.StringVar(value=f"Status: {self._youtube_music_auth_status()}")
+        code_var = tk.StringVar(value="No sign-in code yet")
+        url_var = tk.StringVar(value="")
+
+        title = ttk.Label(parent, text="Connect YouTube Music", font=("Helvetica", 15, "bold"))
+        title.grid(row=0, column=0, sticky=tk.W, pady=(0, 12))
+
+        intro = ttk.Label(
+            parent,
+            text=(
+                "YouTube Music queue creation uses ytmusicapi OAuth. Create a TV and Limited Input OAuth client "
+                "in Google Cloud once, paste its client ID and secret here, then sign in with the code."
+            ),
+            wraplength=720
+        )
+        intro.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+
+        setup_frame = ttk.LabelFrame(parent, text="One-Time Google Setup", padding="12")
+        setup_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        setup_frame.columnconfigure(0, weight=1)
+
+        setup_text = ttk.Label(
+            setup_frame,
+            text=(
+                "Enable the YouTube Data API, then create an OAuth Client ID with application type "
+                "\"TVs and Limited Input devices\". Desktop OAuth clients will fail with this sign-in flow. "
+                "If your OAuth app is External and in Testing mode, add your Google account under "
+                "Audience > Test users. Copy the TV client ID and client secret below."
+            ),
+            wraplength=700
+        )
+        setup_text.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=(0, 8))
+
+        api_button = ttk.Button(
+            setup_frame,
+            text="Open YouTube Data API",
+            command=lambda: self._open_external_url("https://console.cloud.google.com/apis/library/youtube.googleapis.com")
+        )
+        api_button.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
+
+        credentials_button = ttk.Button(
+            setup_frame,
+            text="Open Credentials",
+            command=lambda: self._open_external_url("https://console.cloud.google.com/apis/credentials")
+        )
+        credentials_button.grid(row=1, column=1, sticky=tk.W, padx=(0, 8))
+
+        help_button = ttk.Button(
+            setup_frame,
+            text="OAuth Help",
+            command=lambda: self._open_external_url("https://ytmusicapi.readthedocs.io/en/stable/setup/oauth.html")
+        )
+        help_button.grid(row=1, column=2, sticky=tk.W)
+
+        audience_button = ttk.Button(
+            setup_frame,
+            text="Open Audience",
+            command=lambda: self._open_external_url("https://console.cloud.google.com/auth/audience")
+        )
+        audience_button.grid(row=1, column=3, sticky=tk.W, padx=(8, 0))
+
+        credentials_frame = ttk.LabelFrame(parent, text="OAuth Client", padding="12")
+        credentials_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        credentials_frame.columnconfigure(1, weight=1)
+
+        client_id_label = ttk.Label(credentials_frame, text="Client ID:")
+        client_id_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=(0, 6))
+        client_id_entry = ttk.Entry(credentials_frame, textvariable=client_id_var)
+        client_id_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0, 6))
+
+        client_secret_label = ttk.Label(credentials_frame, text="Client secret:")
+        client_secret_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
+        client_secret_entry = ttk.Entry(credentials_frame, textvariable=client_secret_var, show="*")
+        client_secret_entry.grid(row=1, column=1, sticky=(tk.W, tk.E))
+
+        sign_in_frame = ttk.LabelFrame(parent, text="Sign In", padding="12")
+        sign_in_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        sign_in_frame.columnconfigure(0, weight=1)
+
+        status_label = ttk.Label(sign_in_frame, textvariable=status_var)
+        status_label.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 8))
+
+        code_label = ttk.Label(sign_in_frame, textvariable=code_var, font=("Helvetica", 18, "bold"))
+        code_label.grid(row=1, column=0, sticky=tk.W)
+
+        copy_button = ttk.Button(
+            sign_in_frame,
+            text="Copy Code",
+            command=lambda: self._copy_to_clipboard(code_var.get())
+        )
+        copy_button.grid(row=1, column=1, sticky=tk.W, padx=(12, 6))
+
+        def open_current_sign_in_url():
+            sign_in_url = url_var.get().strip()
+            if not sign_in_url:
+                status_var.set("Status: click Save and Start Sign-In first to request a code.")
+                return
+
+            opened = self._open_external_url(sign_in_url)
+            if opened:
+                status_var.set("Status: sign-in page opened. Finish Google sign-in in the browser.")
+            else:
+                status_var.set("Status: could not open the browser automatically. Copy the URL below.")
+
+        open_sign_in_button = ttk.Button(
+            sign_in_frame,
+            text="Open Sign-In Page",
+            command=open_current_sign_in_url
+        )
+        open_sign_in_button.grid(row=1, column=2, sticky=tk.W)
+        open_sign_in_button.state(["disabled"])
+
+        url_entry = ttk.Entry(sign_in_frame, textvariable=url_var, state="readonly")
+        url_entry.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(8, 0))
+
+        start_button = ttk.Button(
+            parent,
+            text="Save and Start Sign-In",
+            command=lambda: self._start_youtube_music_oauth_flow(
+                client_id_var.get(),
+                client_secret_var.get(),
+                status_var,
+                code_var,
+                url_var,
+                start_button,
+                open_sign_in_button,
+            )
+        )
+        start_button.grid(row=5, column=0, sticky=tk.W)
+
+    def _copy_to_clipboard(self, text):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+
+    def _start_youtube_music_oauth_flow(
+        self,
+        client_id,
+        client_secret,
+        status_var,
+        code_var,
+        url_var,
+        start_button=None,
+        open_sign_in_button=None,
+    ):
+        try:
+            self.youtube_account.save_client_credentials(client_id, client_secret)
+        except ValueError as e:
+            messagebox.showwarning("Missing OAuth Details", str(e))
+            return
+
+        code_var.set("Requesting code...")
+        url_var.set("")
+        status_var.set("Status: requesting a Google sign-in code...")
+        if start_button:
+            start_button.state(["disabled"])
+        if open_sign_in_button:
+            open_sign_in_button.state(["disabled"])
+
+        def worker():
+            try:
+                code = self.youtube_account.request_device_code()
+            except Exception as e:
+                self.root.after(0, lambda error=e: self._finish_youtube_oauth_error(status_var, start_button, error))
+                return
+
+            self.root.after(
+                0,
+                lambda: self._begin_youtube_oauth_polling(
+                    code,
+                    status_var,
+                    code_var,
+                    url_var,
+                    start_button,
+                    open_sign_in_button,
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _format_youtube_oauth_error(self, error):
+        error_text = str(error)
+        if isinstance(error, BadOAuthClient) or "OAuth client failure" in error_text:
+            return (
+                "OAuth client failure. For ytmusicapi, create an OAuth Client ID with application type "
+                "\"TVs and Limited Input devices\". Desktop OAuth clients will fail here."
+            )
+
+        if "access_denied" in error_text or "developer-approved testers" in error_text:
+            return (
+                "Access denied. In Google Cloud, open Google Auth Platform > Audience and add the "
+                "Google account you are signing in with under Test users. Then start sign-in again."
+            )
+
+        return error_text
+
+    def _finish_youtube_oauth_error(self, status_var, start_button, error):
+        status_var.set(f"Status: sign-in failed - {self._format_youtube_oauth_error(error)}")
+        if start_button:
+            start_button.state(["!disabled"])
+
+    def _begin_youtube_oauth_polling(
+        self,
+        code,
+        status_var,
+        code_var,
+        url_var,
+        start_button,
+        open_sign_in_button,
+    ):
+        if code.get("error"):
+            error_message = code.get("error_description") or code.get("error")
+            self._finish_youtube_oauth_error(status_var, start_button, error_message)
+            return
+
+        user_code = code.get("user_code", "")
+        verification_url = code.get("verification_url", "")
+        sign_in_url = f"{verification_url}?user_code={user_code}" if verification_url and user_code else verification_url
+        code_var.set(user_code or "Code unavailable")
+        url_var.set(sign_in_url or "")
+        if open_sign_in_button and sign_in_url:
+            open_sign_in_button.state(["!disabled"])
+
+        opened = self._open_external_url(sign_in_url) if sign_in_url else False
+        if opened:
+            status_var.set("Status: browser opened. Finish Google sign-in; the app will continue automatically.")
+        else:
+            status_var.set("Status: sign-in code ready. Click Open Sign-In Page or copy the URL.")
+        interval = max(1, int(code.get("interval") or 5))
+        expires_at = time.time() + int(code.get("expires_in") or 900)
+        self._poll_youtube_oauth_token(
+            code.get("device_code"),
+            interval,
+            expires_at,
+            status_var,
+            start_button,
+        )
+
+    def _poll_youtube_oauth_token(self, device_code, interval, expires_at, status_var, start_button):
+        if not device_code:
+            self._finish_youtube_oauth_error(status_var, start_button, "Google did not return a device code.")
+            return
+
+        if time.time() > expires_at:
+            self._finish_youtube_oauth_error(status_var, start_button, "the sign-in code expired.")
+            return
+
+        def worker():
+            try:
+                response = self.youtube_account.token_from_device_code(device_code)
+            except Exception as e:
+                self.root.after(0, lambda error=e: self._finish_youtube_oauth_error(status_var, start_button, error))
+                return
+
+            self.root.after(
+                0,
+                lambda: self._handle_youtube_oauth_token_response(
+                    response,
+                    device_code,
+                    interval,
+                    expires_at,
+                    status_var,
+                    start_button,
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_youtube_oauth_token_response(
+        self,
+        response,
+        device_code,
+        interval,
+        expires_at,
+        status_var,
+        start_button,
+    ):
+        response = response or {}
+        if response.get("access_token"):
+            try:
+                self.youtube_account.store_token(response)
+                self.authenticated_ytmusic = self._build_authenticated_ytmusic()
+                if self.authenticated_ytmusic is None:
+                    raise RuntimeError("The saved token could not initialize a YouTube Music session.")
+            except Exception as e:
+                self._finish_youtube_oauth_error(status_var, start_button, e)
+                return
+
+            status_var.set("Status: connected to YouTube Music.")
+            if start_button:
+                start_button.state(["!disabled"])
+            messagebox.showinfo("YouTube Music Connected", "YouTube Music is connected. You can now create temporary queue playlists.")
+            return
+
+        error = response.get("error")
+        if error in {"authorization_pending", "slow_down"}:
+            next_interval = interval + 5 if error == "slow_down" else interval
+            self.root.after(
+                next_interval * 1000,
+                lambda: self._poll_youtube_oauth_token(
+                    device_code,
+                    next_interval,
+                    expires_at,
+                    status_var,
+                    start_button,
+                )
+            )
+            return
+
+        self._finish_youtube_oauth_error(status_var, start_button, error or response)
+
+    def disconnect_youtube_music(self):
+        if not self._is_youtube_music_connected():
+            messagebox.showinfo("YouTube Music Account", "YouTube Music is not connected.")
+            return
+
+        should_disconnect = messagebox.askyesno(
+            "Disconnect YouTube Music",
+            "Remove the saved YouTube Music sign-in token from this computer?"
+        )
+        if not should_disconnect:
+            return
+
+        self.youtube_account.disconnect()
+        self.authenticated_ytmusic = None
+        messagebox.showinfo("YouTube Music Account", "YouTube Music has been disconnected.")
+        self.show_settings_display()
 
     def _find_matching_tracks(self, query):
         query_terms = [term for term in self._normalize_search_text(query).split() if term]
@@ -1299,6 +1916,432 @@ class PlaylistManagerUI:
         value = os.environ.get(self.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, "")
         return value.lower() in {"1", "true", "yes", "on"}
 
+    def _youtube_playlist_sources_from_keys(self, playlist_keys):
+        youtube_playlists = []
+        skipped_playlists = []
+        for playlist_key in playlist_keys:
+            pl_data = self.saved_playlists.get(playlist_key)
+            if not pl_data:
+                continue
+
+            source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+            playlist_info = {
+                'key': playlist_key,
+                'id': playlist_id,
+                'name': pl_data.get('name', 'Unnamed Playlist'),
+                'source': source
+            }
+            if source == 'youtube':
+                youtube_playlists.append(playlist_info)
+            else:
+                skipped_playlists.append(playlist_info)
+
+        return youtube_playlists, skipped_playlists
+
+    def play_selection_in_youtube_music(self):
+        if not self.saved_playlists:
+            messagebox.showwarning("No Playlists", "Please add at least one playlist first.")
+            return
+
+        selected_playlist_keys = self._selected_sidebar_playlist_keys()
+        if not selected_playlist_keys:
+            messagebox.showwarning("No Selection", "Please choose at least one playlist.")
+            return
+
+        youtube_playlists, skipped_playlists = self._youtube_playlist_sources_from_keys(selected_playlist_keys)
+        if not youtube_playlists:
+            messagebox.showinfo(
+                "YouTube Music",
+                "Only YouTube Music playlists can be used for this queue right now. Spotify playlists were not added."
+            )
+            return
+
+        if skipped_playlists:
+            should_continue = messagebox.askyesno(
+                "Spotify Playlists Skipped",
+                (
+                    f"{len(skipped_playlists)} selected Spotify playlist"
+                    f"{'' if len(skipped_playlists) == 1 else 's'} will be skipped for now.\n\n"
+                    "Continue with the selected YouTube Music playlists?"
+                )
+            )
+            if not should_continue:
+                return
+
+        if not self._is_youtube_music_connected():
+            should_connect = messagebox.askyesno(
+                "Connect YouTube Music",
+                "Creating a temporary YouTube Music playlist requires sign-in. Connect YouTube Music now?"
+            )
+            if should_connect:
+                self.show_youtube_music_auth_display()
+            return
+
+        self._create_temporary_youtube_music_playlist(youtube_playlists)
+
+    def _create_temporary_youtube_music_playlist(self, youtube_playlists):
+        client = self._youtube_music_client()
+        if client is None:
+            messagebox.showerror(
+                "YouTube Music",
+                "The saved YouTube Music sign-in could not be loaded. Please reconnect YouTube Music in Settings."
+            )
+            self.show_youtube_music_auth_display()
+            return
+
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Creating YouTube Music Queue")
+        progress_window.geometry("430x150")
+        progress_window.resizable(False, False)
+        self._configure_window_icon(progress_window)
+
+        main_frame = ttk.Frame(progress_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value="Creating private temporary playlist...")
+        status_label = ttk.Label(main_frame, textvariable=status_var)
+        status_label.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+
+        progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=320)
+        progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        progress_bar.start(12)
+
+        def worker():
+            try:
+                title, temp_playlist_id, skipped_video_ids = self._create_temporary_youtube_music_playlist_sync(
+                    client,
+                    youtube_playlists,
+                    lambda text: self.root.after(0, lambda: status_var.set(text)),
+                )
+            except Exception as e:
+                self.root.after(
+                    0,
+                    lambda error=e: self._finish_temporary_playlist_creation(progress_window, None, None, error)
+                )
+                return
+
+            self.root.after(
+                0,
+                lambda: self._finish_temporary_playlist_creation(
+                    progress_window,
+                    title,
+                    temp_playlist_id,
+                    None,
+                    skipped_video_ids,
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _create_temporary_youtube_music_playlist_sync(self, client, youtube_playlists, set_status):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H.%M")
+        title = f"Playlist Manager Queue {timestamp}"
+        description = "Temporary private playlist created by YouTube Music Playlist Manager."
+        video_ids = self._temporary_youtube_playlist_video_ids(youtube_playlists)
+        if not video_ids:
+            raise RuntimeError(
+                "No cached YouTube songs were found in the selected playlists. Update the selected playlists, then try again."
+            )
+
+        temp_playlist_id, remaining_video_ids, seeded_count = self._create_seeded_temporary_youtube_playlist(
+            client,
+            title,
+            description,
+            video_ids,
+            set_status,
+        )
+
+        try:
+            added_count, skipped_video_ids = self._add_video_ids_to_temporary_youtube_playlist(
+                client,
+                temp_playlist_id,
+                remaining_video_ids,
+                set_status,
+            )
+        except Exception:
+            self._delete_temporary_youtube_playlist_best_effort(client, temp_playlist_id)
+            raise
+
+        if seeded_count + added_count == 0:
+            self._delete_temporary_youtube_playlist_best_effort(client, temp_playlist_id)
+            raise RuntimeError("No songs could be added to the temporary playlist.")
+
+        self.youtube_account.remember_temporary_playlist(
+            temp_playlist_id,
+            title,
+            [
+                {
+                    "id": playlist["id"],
+                    "name": playlist["name"],
+                    "source": playlist["source"],
+                }
+                for playlist in youtube_playlists
+            ]
+        )
+        return title, temp_playlist_id, skipped_video_ids
+
+    def _create_seeded_temporary_youtube_playlist(self, client, title, description, video_ids, set_status):
+        set_status("Creating private playlist...")
+        try:
+            temp_playlist_id = client.create_playlist(
+                title,
+                description,
+                privacy_status="PRIVATE",
+                video_ids=[video_ids[0]],
+            )
+            if not isinstance(temp_playlist_id, str) or not temp_playlist_id:
+                raise RuntimeError(temp_playlist_id)
+            return temp_playlist_id, video_ids[1:], 1
+        except Exception as ytmusic_error:
+            set_status("YouTube Music create failed; trying YouTube Data API...")
+            try:
+                data_api_client = self._youtube_data_api_client()
+                temp_playlist_id = data_api_client.create_playlist(
+                    title,
+                    description,
+                    privacy_status="private",
+                )
+                return temp_playlist_id, video_ids, 0
+            except Exception as data_api_error:
+                raise RuntimeError(
+                    "Could not create the temporary playlist. "
+                    f"YouTube Music error: {ytmusic_error}. "
+                    f"YouTube Data API error: {data_api_error}"
+                ) from data_api_error
+
+    def _add_video_ids_to_temporary_youtube_playlist(self, client, temp_playlist_id, video_ids, set_status):
+        added_count = 0
+        skipped_video_ids = []
+        chunks = list(self._chunks(video_ids, self.YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE))
+        for index, chunk in enumerate(chunks, start=1):
+            set_status(f"Adding songs {index} of {len(chunks)}...")
+            added, skipped = self._add_video_id_chunk_adaptive(
+                client,
+                temp_playlist_id,
+                chunk,
+                set_status,
+                f"batch {index} of {len(chunks)}",
+            )
+            added_count += added
+            skipped_video_ids.extend(skipped)
+        return added_count, skipped_video_ids
+
+    def _add_video_id_chunk_adaptive(self, client, temp_playlist_id, video_ids, set_status, label):
+        if not video_ids:
+            return 0, []
+
+        try:
+            response = client.add_playlist_items(temp_playlist_id, videoIds=video_ids)
+            if self._ytmusic_response_succeeded(response):
+                return len(video_ids), []
+            raise RuntimeError(response)
+        except Exception as e:
+            if len(video_ids) == 1:
+                return 0, [{"video_id": video_ids[0], "error": str(e)}]
+
+            middle = max(1, len(video_ids) // 2)
+            set_status(f"Retrying smaller song groups from {label}...")
+            left_added, left_skipped = self._add_video_id_chunk_adaptive(
+                client,
+                temp_playlist_id,
+                video_ids[:middle],
+                set_status,
+                label,
+            )
+            right_added, right_skipped = self._add_video_id_chunk_adaptive(
+                client,
+                temp_playlist_id,
+                video_ids[middle:],
+                set_status,
+                label,
+            )
+            return left_added + right_added, left_skipped + right_skipped
+
+    def _delete_temporary_youtube_playlist_best_effort(self, client, playlist_id):
+        with contextlib.suppress(Exception):
+            client.delete_playlist(playlist_id)
+            return
+
+        with contextlib.suppress(Exception):
+            self._youtube_data_api_client().delete_playlist(playlist_id)
+
+    def _temporary_youtube_playlist_video_ids(self, youtube_playlists):
+        video_entries = []
+        for playlist in youtube_playlists:
+            pl_data = self.saved_playlists.get(playlist.get('key'), {})
+            tracks = pl_data.get('tracks') if isinstance(pl_data.get('tracks'), list) else []
+            if tracks:
+                for track in tracks:
+                    if not isinstance(track, dict):
+                        continue
+                    video_id = str(track.get('videoId') or track.get('id') or "").strip()
+                    if video_id:
+                        video_entries.append((video_id, self._is_preferred_temporary_playlist_seed(track)))
+                continue
+
+            for video_id in sorted(self._coerce_id_set(pl_data.get('videos'))):
+                video_entries.append((str(video_id), True))
+
+        video_ids = [video_id for video_id, _preferred in video_entries]
+        for index, (_video_id, preferred) in enumerate(video_entries):
+            if preferred:
+                return [video_ids[index]] + video_ids[:index] + video_ids[index + 1:]
+        return video_ids
+
+    def _is_preferred_temporary_playlist_seed(self, track):
+        if not isinstance(track, dict):
+            return True
+        if track.get('queuePlayable') is False:
+            return False
+        if track.get('queueStatus') == "YTM only":
+            return False
+        if track.get('videoType') in self.YOUTUBE_MUSIC_ONLY_TYPES:
+            return False
+        return True
+
+    def _chunks(self, items, size):
+        if size <= 0:
+            raise ValueError("Chunk size must be greater than zero.")
+        for start in range(0, len(items), size):
+            yield items[start:start + size]
+
+    def _ytmusic_response_succeeded(self, response):
+        if isinstance(response, str):
+            return "SUCCEEDED" in response
+        if isinstance(response, dict):
+            return "SUCCEEDED" in str(response.get("status") or "")
+        return False
+
+    def _finish_temporary_playlist_creation(self, progress_window, title, temp_playlist_id, error, skipped_video_ids=None):
+        if progress_window.winfo_exists():
+            progress_window.destroy()
+
+        if error:
+            messagebox.showerror("YouTube Music", f"Failed to create the temporary playlist: {error}")
+            return
+
+        self.youtube_account.open_playlist(temp_playlist_id)
+        skipped_video_ids = skipped_video_ids or []
+        skipped_message = ""
+        if skipped_video_ids:
+            examples = ", ".join(item["video_id"] for item in skipped_video_ids[:5])
+            more = "..." if len(skipped_video_ids) > 5 else ""
+            skipped_message = (
+                f"\n\nSkipped {len(skipped_video_ids)} song"
+                f"{'' if len(skipped_video_ids) == 1 else 's'} that YouTube Music rejected"
+                f" ({examples}{more})."
+            )
+
+        messagebox.showinfo(
+            "YouTube Music Playlist Opened",
+            (
+                f"Created and opened {title}.\n\n"
+                "When you are done listening, use Settings > Delete Temporary to remove it."
+                f"{skipped_message}"
+            )
+        )
+
+        if self.current_display_view == 'settings':
+            self.show_settings_display()
+
+    def delete_temporary_youtube_playlists(self, prompt=True):
+        records = self.youtube_account.load_temporary_playlists()
+        if not records:
+            messagebox.showinfo("Temporary Playlists", "There are no temporary YouTube Music playlists to delete.")
+            return
+
+        client = self._youtube_music_client()
+        if client is None:
+            messagebox.showerror(
+                "YouTube Music",
+                "Reconnect YouTube Music before deleting temporary playlists."
+            )
+            self.show_youtube_music_auth_display()
+            return
+
+        if prompt:
+            should_delete = messagebox.askyesno(
+                "Delete Temporary Playlists",
+                (
+                    f"Delete {len(records)} temporary YouTube Music playlist"
+                    f"{'' if len(records) == 1 else 's'} from your account?"
+                )
+            )
+            if not should_delete:
+                return
+
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Deleting Temporary Playlists")
+        progress_window.geometry("430x150")
+        progress_window.resizable(False, False)
+        self._configure_window_icon(progress_window)
+
+        main_frame = ttk.Frame(progress_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value="Deleting temporary playlists...")
+        status_label = ttk.Label(main_frame, textvariable=status_var)
+        status_label.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+
+        progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=320)
+        progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        progress_bar.start(12)
+
+        def worker():
+            deleted_ids = []
+            failed = []
+            for index, record in enumerate(records, start=1):
+                self.root.after(
+                    0,
+                    lambda record=record, index=index: status_var.set(
+                        f"Deleting {index} of {len(records)}: {record.title}"
+                    )
+                )
+                try:
+                    response = client.delete_playlist(record.playlist_id)
+                    if isinstance(response, dict) and "status" in response and "SUCCEEDED" not in response["status"]:
+                        raise RuntimeError(response)
+                    deleted_ids.append(record.playlist_id)
+                except Exception as e:
+                    failed.append((record, e))
+
+            self.root.after(
+                0,
+                lambda: self._finish_temporary_playlist_deletion(
+                    progress_window,
+                    deleted_ids,
+                    failed,
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_temporary_playlist_deletion(self, progress_window, deleted_ids, failed):
+        if progress_window.winfo_exists():
+            progress_window.destroy()
+
+        if deleted_ids:
+            self.youtube_account.forget_temporary_playlists(deleted_ids)
+
+        if failed:
+            messagebox.showwarning(
+                "Temporary Playlist Cleanup",
+                (
+                    f"Deleted {len(deleted_ids)} playlist"
+                    f"{'' if len(deleted_ids) == 1 else 's'}, but {len(failed)} could not be deleted."
+                )
+            )
+        else:
+            messagebox.showinfo(
+                "Temporary Playlist Cleanup",
+                f"Deleted {len(deleted_ids)} temporary playlist{'' if len(deleted_ids) == 1 else 's'}."
+            )
+
+        if self.current_display_view == 'settings':
+            self.show_settings_display()
+
     def _play_playlist_youtube_queue(self, playlist_key):
         pl_data = self.saved_playlists.get(playlist_key)
         if not pl_data:
@@ -1330,7 +2373,7 @@ class PlaylistManagerUI:
         if not url:
             messagebox.showinfo("No Playlist Link", "No playable source link is available for this playlist.")
             return
-        webbrowser.open(url)
+        self._open_external_url(url)
 
     def _entry_play_url(self, entry):
         appearances = entry.get('appearances', [])
@@ -1356,7 +2399,7 @@ class PlaylistManagerUI:
         if not url:
             messagebox.showinfo("No Playback Link", "No playable source link is available for this song.")
             return
-        webbrowser.open(url)
+        self._open_external_url(url)
 
     def _play_entry(self, entry):
         youtube_queue_tracks = self._youtube_queue_tracks_from_entries([entry])
@@ -1455,7 +2498,7 @@ class PlaylistManagerUI:
         if source == 'youtube' and tracks and self._show_youtube_queue_actions():
             actions.append(("Play Queue", lambda: self._play_playlist_youtube_queue(playlist_key)))
         if playlist_url:
-            actions.append(("Open", lambda: webbrowser.open(playlist_url)))
+            actions.append(("Open", lambda: self._open_external_url(playlist_url)))
         actions.append(("Close", details_window.destroy))
         self._add_info_header(outer_frame, playlist_name, source_name, actions=actions)
 
@@ -1470,7 +2513,7 @@ class PlaylistManagerUI:
             row,
             "Playlist Link",
             playlist_url or "Unavailable",
-            action=("Open", lambda: webbrowser.open(playlist_url)) if playlist_url else None
+            action=("Open", lambda: self._open_external_url(playlist_url)) if playlist_url else None
         )
 
         row = self._add_info_section(content_frame, "Cached Data", row)
@@ -1478,7 +2521,7 @@ class PlaylistManagerUI:
         row = self._add_info_row(content_frame, row, "Cached Tracks", len(tracks))
         row = self._add_info_row(content_frame, row, "Unique Cached Tracks", self._cached_track_id_count(tracks))
         row = self._add_info_row(content_frame, row, "Metadata Cached", "Yes" if tracks else "No")
-        if source == 'youtube' and tracks:
+        if source == 'youtube' and tracks and self._show_youtube_queue_actions():
             status_counts = self._cached_queue_status_counts(source, tracks)
             row = self._add_info_row(content_frame, row, "Queue-Playable Tracks", status_counts.get("Queue OK", 0) + status_counts.get("Unknown", 0))
             row = self._add_info_row(content_frame, row, "YTM-Only Tracks", status_counts.get("YTM only", 0))
@@ -1702,7 +2745,7 @@ class PlaylistManagerUI:
         self._show_display("Search Results", build_search_display)
     
     def open_playlist_window(self):
-        PlaylistURLWindow(self.root, self.ytmusic, self.saved_playlists, self, source='youtube')
+        PlaylistURLWindow(self.root, self.ytmusic, self.saved_playlists, self)
 
     def open_spotify_playlist_window(self):
         if not self.spotapi_available:
@@ -1716,7 +2759,7 @@ class PlaylistManagerUI:
     def view_saved_playlists(self):
         """Show a window with saved playlists"""
         if not self.saved_playlists:
-            messagebox.showinfo("Saved Playlists", "No playlists saved yet.\n\nAdd some playlists using the add playlist buttons.")
+            messagebox.showinfo("Saved Playlists", "No playlists saved yet.\n\nAdd some playlists using the add playlist button.")
             return
 
         self.show_saved_playlists_display()
@@ -1805,7 +2848,7 @@ class PlaylistManagerUI:
         playlists_tree.column('id', width=260, minwidth=160, stretch=False)
 
         playlist_rows = []
-        for playlist_key, pl_data in self.saved_playlists.items():
+        for playlist_key, pl_data in self._sorted_playlist_items():
             source = pl_data.get('source', 'youtube')
             videos = pl_data.get('videos', set())
             tracks = pl_data.get('tracks', [])
@@ -1856,7 +2899,7 @@ class PlaylistManagerUI:
     def open_combined_songs_selector(self):
         """Show a combined song view for the selected playlists."""
         if not self.saved_playlists:
-            messagebox.showinfo("Combined Songs", "No playlists saved yet.\n\nAdd some playlists using the add playlist buttons.")
+            messagebox.showinfo("Combined Songs", "No playlists saved yet.\n\nAdd some playlists using the add playlist button.")
             return
 
         selected_keys = self._selected_sidebar_playlist_keys()
@@ -1995,8 +3038,7 @@ class PlaylistManagerUI:
         parent.rowconfigure(0, weight=1)
 
         playlist_vars = []
-        for row_index, playlist_key in enumerate(self.saved_playlists.keys()):
-            pl_data = self.saved_playlists[playlist_key]
+        for row_index, (playlist_key, pl_data) in enumerate(self._sorted_playlist_items()):
             source = pl_data.get('source', 'youtube')
             playlist_name = pl_data.get('name', f'Playlist {playlist_key}')
             song_count = len(pl_data.get('tracks') or pl_data.get('videos', set()))
@@ -2062,9 +3104,12 @@ class PlaylistManagerUI:
         x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
         x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
+        show_queue_metadata = self._show_youtube_queue_actions()
+        song_columns = ('title', 'artist', 'playback', 'playlists') if show_queue_metadata else ('title', 'artist', 'playlists')
+
         songs_tree = ttk.Treeview(
             table_frame,
-            columns=('title', 'artist', 'playback', 'playlists'),
+            columns=song_columns,
             show='tree headings',
             style="SourceLogo.Treeview",
             yscrollcommand=y_scrollbar.set,
@@ -2078,14 +3123,18 @@ class PlaylistManagerUI:
         songs_tree.heading('#0', text='')
         songs_tree.heading('title', text='Title')
         songs_tree.heading('artist', text='Artist')
-        songs_tree.heading('playback', text='Playback')
+        if show_queue_metadata:
+            songs_tree.heading('playback', text='Playback')
         songs_tree.heading('playlists', text='Playlists')
 
         songs_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
         songs_tree.column('title', width=260, minwidth=160, stretch=False)
         songs_tree.column('artist', width=190, minwidth=120, stretch=False)
-        songs_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
-        songs_tree.column('playlists', width=560, minwidth=220, stretch=False)
+        if show_queue_metadata:
+            songs_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
+            songs_tree.column('playlists', width=560, minwidth=220, stretch=False)
+        else:
+            songs_tree.column('playlists', width=670, minwidth=260, stretch=False)
 
         entry_by_item = {}
         visible_entries = []
@@ -2122,13 +3171,12 @@ class PlaylistManagerUI:
                 entry
                 for entry in entries
                 if self._matches_find_query(
-                    (
+                    [
                         entry['title'],
                         entry['artist'],
-                        self._entry_queue_status(entry),
                         self._format_playlist_occurrences(entry, limit=None),
                         ', '.join(sorted(self._source_name(source) for source in entry['sources']))
-                    ),
+                    ] + ([self._entry_queue_status(entry)] if show_queue_metadata else []),
                     display_find_var.get()
                 )
             ]
@@ -2145,16 +3193,21 @@ class PlaylistManagerUI:
                 songs_tree.insert(
                     '',
                     tk.END,
-                    values=(message, '', '', '')
+                    values=(message, '', '', '') if show_queue_metadata else (message, '', '')
                 )
             else:
                 for entry in filtered_entries:
                     playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
+                    row_values = (
+                        (entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
+                        if show_queue_metadata
+                        else (entry['title'], entry['artist'], playlist_text)
+                    )
                     item_id = songs_tree.insert(
                         '',
                         tk.END,
                         image=self._source_logo_for_sources(entry['sources']),
-                        values=(entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
+                        values=row_values
                     )
                     entry_by_item[item_id] = entry
 
@@ -2215,9 +3268,12 @@ class PlaylistManagerUI:
             x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
             x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
+            show_queue_metadata = self._show_youtube_queue_actions()
+            duplicate_columns = ('title', 'artist', 'playback', 'playlists') if show_queue_metadata else ('title', 'artist', 'playlists')
+
             duplicates_tree = ttk.Treeview(
                 table_frame,
-                columns=('title', 'artist', 'playback', 'playlists'),
+                columns=duplicate_columns,
                 show='tree headings',
                 style="SourceLogo.Treeview",
                 yscrollcommand=y_scrollbar.set,
@@ -2231,14 +3287,18 @@ class PlaylistManagerUI:
             duplicates_tree.heading('#0', text='')
             duplicates_tree.heading('title', text='Title')
             duplicates_tree.heading('artist', text='Artist')
-            duplicates_tree.heading('playback', text='Playback')
+            if show_queue_metadata:
+                duplicates_tree.heading('playback', text='Playback')
             duplicates_tree.heading('playlists', text='Playlists')
 
             duplicates_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
             duplicates_tree.column('title', width=260, minwidth=160, stretch=False)
             duplicates_tree.column('artist', width=190, minwidth=120, stretch=False)
-            duplicates_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
-            duplicates_tree.column('playlists', width=560, minwidth=220, stretch=False)
+            if show_queue_metadata:
+                duplicates_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
+                duplicates_tree.column('playlists', width=560, minwidth=220, stretch=False)
+            else:
+                duplicates_tree.column('playlists', width=670, minwidth=260, stretch=False)
 
             entry_by_item = {}
             visible_entries = []
@@ -2276,13 +3336,12 @@ class PlaylistManagerUI:
                     entry
                     for entry in duplicate_entries
                     if self._matches_find_query(
-                        (
+                        [
                             entry['title'],
                             entry['artist'],
-                            self._entry_queue_status(entry),
                             self._format_playlist_occurrences(entry, limit=None),
                             ', '.join(sorted(self._source_name(source) for source in entry['sources']))
-                        ),
+                        ] + ([self._entry_queue_status(entry)] if show_queue_metadata else []),
                         display_find_var.get()
                     )
                 ]
@@ -2301,17 +3360,22 @@ class PlaylistManagerUI:
                     duplicates_tree.insert(
                         '',
                         tk.END,
-                        values=(message, '', '', '')
+                        values=(message, '', '', '') if show_queue_metadata else (message, '', '')
                     )
                     return
 
                 for entry in visible_entries:
                     playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
+                    row_values = (
+                        (entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
+                        if show_queue_metadata
+                        else (entry['title'], entry['artist'], playlist_text)
+                    )
                     item_id = duplicates_tree.insert(
                         '',
                         tk.END,
                         image=self._source_logo_for_sources(entry['sources']),
-                        values=(entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
+                        values=row_values
                     )
                     entry_by_item[item_id] = entry
 
@@ -2359,6 +3423,7 @@ class PlaylistManagerUI:
             progress_window.title("Updating Playlists")
             progress_window.geometry("400x150")
             progress_window.resizable(False, False)
+            self._configure_window_icon(progress_window)
             
             main_frame = ttk.Frame(progress_window, padding="20")
             main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))

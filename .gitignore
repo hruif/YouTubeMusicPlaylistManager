@@ -30,6 +30,9 @@ dist/
 headers_auth.json
 saved_playlists.json
 saved_playlists.json.backup
+ytmusic_oauth_client.json
+ytmusic_oauth_token.json
+temporary_youtube_playlists.json
 
 # Logs
 *.log

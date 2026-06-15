@@ -9,6 +9,9 @@ import uuid
 import webbrowser
 from pathlib import Path
 
+from app_info import PLAYER_WINDOW_ARG
+from app_paths import running_from_bundle
+
 
 class YouTubeQueuePlayer:
     """Serves queue data locally and opens the YouTube player surface."""
@@ -181,21 +184,32 @@ class YouTubeQueuePlayer:
 
         # Use a subprocess so pywebview's GUI loop cannot interfere with Tk's main loop.
         self.process_launcher(
-            [
-                sys.executable,
-                str(self.launcher_file),
-                player_url,
-                title or "YouTube Queue"
-            ],
+            self._native_player_args(player_url, title or "YouTube Queue"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
         return True
 
+    def _native_player_args(self, player_url, title):
+        if running_from_bundle():
+            return [
+                sys.executable,
+                PLAYER_WINDOW_ARG,
+                player_url,
+                title
+            ]
+
+        return [
+            sys.executable,
+            str(self.launcher_file),
+            player_url,
+            title
+        ]
+
     def _native_player_available(self):
-        if not self.launcher_file or not self.launcher_file.exists():
-            return False
         if self.native_available is not None:
             return bool(self.native_available)
+        if not running_from_bundle() and (not self.launcher_file or not self.launcher_file.exists()):
+            return False
         return importlib.util.find_spec("webview") is not None

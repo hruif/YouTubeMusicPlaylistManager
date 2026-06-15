@@ -8,7 +8,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from app_info import PLAYER_WINDOW_ARG
 from youtube_player import YouTubeQueuePlayer
+from youtube_player_window import player_window_title
 
 
 PLAYER_FILE = Path(__file__).with_name("web") / "youtube_queue_player.html"
@@ -86,6 +88,31 @@ def test_open_queue_uses_native_launcher_when_available():
     assert launched
     assert launched[0][0][1] == str(LAUNCHER_FILE)
     assert launched[0][0][-1] == 'Native Queue'
+
+
+def test_open_queue_uses_packaged_player_mode_when_frozen(monkeypatch):
+    launched = []
+    player = YouTubeQueuePlayer(
+        PLAYER_FILE,
+        launcher_file=LAUNCHER_FILE,
+        process_launcher=lambda args, **kwargs: launched.append((args, kwargs)),
+        native_available=True
+    )
+    monkeypatch.setattr('youtube_player.running_from_bundle', lambda: True)
+
+    try:
+        open_mode = player.open_queue('Frozen Queue', [{'videoId': 'yt1'}])
+    finally:
+        player.shutdown()
+
+    assert open_mode == 'native'
+    assert launched[0][0][1] == PLAYER_WINDOW_ARG
+    assert launched[0][0][-1] == 'Frozen Queue'
+
+
+def test_player_window_title_is_app_scoped():
+    assert player_window_title("Combined Songs") == "YouTube Music Playlist Manager - Combined Songs"
+    assert player_window_title("YouTube Music Playlist Manager - Queue") == "YouTube Music Playlist Manager - Queue"
 
 
 def test_open_queue_falls_back_to_browser_without_native_launcher():

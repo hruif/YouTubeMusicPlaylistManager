@@ -18,6 +18,50 @@ class FakeBool:
         self.value = value
 
 
+class FakeTemporaryPlaylistAccount:
+    def __init__(self):
+        self.records = []
+
+    def remember_temporary_playlist(self, playlist_id, title, source_playlists):
+        self.records.append((playlist_id, title, source_playlists))
+
+
+class FakeTemporaryPlaylistClient:
+    def __init__(self, fail_create=False, fail_add=False, failing_video_ids=None):
+        self.fail_create = fail_create
+        self.fail_add = fail_add
+        self.failing_video_ids = set(failing_video_ids or [])
+        self.create_calls = []
+        self.add_calls = []
+        self.deleted = []
+
+    def create_playlist(self, *args, **kwargs):
+        self.create_calls.append((args, kwargs))
+        if self.fail_create:
+            raise RuntimeError("Server returned HTTP 400: Bad Request.")
+        return "TEMP_PLAYLIST"
+
+    def add_playlist_items(self, playlist_id, videoIds=None, duplicates=False):
+        video_ids = list(videoIds or [])
+        self.add_calls.append((playlist_id, video_ids, duplicates))
+        if self.fail_add or any(video_id in self.failing_video_ids for video_id in video_ids):
+            return {"status": "STATUS_FAILED"}
+        return {"status": "STATUS_SUCCEEDED"}
+
+    def delete_playlist(self, playlist_id):
+        self.deleted.append(playlist_id)
+        return "STATUS_SUCCEEDED"
+
+
+class FakeYouTubeDataApiClient:
+    def __init__(self):
+        self.create_calls = []
+
+    def create_playlist(self, title, description, privacy_status="private"):
+        self.create_calls.append((title, description, privacy_status))
+        return "DATA_API_TEMP_PLAYLIST"
+
+
 def make_manager():
     manager = PlaylistManagerUI.__new__(PlaylistManagerUI)
     manager.ytmusic = None
@@ -31,6 +75,7 @@ def make_manager():
     manager.current_display_view = 'empty'
     manager._active_combined_refresh = None
     manager.youtube_player = None
+    manager.youtube_account = FakeTemporaryPlaylistAccount()
     return manager
 
 
@@ -787,6 +832,279 @@ def test_selected_playlist_keys_use_display_selector_in_window_mode():
     assert manager._selected_sidebar_playlist_keys() == ['spotify:SP1']
 
 
+def test_youtube_playlist_sources_from_keys_filters_spotify():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'YouTube One',
+            'videos': set(),
+            'tracks': []
+        },
+        'spotify:SP1': {
+            'source': 'spotify',
+            'id': 'SP1',
+            'name': 'Spotify One',
+            'videos': set(),
+            'tracks': []
+        }
+    }
+
+    youtube_playlists, skipped_playlists = manager._youtube_playlist_sources_from_keys([
+        'spotify:SP1',
+        'youtube:PL1'
+    ])
+
+    assert youtube_playlists == [
+        {
+            'key': 'youtube:PL1',
+            'id': 'PL1',
+            'name': 'YouTube One',
+            'source': 'youtube'
+        }
+    ]
+    assert skipped_playlists == [
+        {
+            'key': 'spotify:SP1',
+            'id': 'SP1',
+            'name': 'Spotify One',
+            'source': 'spotify'
+        }
+    ]
+
+
+def test_temporary_youtube_playlist_creation_uses_cached_video_ids():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': {'fallback1'},
+            'tracks': [
+                {'videoId': 'video1', 'title': 'One'},
+                {'id': 'video2', 'title': 'Two'},
+            ]
+        },
+        'youtube:PL2': {
+            'source': 'youtube',
+            'id': 'PL2',
+            'name': 'Two',
+            'videos': {'video3'},
+            'tracks': []
+        }
+    }
+    client = FakeTemporaryPlaylistClient()
+    statuses = []
+
+    title, playlist_id, skipped = manager._create_temporary_youtube_music_playlist_sync(
+        client,
+        [
+            {'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'},
+            {'key': 'youtube:PL2', 'id': 'PL2', 'name': 'Two', 'source': 'youtube'},
+        ],
+        statuses.append,
+    )
+
+    assert title.startswith("Playlist Manager Queue")
+    assert playlist_id == "TEMP_PLAYLIST"
+    assert client.create_calls == [
+        (
+            (title, "Temporary private playlist created by YouTube Music Playlist Manager."),
+            {"privacy_status": "PRIVATE", "video_ids": ["video1"]},
+        )
+    ]
+    assert client.add_calls == [
+        ("TEMP_PLAYLIST", ["video2", "video3"], False),
+    ]
+    assert skipped == []
+    assert client.deleted == []
+    assert manager.youtube_account.records[0][0] == "TEMP_PLAYLIST"
+    assert manager.youtube_account.records[0][2][0]["id"] == "PL1"
+    assert statuses[0] == "Creating private playlist..."
+
+
+def test_temporary_youtube_playlist_creation_skips_rejected_individual_songs():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': set(),
+            'tracks': [
+                {'videoId': 'video1'},
+                {'videoId': 'bad-video'},
+                {'videoId': 'video3'},
+            ]
+        }
+    }
+    client = FakeTemporaryPlaylistClient(failing_video_ids={'bad-video'})
+
+    title, playlist_id, skipped = manager._create_temporary_youtube_music_playlist_sync(
+        client,
+        [{'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'}],
+        lambda _status: None,
+    )
+
+    assert title.startswith("Playlist Manager Queue")
+    assert playlist_id == "TEMP_PLAYLIST"
+    assert skipped == [{"video_id": "bad-video", "error": "{'status': 'STATUS_FAILED'}"}]
+    assert ("TEMP_PLAYLIST", ["bad-video", "video3"], False) in client.add_calls
+    assert ("TEMP_PLAYLIST", ["bad-video"], False) in client.add_calls
+    assert ("TEMP_PLAYLIST", ["video3"], False) in client.add_calls
+    assert client.deleted == []
+    assert manager.youtube_account.records[0][0] == "TEMP_PLAYLIST"
+
+
+def test_temporary_youtube_playlist_creation_falls_back_to_data_api_create(monkeypatch):
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': set(),
+            'tracks': [
+                {'videoId': 'video1'},
+                {'videoId': 'video2'},
+            ]
+        }
+    }
+    client = FakeTemporaryPlaylistClient(fail_create=True)
+    data_api_client = FakeYouTubeDataApiClient()
+    monkeypatch.setattr(manager, '_youtube_data_api_client', lambda: data_api_client)
+
+    title, playlist_id, skipped = manager._create_temporary_youtube_music_playlist_sync(
+        client,
+        [{'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'}],
+        lambda _status: None,
+    )
+
+    assert playlist_id == "DATA_API_TEMP_PLAYLIST"
+    assert data_api_client.create_calls == [
+        (title, "Temporary private playlist created by YouTube Music Playlist Manager.", "private")
+    ]
+    assert client.add_calls == [
+        ("DATA_API_TEMP_PLAYLIST", ["video1", "video2"], False),
+    ]
+    assert skipped == []
+    assert manager.youtube_account.records[0][0] == "DATA_API_TEMP_PLAYLIST"
+
+
+def test_temporary_youtube_playlist_video_ids_prefer_queue_ok_seed():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': set(),
+            'tracks': [
+                {
+                    'videoId': 'ytm-only',
+                    'queueStatus': 'YTM only',
+                    'queuePlayable': False,
+                    'videoType': 'MUSIC_VIDEO_TYPE_ATV',
+                },
+                {
+                    'videoId': 'queue-ok',
+                    'queueStatus': 'Queue OK',
+                    'queuePlayable': True,
+                    'videoType': 'MUSIC_VIDEO_TYPE_OMV',
+                },
+            ]
+        }
+    }
+
+    video_ids = manager._temporary_youtube_playlist_video_ids([
+        {'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'}
+    ])
+
+    assert video_ids == ['queue-ok', 'ytm-only']
+
+
+def test_temporary_youtube_playlist_creation_deletes_playlist_when_every_song_fails(monkeypatch):
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': set(),
+            'tracks': [
+                {'videoId': 'video1'},
+                {'videoId': 'video2'},
+            ]
+        }
+    }
+    client = FakeTemporaryPlaylistClient(fail_create=True, fail_add=True)
+    data_api_client = FakeYouTubeDataApiClient()
+    monkeypatch.setattr(manager, '_youtube_data_api_client', lambda: data_api_client)
+
+    try:
+        manager._create_temporary_youtube_music_playlist_sync(
+            client,
+            [{'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'}],
+            lambda _status: None,
+        )
+    except RuntimeError as error:
+        assert "No songs could be added" in str(error)
+    else:
+        raise AssertionError("Temporary playlist creation should fail when every song is rejected")
+
+    assert client.deleted == ["DATA_API_TEMP_PLAYLIST"]
+    assert manager.youtube_account.records == []
+
+
+def test_temporary_youtube_playlist_creation_requires_cached_video_ids():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube',
+            'id': 'PL1',
+            'name': 'One',
+            'videos': set(),
+            'tracks': []
+        }
+    }
+    client = FakeTemporaryPlaylistClient()
+
+    try:
+        manager._create_temporary_youtube_music_playlist_sync(
+            client,
+            [{'key': 'youtube:PL1', 'id': 'PL1', 'name': 'One', 'source': 'youtube'}],
+            lambda _status: None,
+        )
+    except RuntimeError as error:
+        assert "No cached YouTube songs" in str(error)
+    else:
+        raise AssertionError("Temporary playlist creation should require cached song ids")
+
+    assert client.create_calls == []
+
+
+def test_format_youtube_oauth_error_mentions_tv_client_for_bad_client():
+    manager = make_manager()
+
+    message = manager._format_youtube_oauth_error(
+        "OAuth client failure. Most likely client_id and client_secret mismatch or YouTubeData API is not enabled."
+    )
+
+    assert "TVs and Limited Input devices" in message
+    assert "Desktop OAuth clients will fail" in message
+
+
+def test_format_youtube_oauth_error_mentions_test_users_for_access_denied():
+    manager = make_manager()
+
+    message = manager._format_youtube_oauth_error("Error 403: access_denied")
+
+    assert "Audience" in message
+    assert "Test users" in message
+
+
 def test_update_selected_playlists_requires_a_selection(monkeypatch):
     manager = make_manager()
     manager.saved_playlists = {
@@ -842,6 +1160,7 @@ def test_extract_spotify_items_accepts_single_item_page():
 def test_playlist_url_parsing_for_youtube_and_spotify():
     youtube_window = make_url_window('youtube')
     spotify_window = make_url_window('spotify')
+    auto_window = make_url_window('auto')
 
     assert youtube_window._extract_playlist_id(
         'https://music.youtube.com/playlist?list=PLabc_123-extra'
@@ -849,3 +1168,27 @@ def test_playlist_url_parsing_for_youtube_and_spotify():
     assert spotify_window._extract_playlist_id(
         'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc'
     ) == '37i9dQZF1DXcBWIGoYBM5M'
+    assert auto_window._detect_source(
+        'https://music.youtube.com/playlist?list=PLabc_123-extra'
+    ) == 'youtube'
+    assert auto_window._detect_source(
+        'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc'
+    ) == 'spotify'
+    assert auto_window._extract_playlist_id(
+        'https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc'
+    ) == '37i9dQZF1DXcBWIGoYBM5M'
+
+
+def test_sorted_playlist_items_orders_by_name_then_source():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL2': {'source': 'youtube', 'id': 'PL2', 'name': 'Zulu'},
+        'spotify:SP1': {'source': 'spotify', 'id': 'SP1', 'name': 'Alpha'},
+        'youtube:PL1': {'source': 'youtube', 'id': 'PL1', 'name': 'Alpha'},
+    }
+
+    assert [key for key, _ in manager._sorted_playlist_items()] == [
+        'spotify:SP1',
+        'youtube:PL1',
+        'youtube:PL2'
+    ]

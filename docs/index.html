@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Download YouTube Music Playlist Manager, a desktop app for combining, searching, and queueing YouTube Music and Spotify playlists.">
+    <title>YouTube Music Playlist Manager</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="intro" aria-labelledby="page-title">
+        <img
+          class="app-icon"
+          src="https://raw.githubusercontent.com/hruif/YouTubeMusicPlaylistManager/main/assets/app_icon.png"
+          alt="YouTube Music Playlist Manager app icon"
+        >
+        <div class="intro-copy">
+          <p class="eyebrow">Desktop playlist utility</p>
+          <h1 id="page-title">YouTube Music Playlist Manager</h1>
+          <p class="summary">
+            Combine selected playlists, search across saved libraries, find duplicates, inspect song details,
+            and create temporary YouTube Music queues from the playlists you actually want to hear.
+          </p>
+          <div class="actions" aria-label="Download actions">
+            <a id="download-link" class="button primary" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest">
+              Download for macOS
+            </a>
+            <a class="button secondary" href="https://github.com/hruif/YouTubeMusicPlaylistManager">
+              View Source
+            </a>
+          </div>
+          <p id="release-status" class="release-status">Checking latest release...</p>
+        </div>
+      </section>
+
+      <section class="content-grid" aria-label="Project details">
+        <article class="panel">
+          <h2>What It Does</h2>
+          <ul>
+            <li>Imports public YouTube Music and Spotify playlist URLs.</li>
+            <li>Shows combined song lists from selected playlists with sorting and search.</li>
+            <li>Finds duplicate songs across selected playlists, including repeats inside one playlist.</li>
+            <li>Creates private temporary YouTube Music playlists for queue-style listening.</li>
+          </ul>
+        </article>
+
+        <article class="panel">
+          <h2>Install Notes</h2>
+          <ol>
+            <li>Download the latest macOS zip from GitHub Releases.</li>
+            <li>Unzip it and move the app anywhere convenient.</li>
+            <li>If macOS warns that the app is unsigned, Control-click the app and choose Open.</li>
+          </ol>
+        </article>
+
+        <article class="panel wide">
+          <h2>Built For Playlist Cleanup</h2>
+          <p>
+            This app is a personal tool for making playlist maintenance less tedious: select the playlists
+            you care about, view the combined songs in one place, search within the display, and open detailed
+            song or playlist information when you need to untangle duplicates.
+          </p>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const releaseStatus = document.getElementById("release-status");
+      const downloadLink = document.getElementById("download-link");
+      const latestReleaseUrl = "https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest";
+      const latestReleaseApiUrl = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/latest";
+
+      async function wireLatestRelease() {
+        try {
+          const response = await fetch(latestReleaseApiUrl, {
+            headers: { Accept: "application/vnd.github+json" }
+          });
+
+          if (!response.ok) {
+            throw new Error(`GitHub returned ${response.status}`);
+          }
+
+          const release = await response.json();
+          const macAsset = (release.assets || []).find((asset) =>
+            /macOS\.zip$/i.test(asset.name || "")
+          );
+
+          if (macAsset && macAsset.browser_download_url) {
+            downloadLink.href = macAsset.browser_download_url;
+            downloadLink.textContent = `Download ${release.tag_name || "latest"} for macOS`;
+            releaseStatus.textContent = `Latest release: ${release.tag_name || "available"} (${macAsset.name})`;
+            return;
+          }
+
+          downloadLink.href = release.html_url || latestReleaseUrl;
+          releaseStatus.textContent = `Latest release: ${release.tag_name || "available"}. Open Releases to choose an asset.`;
+        } catch (error) {
+          downloadLink.href = latestReleaseUrl;
+          releaseStatus.textContent = "Open GitHub Releases to download the latest build.";
+        }
+      }
+
+      wireLatestRelease();
+    </script>
+  </body>
+</html>

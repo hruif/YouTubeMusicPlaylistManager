@@ -18,6 +18,7 @@ def test_source_logo_assets_exist_with_expected_sizes():
         "spotify_18.png": (18, 18),
         "spotify_24.png": (24, 24),
         "mixed_24.png": (24, 24),
+        "app_icon.png": (512, 512),
     }
 
     for filename, expected_size in expected_sizes.items():
@@ -53,3 +54,10 @@ def test_youtube_queue_player_asset_exists():
     assert "menu-popover" in player_html
     assert "draggable" in player_html
     assert "moveIndex" in player_html
+
+
+def test_macos_app_icon_asset_exists():
+    icon_path = ASSETS_DIR / "app_icon.icns"
+
+    assert icon_path.exists()
+    assert icon_path.read_bytes()[:4] == b"icns"
