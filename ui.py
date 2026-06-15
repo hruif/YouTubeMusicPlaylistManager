@@ -2049,7 +2049,7 @@ class PlaylistManagerUI:
                 "No cached YouTube songs were found in the selected playlists. Update the selected playlists, then try again."
             )
 
-        temp_playlist_id, remaining_video_ids, seeded_count = self._create_seeded_temporary_youtube_playlist(
+        temp_playlist_id, remaining_video_ids, seeded_count, seed_error = self._create_seeded_temporary_youtube_playlist(
             client,
             title,
             description,
@@ -2070,7 +2070,7 @@ class PlaylistManagerUI:
 
         if seeded_count + added_count == 0:
             self._delete_temporary_youtube_playlist_best_effort(client, temp_playlist_id)
-            raise RuntimeError("No songs could be added to the temporary playlist.")
+            raise RuntimeError(self._no_songs_added_error_message(seed_error, skipped_video_ids))
 
         self.youtube_account.remember_temporary_playlist(
             temp_playlist_id,
@@ -2097,7 +2097,7 @@ class PlaylistManagerUI:
             )
             if not isinstance(temp_playlist_id, str) or not temp_playlist_id:
                 raise RuntimeError(temp_playlist_id)
-            return temp_playlist_id, video_ids[1:], 1
+            return temp_playlist_id, video_ids[1:], 1, None
         except Exception as ytmusic_error:
             set_status("YouTube Music create failed; trying YouTube Data API...")
             try:
@@ -2107,13 +2107,36 @@ class PlaylistManagerUI:
                     description,
                     privacy_status="private",
                 )
-                return temp_playlist_id, video_ids, 0
+                # The playlist now exists, but the YouTube Music create-with-song call failed.
+                # Keep that error so it can be reported if every add also fails (the same
+                # underlying cause usually breaks both create-with-song and add_playlist_items).
+                return temp_playlist_id, video_ids, 0, str(ytmusic_error)
             except Exception as data_api_error:
                 raise RuntimeError(
                     "Could not create the temporary playlist. "
                     f"YouTube Music error: {ytmusic_error}. "
                     f"YouTube Data API error: {data_api_error}"
                 ) from data_api_error
+
+    def _no_songs_added_error_message(self, seed_error, skipped_video_ids):
+        base = "No songs could be added to the temporary playlist."
+        details = []
+        seed_error = str(seed_error or "").strip()
+        if seed_error:
+            details.append(f"create-with-song error: {seed_error}")
+
+        distinct_add_errors = []
+        for item in skipped_video_ids or []:
+            error_text = str((item or {}).get("error") or "").strip()
+            if error_text and error_text not in distinct_add_errors:
+                distinct_add_errors.append(error_text)
+            if len(distinct_add_errors) >= 3:
+                break
+        details.extend(f"add error: {error_text}" for error_text in distinct_add_errors)
+
+        if details:
+            return f"{base} YouTube reported: " + " | ".join(details)
+        return base
 
     def _add_video_ids_to_temporary_youtube_playlist(self, client, temp_playlist_id, video_ids, set_status):
         added_count = 0
