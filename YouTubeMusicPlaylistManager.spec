@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
@@ -9,6 +10,13 @@ from app_info import APP_BUNDLE_IDENTIFIER, APP_NAME, APP_VERSION
 
 ROOT = Path(SPECPATH)
 ICON = ROOT / "assets" / "app_icon.icns"
+
+# Debug builds (python tools/build_macos_app.py --debug) bundle a runtime hook that
+# turns on the experimental YouTube queue actions, and use a distinct app name so the
+# debug bundle does not overwrite or get confused with the release build.
+DEBUG_BUILD = os.environ.get("PLAYLIST_MANAGER_BUILD_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+BUNDLE_NAME = f"{APP_NAME} (Debug)" if DEBUG_BUILD else APP_NAME
+RUNTIME_HOOKS = [str(ROOT / "tools" / "debug_queue_runtime_hook.py")] if DEBUG_BUILD else []
 
 
 a = Analysis(
@@ -30,7 +38,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=RUNTIME_HOOKS,
     excludes=[
         "black",
         "docutils",
@@ -64,7 +72,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name=APP_NAME,
+    name=BUNDLE_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -84,16 +92,16 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name=APP_NAME,
+    name=BUNDLE_NAME,
 )
 app = BUNDLE(
     coll,
-    name=f"{APP_NAME}.app",
+    name=f"{BUNDLE_NAME}.app",
     icon=str(ICON),
-    bundle_identifier=APP_BUNDLE_IDENTIFIER,
+    bundle_identifier=APP_BUNDLE_IDENTIFIER + (".debug" if DEBUG_BUILD else ""),
     info_plist={
-        "CFBundleDisplayName": APP_NAME,
-        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": BUNDLE_NAME,
+        "CFBundleName": BUNDLE_NAME,
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
         "NSHighResolutionCapable": "True",

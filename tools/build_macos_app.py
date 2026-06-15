@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import shutil
 import subprocess
 import sys
@@ -61,26 +62,35 @@ def build_app_icon():
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(APP_ICON_ICNS)], check=True)
 
 
-def build_app():
+def build_app(debug=False):
     build_app_icon()
     if find_spec("PyInstaller") is None:
         raise SystemExit(
             "PyInstaller is not installed. Run `python -m pip install -r requirements-build.txt` first."
         )
 
+    env = dict(os.environ)
+    if debug:
+        # Read by the .spec file: bundles the debug runtime hook (shows the experimental
+        # YouTube queue actions) and gives the bundle a distinct "(Debug)" name.
+        env["PLAYLIST_MANAGER_BUILD_DEBUG"] = "1"
+
     subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(SPEC_FILE)],
         cwd=ROOT,
         check=True,
+        env=env,
     )
 
     from app_info import APP_NAME, APP_VERSION
 
-    app_path = ROOT / "dist" / f"{APP_NAME}.app"
+    bundle_name = f"{APP_NAME} (Debug)" if debug else APP_NAME
+    app_path = ROOT / "dist" / f"{bundle_name}.app"
     if not app_path.exists():
         raise FileNotFoundError(f"Expected app bundle was not created: {app_path}")
 
-    archive_base = ROOT / "dist" / f"YouTubeMusicPlaylistManager-{APP_VERSION}-macOS"
+    archive_suffix = "-debug" if debug else ""
+    archive_base = ROOT / "dist" / f"YouTubeMusicPlaylistManager-{APP_VERSION}{archive_suffix}-macOS"
     archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=app_path.parent, base_dir=app_path.name)
     print(f"Built {app_path}")
     print(f"Packaged {archive_path}")
@@ -88,6 +98,7 @@ def build_app():
 
 if __name__ == "__main__":
     if any(argument in {"-h", "--help"} for argument in sys.argv[1:]):
-        print("Build a zipped macOS .app: python tools/build_macos_app.py")
+        print("Build a zipped macOS .app: python tools/build_macos_app.py [--debug]")
+        print("  --debug  Show the experimental YouTube queue actions; builds a separate '(Debug)' bundle.")
         raise SystemExit(0)
-    build_app()
+    build_app(debug="--debug" in sys.argv[1:])
