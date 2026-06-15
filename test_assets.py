@@ -8,7 +8,6 @@ from pathlib import Path
 
 
 ASSETS_DIR = Path(__file__).with_name("assets")
-WEB_DIR = Path(__file__).with_name("web")
 
 
 def test_source_logo_assets_exist_with_expected_sizes():
@@ -30,30 +29,6 @@ def test_source_logo_assets_exist_with_expected_sizes():
         assert header.startswith(b"\x89PNG\r\n\x1a\n")
         width, height = struct.unpack(">II", header[16:24])
         assert (width, height) == expected_size
-
-
-def test_youtube_queue_player_asset_exists():
-    player_path = WEB_DIR / "youtube_queue_player.html"
-    launcher_path = Path(__file__).with_name("youtube_player_window.py")
-
-    assert player_path.exists()
-    assert launcher_path.exists()
-    player_html = player_path.read_text(encoding="utf-8")
-    assert "https://www.youtube.com/iframe_api" in player_html
-    assert "/queue/" in player_html
-    assert "thumbnail-button" in player_html
-    assert "player-stage" in player_html
-    assert ".thumbnail-button:hover::after" in player_html
-    assert "opacity: 0;" in player_html
-    assert "removeUnavailableCurrent" in player_html
-    assert "reportUnavailableTrack" in player_html
-    assert "/unavailable" in player_html
-    assert "random-button" in player_html
-    assert "randomMode" in player_html
-    assert "playbackStatus !== \"YTM only\"" in player_html
-    assert "menu-popover" in player_html
-    assert "draggable" in player_html
-    assert "moveIndex" in player_html
 
 
 def test_macos_app_icon_asset_exists():

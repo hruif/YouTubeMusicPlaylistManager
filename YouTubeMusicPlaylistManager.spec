@@ -25,16 +25,12 @@ a = Analysis(
     binaries=[],
     datas=[
         ("assets", "assets"),
-        ("web", "web"),
-        ("youtube_player_window.py", "."),
         *collect_data_files("tls_client", includes=["dependencies/*"]),
         *collect_data_files("ytmusicapi", includes=["locales/**/*"]),
     ],
     hiddenimports=[
         "AppKit",
         "Foundation",
-        "webview",
-        "webview.platforms.cocoa",
     ],
     hookspath=[],
     hooksconfig={},

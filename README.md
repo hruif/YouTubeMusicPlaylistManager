@@ -44,15 +44,16 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - The right display shows playlist names, sources, IDs, song counts, and cached track counts
    - Double-click a playlist, or select one and click "Details", to open its info panel
 
-5. **View combined songs**:
-   - Click "View Combined Songs"
+5. **View songs** (the default view on launch):
+   - "View Songs" is the primary sidebar button and the page the app opens to. It shows the
+     combined songs of the selected playlists and updates live as you change the selection.
    - Use the playlist checkboxes in the left sidebar, or the right-side playlist display when display window mode is enabled
-   - The song table on the right updates as playlists are selected or deselected
+   - The song table updates as playlists are selected or deselected
    - Sort by title, artist, playlist, source, or original playlist order
    - Repeated songs are merged into one row with playlist occurrences shown in the table
+   - The Playlists column is compact by default; drag its edge to widen it, or open a song's Details for the full, untruncated list
    - Select a song and click "Details" or double-click the row to see the full occurrence list
    - Select a song and click "Play" to launch YouTube or Spotify links externally
-   - When the experimental local queue toggle is enabled, the Playback column marks tracks that cannot play in the embedded test player
    - Open Settings and enable "Open display output in separate windows" if you prefer display output outside the main window
 
 6. **Find duplicates in selected playlists**:
@@ -66,19 +67,19 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Select playlists in the sidebar, or the right-side playlist display when display window mode is enabled
    - Click "Update Selected Playlists" to refresh only those playlists
 
-8. **Play selected YouTube playlists in YouTube Music** (experimental, hidden by default):
-   - Known limitation: this queue workaround is fragile. The local embedded player cannot
-     reliably stream YouTube Music tracks, so the app instead tries to create a private
-     temporary playlist and open it on the official YouTube Music site. The "Play in YouTube Music"
-     button is hidden unless you launch the app with `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1`
-     (see Installation), and is intended for debugging.
-   - In the debug app, click "Queue Headers" in the sidebar, or open Settings and choose "Set Queue Headers"
-   - Open music.youtube.com while signed in, copy a logged-in POST `/browse` request in browser developer tools, and paste it into the app. In Chrome, "Copy as fetch (Node.js)" can be pasted directly.
-   - Use "Test Saved Headers" before trying to create a queue
-   - Select one or more YouTube Music playlists
-   - Click "Play in YouTube Music"
-   - The app creates a private temporary playlist, opens it on music.youtube.com, and remembers it for cleanup
-   - Spotify playlists are skipped for this flow for now
+8. **Play selected YouTube playlists in YouTube Music** (experimental):
+   - This is a workaround, not real playback. Because there is no official YouTube Music
+     streaming API, the app creates a private temporary playlist from your selection and opens
+     it on the official YouTube Music site, where you play it.
+   - One-time setup: open Settings, click "Set Queue Headers", and follow the numbered steps to
+     paste your YouTube Music browser headers (Chrome's "Copy as fetch (Node.js)" works directly).
+     Click "Test Saved Headers" to confirm. You only repeat this if it stops working (e.g. after
+     signing out). The headers stay on your computer.
+   - Select one or more YouTube Music playlists, then click "Play in YouTube Music" in the sidebar.
+     The first time, the app offers to open the header setup for you.
+   - The app creates a private temporary playlist, opens it on music.youtube.com, and remembers it
+     for cleanup. Songs that YouTube Music rejects are skipped and reported.
+   - Spotify playlists are skipped for this flow for now.
 
 9. **Manage temporary playlists**:
    - Open Settings and click "View Temporary Playlists" to see each temporary playlist's title, when it was created (so you can tell how out of date it is), and which playlists it was merged from. Open or delete individual playlists, or use "Delete All".
@@ -141,17 +142,7 @@ pip install ytmusicapi
 python main.py
 ```
 
-Install `pywebview` with the same Python interpreter that runs the app if you want the YouTube queue player to open in its own native window instead of a browser tab:
-
-```bash
-python -m pip install pywebview
-```
-
-The experimental YouTube queue actions — including the "Play in YouTube Music" button and the bulk queue buttons — are hidden by default because most YouTube Music tracks cannot play through the official embed player or temporary-queue workaround. They are debug-only. Temporary playlist creation uses ytmusicapi browser-header auth rather than the official YouTube Data API, avoiding quota usage but requiring fresh copied browser headers when Google changes or expires the session. To show the actions manually, run the app with:
-
-```bash
-PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1 python main.py
-```
+The "Play in YouTube Music" temporary-playlist feature is available in the normal app (set it up via Settings > Set Queue Headers). It uses ytmusicapi browser-header auth rather than the official YouTube Data API, so there is no quota, but the copied browser headers must be refreshed when Google changes or expires the session.
 
 ## Build a macOS app
 

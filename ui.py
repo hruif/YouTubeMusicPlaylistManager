@@ -19,7 +19,6 @@ from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT
 from playlist_url_window import PlaylistURLWindow
 from update_checker import UpdateChecker
 from youtube_music_account import YouTubeMusicAccount
-from youtube_player import YouTubeQueuePlayer
 
 try:
     from spotapi import PublicPlaylist
@@ -34,11 +33,6 @@ class PlaylistManagerUI:
 
     PLAYLIST_FILE = user_data_path("saved_playlists.json")
     ASSETS_DIR = resource_path("assets")
-    WEB_DIR = resource_path("web")
-    YOUTUBE_PLAYER_FILE = WEB_DIR / "youtube_queue_player.html"
-    YOUTUBE_PLAYER_LAUNCHER = resource_path("youtube_player_window.py")
-    YOUTUBE_PLAYER_HOST = "127.0.0.1"
-    YOUTUBE_QUEUE_CACHE_LIMIT = 20
     YOUTUBE_QUEUE_ACTIONS_ENV_VAR = "PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS"
     DISABLE_UPDATE_CHECK_ENV_VAR = "PLAYLIST_MANAGER_DISABLE_UPDATE_CHECK"
     PLAYLIST_DISPLAY_LIMIT = 140
@@ -109,7 +103,6 @@ class PlaylistManagerUI:
         self.youtube_queue_headers_verified = False
         self.authenticated_ytmusic = self._build_authenticated_ytmusic()
         self.browser_authenticated_ytmusic = self._build_browser_authenticated_ytmusic()
-        self.youtube_player = self._build_youtube_player()
         self._configure_window_icon(self.root)
         self.style = ttk.Style()
         self._configure_button_feedback()
@@ -142,40 +135,34 @@ class PlaylistManagerUI:
         button_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
         button_frame.columnconfigure(0, weight=1)
 
+        # "View Songs" is the primary action and the default landing view: it shows the
+        # combined songs of the selected playlists. Styled and placed to stand out.
+        combined_songs_button = ttk.Button(button_frame, text="View Songs", style="Primary.TButton", command=self.open_combined_songs_selector)
+        combined_songs_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(2, 8))
+
         search_button = ttk.Button(button_frame, text="Search", command=self.on_search)
-        search_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
+        search_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
 
         add_playlist_button = ttk.Button(button_frame, text="Add Playlist URL", command=self.open_playlist_window)
-        add_playlist_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
+        add_playlist_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
 
         view_playlists_button = ttk.Button(button_frame, text="View Saved Playlists", command=self.view_saved_playlists)
-        view_playlists_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
+        view_playlists_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
 
         find_duplicates_button = ttk.Button(button_frame, text="Find Duplicates in Selection", command=self.find_duplicate_songs)
-        find_duplicates_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
+        find_duplicates_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
 
         update_selected_button = ttk.Button(button_frame, text="Update Selected Playlists", command=self.update_selected_playlists)
-        update_selected_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
+        update_selected_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
-        combined_songs_button = ttk.Button(button_frame, text="View Combined Songs", command=self.open_combined_songs_selector)
-        combined_songs_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
-
-        # "Play in YouTube Music" creates a private temporary playlist via browser headers, but most
-        # YouTube Music tracks will not actually play through the resulting queue (no official
-        # streaming API). It is hidden alongside the other experimental queue actions and only
-        # appears when PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS is set, for debugging.
-        next_button_row = 6
-        if self._show_youtube_queue_actions():
-            play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
-            play_youtube_music_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=2)
-            next_button_row += 1
-
-            queue_headers_button = ttk.Button(button_frame, text="Queue Headers", command=self.show_youtube_music_browser_auth_display)
-            queue_headers_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=2)
-            next_button_row += 1
+        # "Play in YouTube Music" creates a private temporary playlist from the selected
+        # playlists and opens it on music.youtube.com. The first use prompts to set up queue
+        # headers; that one-time setup lives in Settings > Set Queue Headers, not here.
+        play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
+        play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=next_button_row, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
+        settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
 
         self.playlist_selector_container = ttk.LabelFrame(self.sidebar_frame, text="Playlists", padding=(6, 4))
         self.playlist_selector_container.grid(row=5, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -200,7 +187,8 @@ class PlaylistManagerUI:
         self.display_frame.columnconfigure(0, weight=1)
         self.display_frame.rowconfigure(1, weight=1)
         self.refresh_sidebar_playlists()
-        self.show_empty_display()
+        # Land on the primary "View Songs" view; it tracks the sidebar selection live.
+        self.show_combined_songs_display([], live=True)
         self._schedule_initial_update_check()
         self._schedule_temporary_playlist_cleanup_prompt()
 
@@ -228,7 +216,6 @@ class PlaylistManagerUI:
             self._finalize_close()
 
     def _finalize_close(self):
-        self.youtube_player.shutdown()
         self.root.destroy()
 
     def _ask_delete_temporary_on_exit(self, records):
@@ -389,6 +376,8 @@ class PlaylistManagerUI:
     def _configure_button_feedback(self):
         try:
             self.style.configure("TButton", padding=(7, 4))
+            # Accent style for the primary "View Songs" action so it stands out.
+            self.style.configure("Primary.TButton", padding=(7, 8), font=("Helvetica", 12, "bold"))
             self.style.map(
                 "TButton",
                 background=[
@@ -465,15 +454,6 @@ class PlaylistManagerUI:
 
         return False
 
-    def _build_youtube_player(self):
-        return YouTubeQueuePlayer(
-            player_file=self.YOUTUBE_PLAYER_FILE,
-            launcher_file=self.YOUTUBE_PLAYER_LAUNCHER,
-            host=self.YOUTUBE_PLAYER_HOST,
-            queue_cache_limit=self.YOUTUBE_QUEUE_CACHE_LIMIT,
-            unavailable_callback=self._mark_youtube_track_unavailable
-        )
-
     def _build_authenticated_ytmusic(self):
         if not self.youtube_account.is_ready():
             return None
@@ -532,52 +512,6 @@ class PlaylistManagerUI:
         if self.youtube_account.browser_auth_file.exists():
             return "Saved browser headers invalid, refresh needed"
         return "Not configured"
-
-    def _mark_youtube_track_unavailable(self, payload):
-        payload = dict(payload or {})
-        root = getattr(self, 'root', None)
-        if root is not None:
-            try:
-                root.after(0, lambda: self._apply_youtube_track_unavailable(payload))
-                return
-            except (RuntimeError, tk.TclError):
-                pass
-
-        self._apply_youtube_track_unavailable(payload)
-
-    def _apply_youtube_track_unavailable(self, payload):
-        video_id = str(payload.get('videoId') or '').strip()
-        if not video_id:
-            return
-
-        error_code = payload.get('errorCode')
-        unavailable_reason = f"iframe error {error_code}" if error_code is not None else "iframe unavailable"
-        changed = False
-        for pl_data in self.saved_playlists.values():
-            if pl_data.get('source') != 'youtube':
-                continue
-
-            for track in pl_data.get('tracks', []):
-                if not isinstance(track, dict):
-                    continue
-                if self._track_youtube_video_id('youtube', track) != video_id:
-                    continue
-
-                if (
-                    track.get('queuePlayable') is False
-                    and track.get('queueStatus') == "Unavailable"
-                    and track.get('queueUnavailableReason') == unavailable_reason
-                ):
-                    continue
-
-                track['queuePlayable'] = False
-                track['queueStatus'] = "Unavailable"
-                track['queueUnavailableReason'] = unavailable_reason
-                changed = True
-
-        if changed:
-            self.save_playlists()
-            self._refresh_live_combined_if_active()
 
     def _schedule_initial_update_check(self):
         if os.environ.get(self.DISABLE_UPDATE_CHECK_ENV_VAR, "").lower() in {"1", "true", "yes", "on"}:
@@ -1379,12 +1313,14 @@ class PlaylistManagerUI:
         label_widget = ttk.Label(parent, text=f"{label}:", width=18, anchor=tk.E)
         label_widget.grid(row=row, column=0, sticky=tk.NE, padx=(0, 14), pady=3)
 
+        # Pin the value to the top of the row (tk.N) so it lines up with the label
+        # instead of vertically centering and appearing a line below it.
         value_frame = ttk.Frame(parent)
-        value_frame.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+        value_frame.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N), pady=3)
         value_frame.columnconfigure(0, weight=1)
 
-        value_widget = ttk.Label(value_frame, text=str(value), wraplength=520, justify=tk.LEFT)
-        value_widget.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        value_widget = ttk.Label(value_frame, text=str(value), wraplength=520, justify=tk.LEFT, anchor=tk.W)
+        value_widget.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N))
 
         if action:
             action_label, command = action
@@ -1417,8 +1353,6 @@ class PlaylistManagerUI:
             "Sources",
             ", ".join(sorted(self._source_name(source) for source in entry.get('sources', []))) or "Unknown"
         )
-        if self._show_youtube_queue_actions():
-            row = self._add_info_row(content_frame, row, "Playback", self._entry_queue_status(entry))
 
         row = self._add_info_section(content_frame, "Playlist Appearances", row)
         summaries = self._entry_playlist_occurrence_summaries(entry)
@@ -1647,8 +1581,9 @@ class PlaylistManagerUI:
             queue_description = ttk.Label(
                 queue_frame,
                 text=(
-                    "The hidden debug queue feature uses copied YouTube Music browser request headers, "
-                    "not the YouTube Data API. Refresh these headers if temporary playlist creation fails."
+                    "\"Play in YouTube Music\" creates a private temporary playlist using copied YouTube "
+                    "Music browser request headers (not the YouTube Data API, so there is no quota). "
+                    "Set them up here once, and refresh them if playlist creation starts failing."
                 ),
                 wraplength=520
             )
@@ -1828,25 +1763,31 @@ class PlaylistManagerUI:
         intro = ttk.Label(
             parent,
             text=(
-                "Temporary playlist creation is currently more reliable with ytmusicapi browser headers "
-                "than with ytmusicapi OAuth. These headers stay on this computer and are used only by "
-                "the hidden debug queue feature."
+                "\"Play in YouTube Music\" needs your YouTube Music browser headers to create a private "
+                "playlist on your account. This is a one-time setup (repeat it only if it stops working, "
+                "e.g. after signing out). The headers stay on this computer and are never uploaded anywhere."
             ),
             wraplength=760
         )
         intro.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
 
-        steps_frame = ttk.LabelFrame(parent, text="Copy Headers", padding="12")
+        steps_frame = ttk.LabelFrame(parent, text="How to copy your headers", padding="12")
         steps_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
         steps_frame.columnconfigure(0, weight=1)
 
         steps_text = ttk.Label(
             steps_frame,
             text=(
-                "Open music.youtube.com while signed in, open your browser developer tools, go to Network, "
-                "reload YouTube Music, select a logged-in POST /browse request, then paste either the raw "
-                "request headers or Chrome's full \"Copy as fetch (Node.js)\" output below."
+                "1. Click \"Open YouTube Music\" and make sure you are signed in.\n"
+                "2. Open your browser's developer tools (Chrome/Edge: ⌥⌘I on Mac, Ctrl+Shift+I on "
+                "Windows) and select the Network tab.\n"
+                "3. Reload the page, then type  browse  in the Network filter box.\n"
+                "4. Click a POST request named \"browse\" with status 200.\n"
+                "5. Copy it: in Chrome, right-click → Copy → \"Copy as fetch (Node.js)\". "
+                "(Or copy the raw request headers.)\n"
+                "6. Paste below, click \"Save Headers\", then \"Test Saved Headers\" to confirm."
             ),
+            justify=tk.LEFT,
             wraplength=740
         )
         steps_text.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 8))
@@ -2412,147 +2353,6 @@ class PlaylistManagerUI:
             'queuePlayable': status in self.YOUTUBE_QUEUE_PLAYABLE_STATUSES
         }
 
-    def _youtube_track_queue_status(self, source, track):
-        if source != 'youtube':
-            return "External"
-        if not isinstance(track, dict) or not self._track_youtube_video_id(source, track):
-            return "No video ID"
-
-        stored_status = track.get('queueStatus')
-        if track.get('queuePlayable') is False:
-            return stored_status or "Unavailable"
-        if stored_status in {"Unavailable", "YTM only", "No video ID"}:
-            return stored_status
-
-        return self._computed_youtube_track_queue_status(source, track)
-
-    def _youtube_track_queue_playable(self, source, track):
-        return self._youtube_track_queue_status(source, track) in self.YOUTUBE_QUEUE_PLAYABLE_STATUSES
-
-    def _entry_queue_status(self, entry):
-        statuses = []
-        has_youtube = False
-        for appearance in entry.get('appearances', []):
-            source = appearance.get('source')
-            if source != 'youtube':
-                continue
-
-            has_youtube = True
-            status = self._youtube_track_queue_status(source, appearance.get('track', {}))
-            statuses.append(status)
-            if status == "Queue OK":
-                return "Queue OK"
-
-        if "Unknown" in statuses:
-            return "Unknown"
-        if "YTM only" in statuses:
-            return "YTM only"
-        if "Unavailable" in statuses:
-            return "Unavailable"
-        track = entry.get('track') if isinstance(entry.get('track'), dict) else None
-        if track:
-            return self._youtube_track_queue_status(track.get('source'), track)
-        return "External" if not has_youtube else "No video ID"
-
-    def _youtube_queue_track_from_entry(self, entry):
-        # Merged rows can contain both sources; only YouTube has queue playback without OAuth.
-        appearances = entry.get('appearances', [])
-        for appearance in appearances:
-            source = appearance.get('source')
-            track = appearance.get('track', {})
-            video_id = self._track_youtube_video_id(source, track)
-            if not video_id or not self._youtube_track_queue_playable(source, track):
-                continue
-
-            return {
-                'videoId': video_id,
-                'title': entry.get('title') or track.get('title') or 'Unknown Title',
-                'artist': entry.get('artist') or track.get('artist') or 'Unknown Artist',
-                'playlist': self._playlist_source_label(source, appearance.get('playlist', 'Unknown Playlist')),
-                'sourceUrl': self._track_play_url(source, track),
-                'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
-                'playbackStatus': self._youtube_track_queue_status(source, track)
-            }
-
-        track = entry.get('track', {})
-        source = track.get('source')
-        video_id = self._track_youtube_video_id(source, track)
-        if not video_id or not self._youtube_track_queue_playable(source, track):
-            return None
-
-        return {
-            'videoId': video_id,
-            'title': entry.get('title') or track.get('title') or 'Unknown Title',
-            'artist': entry.get('artist') or track.get('artist') or 'Unknown Artist',
-            'playlist': self._format_playlist_occurrences(entry, limit=None) or 'Unknown Playlist',
-            'sourceUrl': self._track_play_url(source, track),
-            'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
-            'playbackStatus': self._youtube_track_queue_status(source, track)
-        }
-
-    def _youtube_queue_tracks_from_entries(self, entries):
-        queue_tracks = []
-        seen_video_ids = set()
-        for entry in entries:
-            queue_track = self._youtube_queue_track_from_entry(entry)
-            if not queue_track:
-                continue
-
-            video_id = queue_track['videoId']
-            if video_id in seen_video_ids:
-                continue
-
-            queue_tracks.append(queue_track)
-            seen_video_ids.add(video_id)
-
-        return queue_tracks
-
-    def _youtube_queue_tracks_from_playlist(self, playlist_key):
-        pl_data = self.saved_playlists.get(playlist_key)
-        if not pl_data:
-            return []
-
-        source, _playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
-        if source != 'youtube':
-            return []
-
-        playlist_name = pl_data.get('name', 'Unnamed Playlist')
-        queue_tracks = []
-        tracks = pl_data.get('tracks') or self._fallback_youtube_tracks(pl_data.get('videos', set()))
-        for track in tracks:
-            video_id = self._track_youtube_video_id(source, track)
-            if not video_id or not self._youtube_track_queue_playable(source, track):
-                continue
-
-            queue_tracks.append({
-                'videoId': video_id,
-                'title': track.get('title') or 'Unknown Title',
-                'artist': track.get('artist') or 'Unknown Artist',
-                'playlist': self._playlist_source_label(source, playlist_name),
-                'sourceUrl': self._track_play_url(source, track),
-                'thumbnailUrl': track.get('thumbnailUrl') or self._best_thumbnail_url(track.get('thumbnails')),
-                'playbackStatus': self._youtube_track_queue_status(source, track)
-            })
-
-        return queue_tracks
-
-    def _open_youtube_queue_player(self, title, queue_tracks):
-        if not queue_tracks:
-            messagebox.showinfo(
-                "YouTube Queue",
-                "No YouTube tracks are available for this queue. Spotify queue playback requires Spotify OAuth, so Spotify is limited to external links for now."
-            )
-            return
-
-        try:
-            # The player module prefers a native pywebview window and falls back to a browser tab.
-            self.youtube_player.open_queue(title, queue_tracks)
-        except Exception as e:
-            messagebox.showerror("YouTube Player", f"Failed to start the YouTube player: {e}")
-
-    def _play_entries_as_youtube_queue(self, entries, title):
-        self._open_youtube_queue_player(title, self._youtube_queue_tracks_from_entries(entries))
-
     def _show_youtube_queue_actions(self):
         value = os.environ.get(self.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, "")
         return value.lower() in {"1", "true", "yes", "on"}
@@ -3017,26 +2817,6 @@ class PlaylistManagerUI:
         elif self.current_display_view == 'temporary_playlists':
             self.show_temporary_playlists_display()
 
-    def _play_playlist_youtube_queue(self, playlist_key):
-        pl_data = self.saved_playlists.get(playlist_key)
-        if not pl_data:
-            messagebox.showinfo("No Selection", "Select a saved playlist first.")
-            return
-
-        source, _playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
-        if source != 'youtube':
-            messagebox.showinfo(
-                "Spotify Playback Restricted",
-                "Spotify queue playback requires Spotify OAuth, so Spotify playlists are limited to external links for now."
-            )
-            return
-
-        playlist_name = pl_data.get('name', 'Unnamed Playlist')
-        self._open_youtube_queue_player(
-            playlist_name,
-            self._youtube_queue_tracks_from_playlist(playlist_key)
-        )
-
     def _open_playlist_url(self, playlist_key):
         pl_data = self.saved_playlists.get(playlist_key)
         if not pl_data:
@@ -3077,11 +2857,6 @@ class PlaylistManagerUI:
         self._open_external_url(url)
 
     def _play_entry(self, entry):
-        youtube_queue_tracks = self._youtube_queue_tracks_from_entries([entry])
-        if youtube_queue_tracks:
-            self._open_youtube_queue_player(entry.get('title', 'YouTube Queue'), youtube_queue_tracks)
-            return
-
         self._open_entry_play_url(entry)
 
     def _entry_playlist_occurrence_labels(self, entry):
@@ -3146,13 +2921,6 @@ class PlaylistManagerUI:
             if isinstance(track, dict) and (track.get('id') or track.get('trackId') or track.get('videoId'))
         })
 
-    def _cached_queue_status_counts(self, source, tracks):
-        counts = {}
-        for track in tracks:
-            status = self._youtube_track_queue_status(source, track)
-            counts[status] = counts.get(status, 0) + 1
-        return counts
-
     def show_playlist_details_window(self, playlist_key):
         pl_data = self.saved_playlists.get(playlist_key)
         if not pl_data:
@@ -3170,8 +2938,6 @@ class PlaylistManagerUI:
         content_frame.columnconfigure(1, weight=1)
 
         actions = []
-        if source == 'youtube' and tracks and self._show_youtube_queue_actions():
-            actions.append(("Play Queue", lambda: self._play_playlist_youtube_queue(playlist_key)))
         if playlist_url:
             actions.append(("Open", lambda: self._open_external_url(playlist_url)))
         actions.append(("Close", details_window.destroy))
@@ -3196,10 +2962,6 @@ class PlaylistManagerUI:
         row = self._add_info_row(content_frame, row, "Cached Tracks", len(tracks))
         row = self._add_info_row(content_frame, row, "Unique Cached Tracks", self._cached_track_id_count(tracks))
         row = self._add_info_row(content_frame, row, "Metadata Cached", "Yes" if tracks else "No")
-        if source == 'youtube' and tracks and self._show_youtube_queue_actions():
-            status_counts = self._cached_queue_status_counts(source, tracks)
-            row = self._add_info_row(content_frame, row, "Queue-Playable Tracks", status_counts.get("Queue OK", 0) + status_counts.get("Unknown", 0))
-            row = self._add_info_row(content_frame, row, "YTM-Only Tracks", status_counts.get("YTM only", 0))
 
         if tracks:
             first_track = tracks[0]
@@ -3476,15 +3238,6 @@ class PlaylistManagerUI:
 
         details_button = ttk.Button(header_frame, text="Details", command=show_selected_playlist_details)
         details_button.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=(8, 0))
-
-        if self._show_youtube_queue_actions():
-            def play_selected_playlist_queue():
-                playlist_key = selected_playlist_key()
-                if playlist_key:
-                    self._play_playlist_youtube_queue(playlist_key)
-
-            play_queue_button = ttk.Button(header_frame, text="Play YouTube Queue", command=play_selected_playlist_queue)
-            play_queue_button.grid(row=1, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
 
         table_frame = ttk.Frame(parent)
         table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -3779,8 +3532,7 @@ class PlaylistManagerUI:
         x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
         x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        show_queue_metadata = self._show_youtube_queue_actions()
-        song_columns = ('title', 'artist', 'playback', 'playlists') if show_queue_metadata else ('title', 'artist', 'playlists')
+        song_columns = ('title', 'artist', 'playlists')
 
         songs_tree = ttk.Treeview(
             table_frame,
@@ -3798,18 +3550,14 @@ class PlaylistManagerUI:
         songs_tree.heading('#0', text='')
         songs_tree.heading('title', text='Title')
         songs_tree.heading('artist', text='Artist')
-        if show_queue_metadata:
-            songs_tree.heading('playback', text='Playback')
         songs_tree.heading('playlists', text='Playlists')
 
         songs_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
         songs_tree.column('title', width=260, minwidth=160, stretch=False)
         songs_tree.column('artist', width=190, minwidth=120, stretch=False)
-        if show_queue_metadata:
-            songs_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
-            songs_tree.column('playlists', width=560, minwidth=220, stretch=False)
-        else:
-            songs_tree.column('playlists', width=670, minwidth=260, stretch=False)
+        # Smaller by default but stretches with the window and is resizable; the full
+        # playlist list (untruncated) is available in the song's Details window.
+        songs_tree.column('playlists', width=320, minwidth=140, stretch=True)
 
         entry_by_item = {}
         visible_entries = []
@@ -3829,14 +3577,6 @@ class PlaylistManagerUI:
         )
         play_button.grid(row=1, column=3, sticky=tk.W, padx=4)
 
-        if self._show_youtube_queue_actions():
-            play_queue_button = ttk.Button(
-                toolbar_frame,
-                text="Play YouTube Queue",
-                command=lambda: self._play_entries_as_youtube_queue(visible_entries, "Combined Songs")
-            )
-            play_queue_button.grid(row=1, column=4, sticky=tk.W, padx=(4, 0))
-
         def refresh_results(*_):
             nonlocal visible_entries
             selected_playlist_keys = playlist_keys() if callable(playlist_keys) else playlist_keys
@@ -3851,7 +3591,7 @@ class PlaylistManagerUI:
                         entry['artist'],
                         self._format_playlist_occurrences(entry, limit=None),
                         ', '.join(sorted(self._source_name(source) for source in entry['sources']))
-                    ] + ([self._entry_queue_status(entry)] if show_queue_metadata else []),
+                    ],
                     display_find_var.get()
                 )
             ]
@@ -3868,16 +3608,12 @@ class PlaylistManagerUI:
                 songs_tree.insert(
                     '',
                     tk.END,
-                    values=(message, '', '', '') if show_queue_metadata else (message, '', '')
+                    values=(message, '', '')
                 )
             else:
                 for entry in filtered_entries:
                     playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
-                    row_values = (
-                        (entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
-                        if show_queue_metadata
-                        else (entry['title'], entry['artist'], playlist_text)
-                    )
+                    row_values = (entry['title'], entry['artist'], playlist_text)
                     item_id = songs_tree.insert(
                         '',
                         tk.END,
@@ -3943,8 +3679,7 @@ class PlaylistManagerUI:
             x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
             x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-            show_queue_metadata = self._show_youtube_queue_actions()
-            duplicate_columns = ('title', 'artist', 'playback', 'playlists') if show_queue_metadata else ('title', 'artist', 'playlists')
+            duplicate_columns = ('title', 'artist', 'playlists')
 
             duplicates_tree = ttk.Treeview(
                 table_frame,
@@ -3962,18 +3697,14 @@ class PlaylistManagerUI:
             duplicates_tree.heading('#0', text='')
             duplicates_tree.heading('title', text='Title')
             duplicates_tree.heading('artist', text='Artist')
-            if show_queue_metadata:
-                duplicates_tree.heading('playback', text='Playback')
             duplicates_tree.heading('playlists', text='Playlists')
 
             duplicates_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
             duplicates_tree.column('title', width=260, minwidth=160, stretch=False)
             duplicates_tree.column('artist', width=190, minwidth=120, stretch=False)
-            if show_queue_metadata:
-                duplicates_tree.column('playback', width=110, minwidth=90, stretch=False, anchor=tk.CENTER)
-                duplicates_tree.column('playlists', width=560, minwidth=220, stretch=False)
-            else:
-                duplicates_tree.column('playlists', width=670, minwidth=260, stretch=False)
+            # Smaller by default but stretches with the window and is resizable; the full
+            # playlist list (untruncated) is available in the song's Details window.
+            duplicates_tree.column('playlists', width=320, minwidth=140, stretch=True)
 
             entry_by_item = {}
             visible_entries = []
@@ -3993,14 +3724,6 @@ class PlaylistManagerUI:
             )
             play_button.grid(row=1, column=2, sticky=tk.W, padx=4, pady=(8, 0))
 
-            if self._show_youtube_queue_actions():
-                play_queue_button = ttk.Button(
-                    header_frame,
-                    text="Play YouTube Queue",
-                    command=lambda: self._play_entries_as_youtube_queue(visible_entries, "Selected Playlist Duplicates")
-                )
-                play_queue_button.grid(row=1, column=3, sticky=tk.W, padx=4, pady=(8, 0))
-
             def refresh_duplicate_rows(*_):
                 nonlocal visible_entries
                 entry_by_item.clear()
@@ -4016,7 +3739,7 @@ class PlaylistManagerUI:
                             entry['artist'],
                             self._format_playlist_occurrences(entry, limit=None),
                             ', '.join(sorted(self._source_name(source) for source in entry['sources']))
-                        ] + ([self._entry_queue_status(entry)] if show_queue_metadata else []),
+                        ],
                         display_find_var.get()
                     )
                 ]
@@ -4035,17 +3758,13 @@ class PlaylistManagerUI:
                     duplicates_tree.insert(
                         '',
                         tk.END,
-                        values=(message, '', '', '') if show_queue_metadata else (message, '', '')
+                        values=(message, '', '')
                     )
                     return
 
                 for entry in visible_entries:
                     playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
-                    row_values = (
-                        (entry['title'], entry['artist'], self._entry_queue_status(entry), playlist_text)
-                        if show_queue_metadata
-                        else (entry['title'], entry['artist'], playlist_text)
-                    )
+                    row_values = (entry['title'], entry['artist'], playlist_text)
                     item_id = duplicates_tree.insert(
                         '',
                         tk.END,
