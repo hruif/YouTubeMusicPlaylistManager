@@ -21,6 +21,7 @@ import playlist_store
 import saved_playlists_view
 import settings_view
 import temporary_playlists_view
+import youtube_music_auth_views
 import text_utils
 from update_checker import UpdateChecker
 from youtube_music_account import YouTubeMusicAccount
@@ -1533,98 +1534,7 @@ class PlaylistManagerUI:
         self._show_display("Set YouTube Music Queue Headers", self._build_youtube_music_browser_auth_display, geometry="860x660")
 
     def _build_youtube_music_browser_auth_display(self, parent):
-        self.current_display_view = 'youtube_browser_auth'
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(3, weight=1)
-
-        status_var = tk.StringVar(value=f"Status: {self._youtube_music_queue_auth_status()}")
-
-        title = ttk.Label(parent, text="Set YouTube Music Queue Headers", font=("Helvetica", 15, "bold"))
-        title.grid(row=0, column=0, sticky=tk.W, pady=(0, 12))
-
-        intro = ttk.Label(
-            parent,
-            text=(
-                "\"Play in YouTube Music\" needs your YouTube Music browser headers to create a private "
-                "playlist on your account. This is a one-time setup (repeat it only if it stops working, "
-                "e.g. after signing out). The headers stay on this computer and are never uploaded anywhere."
-            ),
-            wraplength=760
-        )
-        intro.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
-
-        steps_frame = ttk.LabelFrame(parent, text="How to copy your headers", padding="12")
-        steps_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
-        steps_frame.columnconfigure(0, weight=1)
-
-        steps_text = ttk.Label(
-            steps_frame,
-            text=(
-                "1. Click \"Open YouTube Music\" and make sure you are signed in.\n"
-                "2. Open your browser's developer tools (Chrome/Edge: ⌥⌘I on Mac, Ctrl+Shift+I on "
-                "Windows) and select the Network tab.\n"
-                "3. Reload the page, then type  browse  in the Network filter box.\n"
-                "4. Click a POST request named \"browse\" with status 200.\n"
-                "5. Copy it: in Chrome, right-click → Copy → \"Copy as fetch (Node.js)\". "
-                "(Or copy the raw request headers.)\n"
-                "6. Paste below, click \"Save Headers\", then \"Test Saved Headers\" to confirm."
-            ),
-            justify=tk.LEFT,
-            wraplength=740
-        )
-        steps_text.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 8))
-
-        open_music_button = ttk.Button(
-            steps_frame,
-            text="Open YouTube Music",
-            command=lambda: self._open_external_url("https://music.youtube.com/")
-        )
-        open_music_button.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
-
-        docs_button = ttk.Button(
-            steps_frame,
-            text="Browser Auth Help",
-            command=lambda: self._open_external_url("https://ytmusicapi.readthedocs.io/en/stable/setup/browser.html")
-        )
-        docs_button.grid(row=1, column=1, sticky=tk.W)
-
-        headers_frame = ttk.LabelFrame(parent, text="Request Headers", padding="8")
-        headers_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 12))
-        headers_frame.columnconfigure(0, weight=1)
-        headers_frame.rowconfigure(0, weight=1)
-
-        headers_text = tk.Text(headers_frame, height=12, wrap=tk.NONE)
-        headers_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        headers_scrollbar = ttk.Scrollbar(headers_frame, orient=tk.VERTICAL, command=headers_text.yview)
-        headers_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-        headers_text.configure(yscrollcommand=headers_scrollbar.set)
-
-        status_label = ttk.Label(parent, textvariable=status_var, justify=tk.LEFT)
-        status_label.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-
-        actions_frame = ttk.Frame(parent)
-        actions_frame.grid(row=5, column=0, sticky=(tk.W, tk.E))
-        actions_frame.columnconfigure(3, weight=1)
-
-        save_button = ttk.Button(
-            actions_frame,
-            text="Save Headers",
-            command=lambda: self.save_youtube_music_browser_headers(headers_text, status_var, test_button)
-        )
-        save_button.grid(row=0, column=0, sticky=tk.W, padx=(0, 8))
-
-        test_button = ttk.Button(
-            actions_frame,
-            text="Test Saved Headers",
-            command=lambda: self.test_youtube_music_browser_headers(status_var, test_button)
-        )
-        test_button.grid(row=0, column=1, sticky=tk.W, padx=(0, 8))
-        if not self.youtube_account.has_browser_auth():
-            test_button.state(["disabled"])
-
-        back_button = ttk.Button(actions_frame, text="Back to Settings", command=self.show_settings_display)
-        back_button.grid(row=0, column=2, sticky=tk.W)
+        youtube_music_auth_views.build_browser_auth(self, parent)
 
     def save_youtube_music_browser_headers(self, headers_text, status_var, test_button=None):
         headers_raw = headers_text.get("1.0", tk.END).strip()
