@@ -18,6 +18,8 @@ from app.app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_
 from app.views.playlist_url_window import PlaylistURLWindow
 from app.views import combined_songs_view
 from app.views import duplicates_view
+from app.services import playlist_editor
+from app.services.playlist_editor import PlaylistEditor
 from app.services.playlist_library import PlaylistLibrary
 from app.services.queue_service import QueueService
 from app.views import playlist_checkbox_selector
@@ -120,6 +122,7 @@ class PlaylistManagerUI:
         self.update_checker = UpdateChecker()
         self.youtube_account = YouTubeMusicAccount(opener=self._open_external_url)
         self.queue_service = QueueService(self.youtube_account, self.YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE)
+        self.playlist_editor = PlaylistEditor()
         self.youtube_queue_auth_error = None
         self.youtube_queue_headers_verified = False
         self.authenticated_ytmusic = self._build_authenticated_ytmusic()
@@ -1192,6 +1195,256 @@ class PlaylistManagerUI:
             return
         self._play_entry(entry)
 
+    # --- Add / remove songs on the user's YouTube Music playlists (browser-auth,
+    # account-touching, YouTube only). ------------------------------------------------
+
+    def _entry_youtube_track(self, entry):
+        """The track dict from this entry's first YouTube appearance (or None)."""
+        for appearance in entry.get('appearances', []):
+            if appearance.get('source') == 'youtube':
+                track = appearance.get('track')
+                if isinstance(track, dict):
+                    return track
+        return None
+
+    def _entry_youtube_video_id(self, entry):
+        track = self._entry_youtube_track(entry)
+        if not track:
+            return None
+        return track.get('videoId') or track.get('id')
+
+    def _youtube_appearances(self, entry):
+        """Distinct YouTube playlists this song appears in, deduped by playlist key:
+        [{'playlist_key', 'label', 'track'}, ...]."""
+        seen = {}
+        for appearance in entry.get('appearances', []):
+            if appearance.get('source') != 'youtube':
+                continue
+            playlist_key = appearance.get('playlist_key')
+            if not playlist_key or playlist_key in seen:
+                continue
+            seen[playlist_key] = {
+                'playlist_key': playlist_key,
+                'label': appearance.get('playlist')
+                or self._playlist_label(playlist_key, self.saved_playlists.get(playlist_key, {})),
+                'track': appearance.get('track') if isinstance(appearance.get('track'), dict) else {},
+            }
+        return list(seen.values())
+
+    def _youtube_targets_for_adding(self, video_id):
+        if not video_id:
+            return []
+        return playlist_editor.addable_target_playlists(self.saved_playlists, video_id)
+
+    def _account_write_client_or_prompt(self):
+        """Return the browser-auth client, or None after pointing the user at the
+        header setup (same gate the queue feature uses)."""
+        client = self._youtube_music_queue_client()
+        if client is None:
+            messagebox.showerror(
+                "YouTube Music",
+                "The saved YouTube Music headers could not be loaded. Set or refresh them in Settings."
+            )
+            self.show_youtube_music_browser_auth_display()
+        return client
+
+    def _begin_account_edit(self, edit_key):
+        """Guard against duplicate concurrent edits (fast double-clicks / repeated menu
+        picks) of the same song+playlist. Returns False if one is already in flight."""
+        inflight = getattr(self, '_inflight_account_edits', None)
+        if inflight is None:
+            inflight = self._inflight_account_edits = set()
+        if edit_key in inflight:
+            return False
+        inflight.add(edit_key)
+        return True
+
+    def _run_account_edit(self, work, revert, error_title, edit_key):
+        """Run an optimistic account write on a worker thread. The caller has already
+        applied the change locally, so success just persists it silently; failure reverts
+        the local change and surfaces the error (auth-like ones via the refresh prompt).
+        No progress/success popups — the refreshed song list is the feedback."""
+        def done(error):
+            self._inflight_account_edits.discard(edit_key)
+            if error is not None:
+                revert()
+                self._refresh_after_playlist_edit()
+            self.save_playlists()
+            if error is not None:
+                if self._is_browser_auth_refresh_error(error):
+                    self._prompt_browser_auth_refresh(error)
+                else:
+                    messagebox.showerror(error_title, str(error))
+
+        def worker():
+            try:
+                work()
+            except Exception as e:
+                self.root.after(0, lambda error=e: done(error))
+                return
+            self.root.after(0, lambda: done(None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _refresh_after_playlist_edit(self):
+        # Song membership changed but the set of playlists did not, so just refresh the
+        # visible combined-songs list (rebuilding the sidebar would reset its selection).
+        self._refresh_live_combined_if_active()
+
+    def add_song_to_playlist(self, track, target_playlist_key, on_done=None):
+        video_id = (track or {}).get('videoId') or (track or {}).get('id')
+        pl_data = self.saved_playlists.get(target_playlist_key)
+        if not video_id or not pl_data:
+            messagebox.showerror("Add Song", "Could not determine the song or the target playlist.")
+            return
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        playlist_id = pl_data.get('id')
+        edit_key = ('add', playlist_id, video_id)
+        if not self._begin_account_edit(edit_key):
+            return
+
+        # Optimistic: reflect the add immediately, then confirm in the background.
+        playlist_editor.apply_local_add(pl_data, track, video_id)
+        self._refresh_after_playlist_edit()
+        if on_done:
+            on_done()
+
+        self._run_account_edit(
+            lambda: self.playlist_editor.add_song(client, playlist_id, video_id),
+            lambda: playlist_editor.apply_local_remove(pl_data, video_id),
+            "Add Song",
+            edit_key,
+        )
+
+    def remove_song_from_playlist(self, track, playlist_key, on_done=None):
+        video_id = (track or {}).get('videoId') or (track or {}).get('id')
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not video_id or not pl_data:
+            messagebox.showerror("Remove Song", "Could not determine the song or the playlist.")
+            return
+
+        playlist_name = pl_data.get('name', 'the playlist')
+        song_title = (track or {}).get('title') or 'this song'
+        confirm = messagebox.askyesno(
+            "Remove Song",
+            (
+                f'Remove "{song_title}" from "{playlist_name}" on YouTube Music?\n\n'
+                "This deletes it from the real playlist on your account, not just the local copy."
+            ),
+            parent=self.root,
+        )
+        if not confirm:
+            return
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        playlist_id = pl_data.get('id')
+        edit_key = ('remove', playlist_id, video_id)
+        if not self._begin_account_edit(edit_key):
+            return
+
+        # Optimistic: drop it from the list now; restore it on failure.
+        original_track = dict(track or {})
+        playlist_editor.apply_local_remove(pl_data, video_id)
+        self._refresh_after_playlist_edit()
+        if on_done:
+            on_done()
+
+        self._run_account_edit(
+            lambda: self.playlist_editor.remove_song(client, playlist_id, video_id),
+            lambda: playlist_editor.apply_local_add(pl_data, original_track, video_id),
+            "Remove Song",
+            edit_key,
+        )
+
+    def _show_song_context_menu(self, event, tree, entry_by_item):
+        row_id = tree.identify_row(event.y)
+        if not row_id:
+            return
+        tree.selection_set(row_id)
+        entry = entry_by_item.get(row_id)
+        if not entry:
+            return
+        menu = self._build_song_context_menu(entry)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _build_song_context_menu(self, entry):
+        menu = tk.Menu(self.root, tearoff=0)
+        video_id = self._entry_youtube_video_id(entry)
+        track = self._entry_youtube_track(entry)
+
+        add_menu = tk.Menu(menu, tearoff=0)
+        targets = self._youtube_targets_for_adding(video_id)
+        if targets:
+            for target in targets:
+                add_menu.add_command(
+                    label=target['name'],
+                    command=lambda key=target['key']: self.add_song_to_playlist(track, key),
+                )
+        else:
+            add_menu.add_command(label="(no other YouTube playlists)", state=tk.DISABLED)
+        menu.add_cascade(label="Add to playlist", menu=add_menu,
+                         state=tk.NORMAL if video_id else tk.DISABLED)
+
+        remove_menu = tk.Menu(menu, tearoff=0)
+        appearances = self._youtube_appearances(entry)
+        if appearances:
+            for appearance in appearances:
+                remove_menu.add_command(
+                    label=appearance['label'],
+                    command=lambda key=appearance['playlist_key'], song=appearance['track']:
+                        self.remove_song_from_playlist(song, key),
+                )
+        else:
+            remove_menu.add_command(label="(not in a YouTube playlist)", state=tk.DISABLED)
+        menu.add_cascade(label="Remove from playlist", menu=remove_menu,
+                         state=tk.NORMAL if appearances else tk.DISABLED)
+
+        menu.add_separator()
+        menu.add_command(label="Song details", command=lambda: self.show_song_details_window(entry))
+        menu.add_command(label="Play", command=lambda: self._play_entry(entry))
+        return menu
+
+    def _add_song_to_playlist_row(self, parent, row, track, targets, details_window):
+        """A 'Add to playlist: [dropdown] [Add]' row for the Details window."""
+        label_widget = ttk.Label(parent, text="Add to playlist:", width=18, anchor=tk.E)
+        label_widget.grid(row=row, column=0, sticky=tk.NE, padx=(0, 14), pady=3)
+
+        value_frame = ttk.Frame(parent)
+        value_frame.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N), pady=3)
+        value_frame.columnconfigure(0, weight=1)
+
+        if not targets:
+            ttk.Label(
+                value_frame,
+                text="Already in every saved YouTube playlist.",
+                anchor=tk.W,
+            ).grid(row=0, column=0, sticky=(tk.W, tk.E))
+            return row + 1
+
+        names = [target['name'] for target in targets]
+        combo = ttk.Combobox(value_frame, values=names, state="readonly")
+        combo.current(0)
+        combo.grid(row=0, column=0, sticky=(tk.W, tk.E))
+
+        def do_add():
+            index = combo.current()
+            if index < 0:
+                return
+            self.add_song_to_playlist(track, targets[index]['key'], on_done=details_window.destroy)
+
+        ttk.Button(value_frame, text="Add", command=do_add).grid(row=0, column=1, sticky=tk.NE, padx=(10, 0))
+        return row + 1
+
     def _create_info_window(self, title, geometry="760x560", minsize=(660, 420)):
         info_window = tk.Toplevel(self.root)
         info_window.title(title)
@@ -1355,6 +1608,28 @@ class PlaylistManagerUI:
                 summary['label'],
                 f"{occurrence_text}; Track IDs: {track_ids or 'Unknown'}",
                 action=("Open", lambda link=summary['urls'][0]: self._open_external_url(link)) if summary.get('urls') else None
+            )
+
+        # Account-touching edit controls: remove from a playlist it's in, or add it to
+        # another saved YouTube playlist. Same backend as the right-click menu.
+        video_id = self._entry_youtube_video_id(entry)
+        if video_id:
+            track = self._entry_youtube_track(entry)
+            row = self._add_info_section(content_frame, "Edit on YouTube Music", row)
+            for appearance in self._youtube_appearances(entry):
+                row = self._add_info_row(
+                    content_frame,
+                    row,
+                    "In playlist",
+                    appearance['label'],
+                    action=(
+                        "Remove",
+                        lambda key=appearance['playlist_key'], song=appearance['track']:
+                            self.remove_song_from_playlist(song, key, on_done=details_window.destroy),
+                    ),
+                )
+            row = self._add_song_to_playlist_row(
+                content_frame, row, track, self._youtube_targets_for_adding(video_id), details_window
             )
 
     def _clear_display_frame(self):

@@ -126,6 +126,7 @@ the release bundle, collide (same group).
     shared `playlist_checkbox_selector`. Each takes the controller as an explicit dependency.
   - `app/services/` — non-Tk logic/state: `playlist_store`, `text_utils`, `playlist_library`
     (saved-playlists state + persistence), `queue_service` (YouTube Music orchestration),
+    `playlist_editor` (add/remove songs on the user's YouTube playlists),
     `youtube_music_account`, `update_checker`.
 - **`tests/`** — all `test_*.py` (`pytest.ini` sets `pythonpath=.` + `testpaths=tests`).
 - **`dev-docs/`** — `STATUS.md`, `MANUAL_TESTING.md`. **`docs/`** is the published GitHub Pages

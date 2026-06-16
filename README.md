@@ -17,6 +17,7 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 - **Live Combined Song View**: Select playlists in the sidebar and browse their combined songs in a sortable table
 - **Selected Duplicate Finder**: Find songs that appear more than once in the selected playlist set, including repeats inside a single playlist
 - **Song Details and Playback Links**: Open full playlist-occurrence details and launch YouTube Music or Spotify links for playable tracks
+- **Edit YouTube Playlists**: Right-click a song (or use its Details window) to add it to another YouTube Music playlist or remove it from one — the change is made on your real account. Requires queue headers (Settings > Set Queue Headers); YouTube only.
 - **Display Find**: Press Ctrl+F to search within the active display
 - **Display Window Mode**: Use Settings to send display output to separate windows and keep playlist selection on the right side
 - **Source Logos**: Spotify and YouTube playlists are shown with bundled app-style logo assets for easy differentiation

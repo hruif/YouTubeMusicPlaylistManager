@@ -166,6 +166,13 @@ def build_results(controller, parent, playlist_keys, live=False):
 
     sort_combo.bind("<<ComboboxSelected>>", refresh_results)
     songs_tree.bind("<Double-1>", lambda _event: controller._show_selected_entry_details(songs_tree, entry_by_item))
+    # Right-click menu to add/remove the song on the user's YouTube playlists.
+    # Bind every right-click variant (platforms differ: Button-3, macOS Button-2 / Ctrl-click).
+    for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        songs_tree.bind(
+            sequence,
+            lambda event: controller._show_song_context_menu(event, songs_tree, entry_by_item),
+        )
     display_find_var.trace_add("write", refresh_results)
     if live:
         controller._active_combined_refresh = refresh_results
