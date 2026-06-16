@@ -7,6 +7,7 @@ from pathlib import Path
 
 import playlist_store
 from playlist_library import PlaylistLibrary
+from queue_service import QueueService
 from playlist_url_window import PlaylistURLWindow
 from ui import PlaylistManagerUI
 
@@ -84,6 +85,9 @@ def make_manager():
     manager.current_display_view = 'empty'
     manager._active_combined_refresh = None
     manager.youtube_account = FakeTemporaryPlaylistAccount()
+    manager.queue_service = QueueService(
+        manager.youtube_account, PlaylistManagerUI.YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE
+    )
     manager.authenticated_ytmusic = None
     manager.browser_authenticated_ytmusic = None
     manager.youtube_queue_auth_error = None
