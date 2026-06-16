@@ -1,7 +1,7 @@
 # Contributing & Development Guide
 
-Canonical workflow and conventions for this project. AI agents: also see `CLAUDE.md`
-/ `AGENTS.md` (short, auto-loaded) and `dev-docs/STATUS.md` (what's in flight).
+Canonical workflow and conventions for this project. For a short orientation (humans + AI
+agents), see `dev-docs/HANDOFF.md`, plus `dev-docs/STATUS.md` (what's in flight).
 
 ## TL;DR
 - Read `dev-docs/STATUS.md` before starting; update it as part of your change.
@@ -116,8 +116,7 @@ the release bundle, collide (same group).
 ## Project layout
 
 - **Root:** only `main.py` (the entry point the `.spec` builds from and `python3 main.py` runs),
-  the root docs (`README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md` — the last two are
-  auto-loaded by agents from the root), and config (`pytest.ini`, the `.spec`, etc.).
+  the root docs (`README.md`, `CONTRIBUTING.md`), and config (`pytest.ini`, the `.spec`, etc.).
 - **`app/`** — all application code, as a package:
   - `app/ui.py` — the controller.
   - `app/app_info`, `app/app_paths`, `app/app_lock`, `app/app_platform`, `app/app_settings` —

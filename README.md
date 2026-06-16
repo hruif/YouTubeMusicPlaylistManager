@@ -198,5 +198,5 @@ Working on the project (or handing it off to another person or AI agent)? Start 
 - [`dev-docs/STATUS.md`](dev-docs/STATUS.md) — living board of planned / in-progress / shipped work and known bugs.
 - [`dev-docs/MANUAL_TESTING.md`](dev-docs/MANUAL_TESTING.md) — manual test checklists that complement `pytest`.
 
-AI agents are pointed to the same material via [`CLAUDE.md`](CLAUDE.md) and
-[`AGENTS.md`](AGENTS.md).
+AI agents and new contributors get a short orientation in
+[`dev-docs/HANDOFF.md`](dev-docs/HANDOFF.md).

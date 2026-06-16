@@ -26,7 +26,8 @@ dist/
 # OS files
 .DS_Store
 
-# Local application data
+# Local application data (from-source data now lives in data/)
+/data/
 headers_auth.json
 saved_playlists.json
 saved_playlists.json.backup

@@ -23,7 +23,10 @@ def resource_path(*parts):
 
 def user_data_dir():
     if not running_from_bundle():
-        return _REPO_ROOT
+        # Keep from-source data in a dedicated (gitignored) folder so the repo root stays clean.
+        data_dir = _REPO_ROOT / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir
 
     return private_user_data_dir()
 
