@@ -28,7 +28,7 @@ Stages (mirror these in `dev-docs/STATUS.md`):
 There are two independent flags:
 
 - `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1` — **runtime UI gate**. `_show_youtube_queue_actions()`
-  in `ui.py` reads it; gated UI (e.g. the queue buttons) only appears when it is set.
+  in `app/ui.py` reads it; gated UI (e.g. the queue buttons) only appears when it is set.
   Run from source with the gate on:
 
   ```bash
@@ -40,7 +40,7 @@ There are two independent flags:
   hook that turns the UI gate on automatically.
 
 To **gate** a new feature: wrap its entry points in `if self._show_youtube_queue_actions():`
-(grep `ui.py` for existing examples).
+(grep `app/ui.py` for existing examples).
 
 To **migrate** a feature to release (see checklist below): remove the gate, make sure the
 tests cover the now-always-on path, run the manual checklist, and move its `dev-docs/STATUS.md` entry
@@ -72,10 +72,10 @@ When in doubt, gate it.
 ## Data locations & single-instance locking (caps & groups)
 
 Where each file lives depends on **how the app runs** — from source, as the release bundle, or as
-the debug bundle. Two helpers in `app_paths.py` decide this: `user_data_path(...)` returns the
-**repo dir** when running from source and the per-user OS dir when frozen; `private_user_data_path(...)`
-**always** returns the per-user OS dir (and the debug *bundle* gets its own `… (Debug)` dir via
-`PLAYLIST_MANAGER_DEBUG_BUILD`, set by the debug runtime hook).
+the debug bundle. Two helpers in `app/app_paths.py` decide this: `user_data_path(...)` returns the
+**`data/` folder in the repo** when running from source and the per-user OS dir when frozen;
+`private_user_data_path(...)` **always** returns the per-user OS dir (and the debug *bundle* gets
+its own `… (Debug)` dir via `PLAYLIST_MANAGER_DEBUG_BUILD`, set by the debug runtime hook).
 
 | File | From-source (`python main.py`) | Release bundle | Debug bundle |
 |---|---|---|---|
@@ -83,12 +83,12 @@ the debug bundle. Two helpers in `app_paths.py` decide this: `user_data_path(...
 | OAuth token/client | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 | queue headers | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 | temp-playlist records | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
-| `saved_playlists.json` | **repo dir** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
-| `app_settings.json` | **repo dir** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| `saved_playlists.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| `app_settings.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 
 ### Caps & groups
 
-The single-instance lock (`app_lock.py`) lives next to the records it guards
+The single-instance lock (`app/app_lock.py`) lives next to the records it guards
 (`private_user_data_path("instance.lock")`). Think of each distinct lock as a **cap of one**:
 at most one running instance per lock. Instances that resolve to the same lock form a **group**,
 and you can run **at most one instance from each group at a time**.
@@ -110,7 +110,7 @@ the release bundle, collide (same group).
   data dir or lock — the `… (Debug)` split is gated on `running_from_bundle()`. So a flagged and an
   unflagged source run share one lock (Group A) and can't run together.
 - **From-source ≠ release bundle for data.** They share the lock + OS-dir files (OAuth, headers,
-  temp records) but keep **separate** `saved_playlists.json` / `app_settings.json` (repo dir vs OS
+  temp records) but keep **separate** `saved_playlists.json` / `app_settings.json` (`data/` vs OS
   dir), so they coordinate on instances/account data yet show different saved-playlist lists.
 
 ## Project layout

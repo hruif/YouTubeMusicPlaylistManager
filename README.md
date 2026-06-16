@@ -30,7 +30,7 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    ```
 
 2. **Add playlists**:
-   - Click "Add Playlist URL" to add a public YouTube Music or Spotify playlist
+   - Click "Add Playlist" to add a public YouTube Music or Spotify playlist
    - The app detects the playlist source from the URL
    - Paste the playlist URL and the playlist name and songs are automatically saved
 
@@ -72,7 +72,8 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
      streaming API, the app creates a private temporary playlist from your selection and opens
      it on the official YouTube Music site, where you play it.
    - One-time setup: open Settings, click "Set Queue Headers", and follow the numbered steps to
-     paste your YouTube Music browser headers (Chrome's "Copy as fetch (Node.js)" works directly).
+     paste your YouTube Music browser headers (Chrome/Edge: "Copy as fetch (Node.js)"; Firefox:
+     "Copy Value" → "Copy Request Headers").
      Click "Test Saved Headers" to confirm. You only repeat this if it stops working (e.g. after
      signing out). The headers stay on your computer.
    - Select one or more YouTube Music playlists, then click "Play in YouTube Music" in the sidebar.
@@ -95,10 +96,11 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 
 ## Data Storage
 
-When running from source, playlists and `app_settings.json` (which remembers preferences such as "always delete temporary playlists on exit") are stored next to the code. A short-lived `instance.lock` file in the same folder enforces the single-instance guard. In the packaged macOS app, these live in `~/Library/Application Support/YouTube Music Playlist Manager/`.
+When running from source, your playlists and `app_settings.json` (which remembers preferences such as "always delete temporary playlists on exit") are stored in a gitignored `data/` folder in the repo. In the packaged macOS app, everything lives in `~/Library/Application Support/YouTube Music Playlist Manager/` (the debug build uses a separate `… (Debug)` folder).
 
-YouTube Music auth files and temporary playlist cleanup records are stored in the operating system's application-support folder, not in the repository:
+These files always live in the operating system's application-support folder (never in the repository), and enforce the single-instance guard / hold YouTube Music auth + temporary-playlist cleanup records:
 
+- `instance.lock`
 - `ytmusic_oauth_client.json`
 - `ytmusic_oauth_token.json`
 - `ytmusic_browser_auth.json`
@@ -157,7 +159,7 @@ python tools/build_macos_app.py
 The script creates:
 
 - `dist/YouTube Music Playlist Manager.app`
-- `dist/YouTubeMusicPlaylistManager-0.2.0-macOS.zip`
+- `dist/YouTubeMusicPlaylistManager-0.4.0-macOS.zip`
 
 Attach the zip file to a GitHub Release so the built-in update checker can find it. The app bundle uses the bundled app icon and launches under the name "YouTube Music Playlist Manager" instead of "Python".
 
@@ -171,7 +173,7 @@ After pushing the workflow, open the repository on GitHub and set Pages to deplo
 https://hruif.github.io/YouTubeMusicPlaylistManager/
 ```
 
-The page links to GitHub Releases for downloads instead of storing app binaries in the repository. Upload `dist/YouTubeMusicPlaylistManager-0.2.0-macOS.zip` or the current versioned zip to a GitHub Release when you want users to download the app.
+The page links to GitHub Releases for downloads instead of storing app binaries in the repository. Upload `dist/YouTubeMusicPlaylistManager-0.4.0-macOS.zip` or the current versioned zip to a GitHub Release when you want users to download the app.
 
 ## Optional Spotify support
 

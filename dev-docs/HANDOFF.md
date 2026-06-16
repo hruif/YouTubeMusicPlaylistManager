@@ -31,3 +31,9 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
   ```
 - **Commit footer:** end AI-authored commits with a `Co-Authored-By:` trailer identifying the agent.
 - Prefer updating `dev-docs/STATUS.md` over leaving throwaway handoff files.
+- **Keep the docs in sync — in the same change.** When you alter behavior, UI labels, file
+  layout, run/build commands, data locations, or the version, update the docs that describe them:
+  `README.md` (user-facing: features/usage/data storage/version), `CONTRIBUTING.md` (workflow +
+  project layout + data-location table), and `dev-docs/STATUS.md`. Doc drift is the main risk as
+  the project grows — a quick grep for renamed buttons, moved file paths, and old version numbers
+  before committing catches most of it.

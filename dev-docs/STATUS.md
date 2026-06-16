@@ -3,7 +3,7 @@
 Living board of what's planned, in progress, and shipped. Update this file as part of any
 feature or bug change. See `CONTRIBUTING.md` for the debug-first → release workflow.
 
-_Last updated: 2026-06-15_
+_Last updated: 2026-06-16_
 
 ## In progress — debug-gated (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS`)
 
