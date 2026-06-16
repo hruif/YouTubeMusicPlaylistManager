@@ -3,7 +3,7 @@
 
 from types import SimpleNamespace
 
-import text_utils
+from app.services import text_utils
 
 
 def test_normalize_search_text_strips_punctuation_and_case():

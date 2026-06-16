@@ -10,7 +10,7 @@ without ``fcntl`` we fall back to a PID file with a liveness check.
 import os
 from pathlib import Path
 
-from app_paths import private_user_data_path
+from app.app_paths import private_user_data_path
 
 
 class SingleInstanceLock:

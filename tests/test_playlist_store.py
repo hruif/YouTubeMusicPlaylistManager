@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the pure playlist identity/key helpers in playlist_store."""
 
-import playlist_store as ps
+from app.services import playlist_store as ps
 
 
 def test_normalize_song_key_strips_case_and_punctuation():

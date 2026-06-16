@@ -2,7 +2,7 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import playlist_store
+from app.services import playlist_store
 
 
 class PlaylistURLWindow:

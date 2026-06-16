@@ -8,7 +8,7 @@ variables, status strings, and navigation.
 import tkinter as tk
 from tkinter import ttk
 
-from app_info import APP_VERSION
+from app.app_info import APP_VERSION
 
 
 def build(controller, parent):

@@ -5,7 +5,7 @@ Tests for YouTube Music OAuth and temporary playlist bookkeeping.
 
 import json
 
-from youtube_music_account import YouTubeMusicAccount
+from app.services.youtube_music_account import YouTubeMusicAccount
 
 
 class FakeCredentials:

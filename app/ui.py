@@ -12,25 +12,25 @@ from tkinter import ttk, messagebox
 from ytmusicapi import YTMusic
 from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
-from app_info import APP_NAME, APP_VERSION
-from app_paths import resource_path, user_data_path
-from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_WINDOWS
-from playlist_url_window import PlaylistURLWindow
-import combined_songs_view
-import duplicates_view
-from playlist_library import PlaylistLibrary
-from queue_service import QueueService
-import playlist_checkbox_selector
-import playlist_selection_view
-import playlist_store
-import search_results_view
-import saved_playlists_view
-import settings_view
-import temporary_playlists_view
-import youtube_music_auth_views
-import text_utils
-from update_checker import UpdateChecker
-from youtube_music_account import YouTubeMusicAccount
+from app.app_info import APP_NAME, APP_VERSION
+from app.app_paths import resource_path, user_data_path
+from app.app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_WINDOWS
+from app.views.playlist_url_window import PlaylistURLWindow
+from app.views import combined_songs_view
+from app.views import duplicates_view
+from app.services.playlist_library import PlaylistLibrary
+from app.services.queue_service import QueueService
+from app.views import playlist_checkbox_selector
+from app.views import playlist_selection_view
+from app.services import playlist_store
+from app.views import search_results_view
+from app.views import saved_playlists_view
+from app.views import settings_view
+from app.views import temporary_playlists_view
+from app.views import youtube_music_auth_views
+from app.services import text_utils
+from app.services.update_checker import UpdateChecker
+from app.services.youtube_music_account import YouTubeMusicAccount
 
 try:
     from spotapi import PublicPlaylist

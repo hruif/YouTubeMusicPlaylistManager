@@ -3,7 +3,7 @@
 
 import json
 
-from playlist_library import PlaylistLibrary
+from app.services.playlist_library import PlaylistLibrary
 
 
 def _normalize(stored_key, pl_data):

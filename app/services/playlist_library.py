@@ -8,7 +8,7 @@ injected callables, because those need network/UI access the controller owns.
 import json
 from pathlib import Path
 
-import playlist_store
+from app.services import playlist_store
 
 
 class PlaylistLibrary:

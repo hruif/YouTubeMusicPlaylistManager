@@ -7,7 +7,8 @@ import struct
 from pathlib import Path
 
 
-ASSETS_DIR = Path(__file__).with_name("assets")
+# Tests live in tests/, so assets/ is one level up at the repo root.
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 def test_source_logo_assets_exist_with_expected_sizes():

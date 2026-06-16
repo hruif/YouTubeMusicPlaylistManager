@@ -195,8 +195,8 @@ Working on the project (or handing it off to another person or AI agent)? Start 
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — development workflow, the debug-first → release
   feature lifecycle, and conventions.
-- [`STATUS.md`](STATUS.md) — living board of planned / in-progress / shipped work and known bugs.
-- [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — manual test checklists that complement `pytest`.
+- [`dev-docs/STATUS.md`](dev-docs/STATUS.md) — living board of planned / in-progress / shipped work and known bugs.
+- [`dev-docs/MANUAL_TESTING.md`](dev-docs/MANUAL_TESTING.md) — manual test checklists that complement `pytest`.
 
 AI agents are pointed to the same material via [`CLAUDE.md`](CLAUDE.md) and
 [`AGENTS.md`](AGENTS.md).

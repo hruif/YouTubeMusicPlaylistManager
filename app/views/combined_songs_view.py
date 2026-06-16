@@ -9,7 +9,7 @@ source logos, find controls, and the shared song detail/play actions.
 import tkinter as tk
 from tkinter import ttk
 
-import text_utils
+from app.services import text_utils
 
 
 def build(controller, parent, playlist_keys, live=False):

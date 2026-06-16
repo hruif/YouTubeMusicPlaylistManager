@@ -5,11 +5,11 @@ Unit tests for UI helper logic that does not require a Tk root window.
 
 from pathlib import Path
 
-import playlist_store
-from playlist_library import PlaylistLibrary
-from queue_service import QueueService
-from playlist_url_window import PlaylistURLWindow
-from ui import PlaylistManagerUI
+from app.services import playlist_store
+from app.services.playlist_library import PlaylistLibrary
+from app.services.queue_service import QueueService
+from app.views.playlist_url_window import PlaylistURLWindow
+from app.ui import PlaylistManagerUI
 
 
 class FakeBool:
@@ -540,7 +540,7 @@ def test_find_duplicate_songs_allows_one_selected_playlist(monkeypatch):
     warnings = []
     shown = []
 
-    monkeypatch.setattr('ui.messagebox.showwarning', lambda title, message: warnings.append((title, message)))
+    monkeypatch.setattr('app.ui.messagebox.showwarning', lambda title, message: warnings.append((title, message)))
     monkeypatch.setattr(manager, 'show_duplicate_songs_display', lambda duplicates, selected_count: shown.append((duplicates, selected_count)))
 
     manager.find_duplicate_songs()
@@ -937,7 +937,7 @@ def test_update_selected_playlists_requires_a_selection(monkeypatch):
     manager.sidebar_playlist_vars = [('youtube:PL1', FakeBool(False))]
     warnings = []
 
-    monkeypatch.setattr('ui.messagebox.showwarning', lambda title, message: warnings.append((title, message)))
+    monkeypatch.setattr('app.ui.messagebox.showwarning', lambda title, message: warnings.append((title, message)))
 
     manager.update_selected_playlists()
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from queue_service import QueueService
+from app.services.queue_service import QueueService
 
 
 class FakeAccount:

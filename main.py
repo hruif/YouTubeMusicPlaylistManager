@@ -1,11 +1,11 @@
 import tkinter as tk
 from tkinter import messagebox
 
-from app_info import APP_NAME
-from app_lock import SingleInstanceLock
-from app_paths import resource_path
-from app_platform import configure_macos_app_identity
-from ui import PlaylistManagerUI
+from app.app_info import APP_NAME
+from app.app_lock import SingleInstanceLock
+from app.app_paths import resource_path
+from app.app_platform import configure_macos_app_identity
+from app.ui import PlaylistManagerUI
 
 
 def main():

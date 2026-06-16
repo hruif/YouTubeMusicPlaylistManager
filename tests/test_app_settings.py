@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the persistent application settings store."""
 
-from app_settings import AppSettings
+from app.app_settings import AppSettings
 
 
 def test_app_settings_round_trip(tmp_path):

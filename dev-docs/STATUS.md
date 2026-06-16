@@ -12,6 +12,17 @@ _Last updated: 2026-06-15_
 
 ## Released — always on (normal and debug builds)
 
+- **Repo reorganized into packages.** App code moved out of the flat root into `views/`
+  (the screen builders + `playlist_url_window` + the shared checkbox selector), `services/`
+  (`playlist_store`, `text_utils`, `playlist_library`, `queue_service`, `youtube_music_account`,
+  `update_checker`), and `tests/` (all `test_*.py`, with a `pytest.ini` setting `pythonpath=.`
+  / `testpaths=tests`). The entry point + path-sensitive core stay at the root (`main.py`,
+  `ui.py`, `app_info`, `app_paths`, `app_lock`, `app_platform`, `app_settings`) — notably
+  `app_paths` uses `__file__` for the from-source data dir, so moving it would relocate user
+  data. Imports are package-qualified (`from views import …`, `from services import …`); the
+  PyInstaller build was re-verified.
+- **Service objects: `PlaylistLibrary` + `QueueService`.** The controller no longer owns
+  playlist state/persistence or the YouTube Music queue orchestration (see entries below).
 - **Refactor (step 1 of decomposing `ui.py`): pure logic extracted into testable modules.**
   `text_utils.py` (search-text normalization, find-query matching, relative-age/timestamp
   formatting, ellipsis text-fitting, temp-playlist source name/kind/text helpers) and

@@ -8,7 +8,7 @@ shared info-window toolkit, the YouTube account, source logos, and navigation.
 import tkinter as tk
 from tkinter import ttk, messagebox, font as tkfont
 
-import text_utils
+from app.services import text_utils
 
 
 def build(controller, parent):

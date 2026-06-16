@@ -4,9 +4,9 @@ Guide for AI agents (Codex and others) working in this repo. The detailed versio
 `CLAUDE.md` and `CONTRIBUTING.md` — read both before working.
 
 ## Read first
-- `STATUS.md` — planned / in-progress / shipped work. Update it as part of your change.
+- `dev-docs/STATUS.md` — planned / in-progress / shipped work. Update it as part of your change.
 - `CONTRIBUTING.md` — full development workflow & conventions.
-- `MANUAL_TESTING.md` — manual test checklists.
+- `dev-docs/MANUAL_TESTING.md` — manual test checklists.
 
 ## Quick rules
 - **Debug-first:** new user-facing or account-touching features start behind the

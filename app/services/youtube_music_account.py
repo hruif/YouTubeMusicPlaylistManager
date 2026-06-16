@@ -11,7 +11,7 @@ from ytmusicapi import YTMusic, setup as setup_browser_auth
 from ytmusicapi.auth.oauth import OAuthCredentials
 from ytmusicapi.auth.oauth.token import RefreshingToken
 
-from app_paths import private_user_data_path
+from app.app_paths import private_user_data_path
 
 
 @dataclass

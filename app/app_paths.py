@@ -2,7 +2,11 @@ import os
 import sys
 from pathlib import Path
 
-from app_info import APP_NAME
+from app.app_info import APP_NAME
+
+# This module lives at app/app_paths.py, so the repo root (which holds assets/ and, when running
+# from source, the user's data files) is two levels up from this file.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def running_from_bundle():
@@ -13,13 +17,13 @@ def resource_path(*parts):
     if running_from_bundle() and hasattr(sys, "_MEIPASS"):
         base_path = Path(sys._MEIPASS)
     else:
-        base_path = Path(__file__).resolve().parent
+        base_path = _REPO_ROOT
     return base_path.joinpath(*parts)
 
 
 def user_data_dir():
     if not running_from_bundle():
-        return Path(__file__).resolve().parent
+        return _REPO_ROOT
 
     return private_user_data_dir()
 

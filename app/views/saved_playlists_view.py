@@ -8,8 +8,8 @@ info-window toolkit, playlist data/persistence, source logos, and find controls.
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-import playlist_store
-import text_utils
+from app.services import playlist_store
+from app.services import text_utils
 
 
 def build(controller, parent):

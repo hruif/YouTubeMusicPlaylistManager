@@ -82,7 +82,7 @@ def build_app(debug=False):
         env=env,
     )
 
-    from app_info import APP_NAME, APP_VERSION
+    from app.app_info import APP_NAME, APP_VERSION
 
     bundle_name = f"{APP_NAME} (Debug)" if debug else APP_NAME
     app_path = ROOT / "dist" / f"{bundle_name}.app"

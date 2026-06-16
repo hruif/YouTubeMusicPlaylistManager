@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tests for user-data path selection, incl. debug-bundle isolation."""
 
-import app_paths
-from app_info import APP_NAME
+from app import app_paths
+from app.app_info import APP_NAME
 
 
 def test_debug_bundle_uses_separate_data_dir_name(monkeypatch):

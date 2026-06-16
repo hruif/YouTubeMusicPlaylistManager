@@ -4,9 +4,9 @@ Guidance for Claude Code (and any AI agent) working in this repo. This file is s
 purpose; canonical detail lives in `CONTRIBUTING.md`.
 
 ## Read first
-- `STATUS.md` — what's planned / in progress / shipped. **Update it as part of your change.**
+- `dev-docs/STATUS.md` — what's planned / in progress / shipped. **Update it as part of your change.**
 - `CONTRIBUTING.md` — development workflow & conventions.
-- `MANUAL_TESTING.md` — manual checklist; run the relevant section before migrating a feature
+- `dev-docs/MANUAL_TESTING.md` — manual checklist; run the relevant section before migrating a feature
   to release.
 
 ## Must-follow rules
@@ -22,4 +22,4 @@ purpose; canonical detail lives in `CONTRIBUTING.md`.
 - **Commit footer:** end AI-authored commits with a `Co-Authored-By:` trailer identifying the
   agent.
 - **Do not** put internal dev docs in `docs/` — that folder is the published GitHub Pages site.
-- Prefer updating `STATUS.md` over leaving throwaway handoff files.
+- Prefer updating `dev-docs/STATUS.md` over leaving throwaway handoff files.

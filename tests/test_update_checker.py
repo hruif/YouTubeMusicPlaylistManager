@@ -5,7 +5,7 @@ Tests for release update detection.
 
 import json
 
-from update_checker import UpdateChecker, is_newer_version
+from app.services.update_checker import UpdateChecker, is_newer_version
 
 
 class FakeResponse:

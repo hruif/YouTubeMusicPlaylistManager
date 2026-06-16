@@ -6,7 +6,7 @@ Tk view builder extracted from the UI controller (step 2 of decomposing ui.py).
 import tkinter as tk
 from tkinter import ttk
 
-import text_utils
+from app.services import text_utils
 
 
 def build(controller, parent, duplicate_entries, selected_count):

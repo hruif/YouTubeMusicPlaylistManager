@@ -4,7 +4,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from app_info import APP_NAME, APP_RELEASES_API_URL, APP_RELEASES_URL, APP_VERSION
+from app.app_info import APP_NAME, APP_RELEASES_API_URL, APP_RELEASES_URL, APP_VERSION
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the single-instance lock."""
 
-from app_lock import SingleInstanceLock
+from app.app_lock import SingleInstanceLock
 
 
 def test_single_instance_lock_blocks_second_holder(tmp_path):

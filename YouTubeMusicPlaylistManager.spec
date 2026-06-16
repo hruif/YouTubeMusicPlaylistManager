@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
 
-from app_info import APP_BUNDLE_IDENTIFIER, APP_NAME, APP_VERSION
+from app.app_info import APP_BUNDLE_IDENTIFIER, APP_NAME, APP_VERSION
 
 
 ROOT = Path(SPECPATH)
