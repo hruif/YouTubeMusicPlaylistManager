@@ -10,12 +10,16 @@ without ``fcntl`` we fall back to a PID file with a liveness check.
 import os
 from pathlib import Path
 
-from app_paths import user_data_path
+from app_paths import private_user_data_path
 
 
 class SingleInstanceLock:
     def __init__(self, lock_file=None):
-        self.lock_file = Path(lock_file or user_data_path("instance.lock"))
+        # Keep the lock in the same (always user-writable) data dir as the temp-playlist records
+        # it guards, so every instance sharing those records shares the lock — including
+        # from-source runs and across separate repo checkouts. The debug bundle's data dir is
+        # already separate, so it gets its own lock.
+        self.lock_file = Path(lock_file or private_user_data_path("instance.lock"))
         self._handle = None
         self._using_pidfile = False
 

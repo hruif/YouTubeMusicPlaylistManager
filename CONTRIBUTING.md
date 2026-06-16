@@ -69,6 +69,50 @@ When in doubt, gate it.
 - [ ] `README.md` updated if user-facing behavior changed.
 - [ ] `STATUS.md` entry moved to *Released*.
 
+## Data locations & single-instance locking (caps & groups)
+
+Where each file lives depends on **how the app runs** — from source, as the release bundle, or as
+the debug bundle. Two helpers in `app_paths.py` decide this: `user_data_path(...)` returns the
+**repo dir** when running from source and the per-user OS dir when frozen; `private_user_data_path(...)`
+**always** returns the per-user OS dir (and the debug *bundle* gets its own `… (Debug)` dir via
+`PLAYLIST_MANAGER_DEBUG_BUILD`, set by the debug runtime hook).
+
+| File | From-source (`python main.py`) | Release bundle | Debug bundle |
+|---|---|---|---|
+| `instance.lock` | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| OAuth token/client | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| queue headers | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| temp-playlist records | OS `…/APP_NAME/` | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| `saved_playlists.json` | **repo dir** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| `app_settings.json` | **repo dir** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+
+### Caps & groups
+
+The single-instance lock (`app_lock.py`) lives next to the records it guards
+(`private_user_data_path("instance.lock")`). Think of each distinct lock as a **cap of one**:
+at most one running instance per lock. Instances that resolve to the same lock form a **group**,
+and you can run **at most one instance from each group at a time**.
+
+- **Group A — shared cap of one:** from-source runs **and** the release bundle. They all resolve
+  to the `APP_NAME` dir, so they share one lock — launch a second and it's blocked ("already
+  running"). The `.app`'s file location (e.g. `dist/` vs `/Applications`) is irrelevant; only
+  *frozen vs source* and the debug marker matter.
+- **Group B — its own cap of one:** the debug bundle (its `… (Debug)` dir → separate lock).
+
+So the max you can run concurrently is **one from Group A + the Group B (debug) bundle** — e.g. a
+`python main.py` session alongside the debug `.app`. Two release copies, or a from-source run plus
+the release bundle, collide (same group).
+
+**Two nuances:**
+
+- **From source does not differentiate release vs debug.** The debug flag
+  (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1`) changes *behavior* (shows gated UI) but **not** the
+  data dir or lock — the `… (Debug)` split is gated on `running_from_bundle()`. So a flagged and an
+  unflagged source run share one lock (Group A) and can't run together.
+- **From-source ≠ release bundle for data.** They share the lock + OS-dir files (OAuth, headers,
+  temp records) but keep **separate** `saved_playlists.json` / `app_settings.json` (repo dir vs OS
+  dir), so they coordinate on instances/account data yet show different saved-playlist lists.
+
 ## Testing
 
 - **Automated:** `pytest -q`. Add or extend tests for any new pure logic. GUI/Tk code is not

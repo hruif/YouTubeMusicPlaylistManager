@@ -113,6 +113,47 @@ def test_youtube_music_account_saves_browser_headers_for_queue(tmp_path):
     assert client.oauth_credentials is None
 
 
+def test_strip_rotating_cookies_keeps_stable_cookies(tmp_path):
+    account = make_account(tmp_path)
+
+    stripped = account._strip_rotating_cookies(
+        {"cookie": "SID=fake; __Secure-1PSIDTS=rot1; SAPISID=keep; __Secure-3PSIDTS=rot3"}
+    )
+    assert stripped["cookie"] == "SID=fake; SAPISID=keep"
+
+    # No cookie key / empty: returned unchanged, no crash.
+    assert account._strip_rotating_cookies({}) == {}
+    assert account._strip_rotating_cookies({"cookie": ""}) == {"cookie": ""}
+
+
+def test_build_browser_client_strips_rotating_cookies_when_requested(tmp_path):
+    account = make_account(tmp_path)
+    # Write the auth file directly (the fake setup helper would otherwise overwrite the cookie).
+    account.browser_auth_file.write_text(
+        json.dumps(
+            {
+                "cookie": "SID=fake; __Secure-1PSIDTS=rot1; SAPISID=keep; __Secure-3PSIDTS=rot3",
+                "x-goog-authuser": "0",
+                "authorization": "SAPISIDHASH 123_abc",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Default path is unchanged: the file path is handed to ytmusicapi as-is.
+    default_client = account.build_browser_authenticated_client()
+    assert default_client.auth == str(account.browser_auth_file)
+
+    # Experiment: rotating per-session cookies are dropped, stable ones kept, passed as a dict.
+    stripped_client = account.build_browser_authenticated_client(strip_rotating_cookies=True)
+    assert isinstance(stripped_client.auth, dict)
+    cookie = stripped_client.auth["cookie"]
+    assert "SID=fake" in cookie
+    assert "SAPISID=keep" in cookie
+    assert "__Secure-1PSIDTS" not in cookie
+    assert "__Secure-3PSIDTS" not in cookie
+
+
 def test_youtube_music_account_accepts_chrome_copy_as_fetch_headers(tmp_path):
     account = make_account(tmp_path)
 

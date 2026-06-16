@@ -9,7 +9,7 @@ import time
 import tkinter as tk
 import webbrowser
 from datetime import datetime
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 from ytmusicapi import YTMusic
 from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
@@ -35,6 +35,9 @@ class PlaylistManagerUI:
     ASSETS_DIR = resource_path("assets")
     YOUTUBE_QUEUE_ACTIONS_ENV_VAR = "PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS"
     DISABLE_UPDATE_CHECK_ENV_VAR = "PLAYLIST_MANAGER_DISABLE_UPDATE_CHECK"
+    # Opt-in toggle for the (failed) rotating-cookie-stripping experiment; off by default so it
+    # is not tied to the debug build. See _build_browser_authenticated_ytmusic.
+    STRIP_ROTATING_COOKIES_ENV_VAR = "PLAYLIST_MANAGER_STRIP_ROTATING_COOKIES"
     PLAYLIST_DISPLAY_LIMIT = 140
     YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE = 50
     SOURCE_LABELS = {
@@ -107,6 +110,7 @@ class PlaylistManagerUI:
         self.style = ttk.Style()
         self._configure_button_feedback()
         self.style.configure("SourceLogo.Treeview", rowheight=32)
+        self._configure_table_styles()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         
         self.main_frame = ttk.Frame(root, padding="14")
@@ -125,11 +129,19 @@ class PlaylistManagerUI:
         search_label = ttk.Label(self.sidebar_frame, text="Search songs:")
         search_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
 
-        self.search_entry = ttk.Entry(self.sidebar_frame)
-        self.search_entry.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        # Keep the Search button directly beside the search field so the pairing is obvious.
+        search_row = ttk.Frame(self.sidebar_frame)
+        search_row.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
+        search_row.columnconfigure(0, weight=1)
+
+        self.search_entry = ttk.Entry(search_row)
+        self.search_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
         self.search_entry.bind("<Return>", lambda e: self.on_search())
         self.root.bind_all("<Control-f>", self._focus_active_find_or_sidebar)
         self.root.bind_all("<Command-f>", self._focus_active_find_or_sidebar)
+
+        search_button = ttk.Button(search_row, text="Search", command=self.on_search)
+        search_button.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(6, 0))
 
         button_frame = ttk.Frame(self.sidebar_frame)
         button_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -140,29 +152,26 @@ class PlaylistManagerUI:
         combined_songs_button = ttk.Button(button_frame, text="View Songs", style="Primary.TButton", command=self.open_combined_songs_selector)
         combined_songs_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(2, 8))
 
-        search_button = ttk.Button(button_frame, text="Search", command=self.on_search)
-        search_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
-
         add_playlist_button = ttk.Button(button_frame, text="Add Playlist URL", command=self.open_playlist_window)
-        add_playlist_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
+        add_playlist_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
 
         view_playlists_button = ttk.Button(button_frame, text="View Saved Playlists", command=self.view_saved_playlists)
-        view_playlists_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
+        view_playlists_button.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
 
         find_duplicates_button = ttk.Button(button_frame, text="Find Duplicates in Selection", command=self.find_duplicate_songs)
-        find_duplicates_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
+        find_duplicates_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
 
         update_selected_button = ttk.Button(button_frame, text="Update Selected Playlists", command=self.update_selected_playlists)
-        update_selected_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
+        update_selected_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
 
         # "Play in YouTube Music" creates a private temporary playlist from the selected
         # playlists and opens it on music.youtube.com. The first use prompts to set up queue
         # headers; that one-time setup lives in Settings > Set Queue Headers, not here.
         play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
-        play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+        play_youtube_music_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
+        settings_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
 
         self.playlist_selector_container = ttk.LabelFrame(self.sidebar_frame, text="Playlists", padding=(6, 4))
         self.playlist_selector_container.grid(row=5, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -373,6 +382,25 @@ class PlaylistManagerUI:
         except tk.TclError:
             pass
 
+    def _configure_table_styles(self):
+        # Light visual touch-up that works across platforms: bolder table headers and a
+        # "Danger" button accent for destructive actions (delete). On macOS's native aqua
+        # theme button colors are partly ignored, so this is best-effort, not guaranteed.
+        try:
+            self.style.configure("Treeview.Heading", font=("Helvetica", 11, "bold"))
+            self.style.configure("Danger.TButton", padding=(7, 4))
+            self.style.map(
+                "Danger.TButton",
+                foreground=[
+                    ("disabled", "#8a8a8a"),
+                    ("pressed", "#7a1414"),
+                    ("active", "#a31515"),
+                    ("!disabled", "#b3261e"),
+                ],
+            )
+        except tk.TclError:
+            pass
+
     def _configure_button_feedback(self):
         try:
             self.style.configure("TButton", padding=(7, 4))
@@ -473,8 +501,21 @@ class PlaylistManagerUI:
         if not self.youtube_account.has_browser_auth():
             return None
 
+        # EXPERIMENTAL & OFF BY DEFAULT (opt in via PLAYLIST_MANAGER_STRIP_ROTATING_COOKIES=1).
+        # Strips Google's rotating per-session cookies to test whether the saved headers then
+        # outlive the ~hourly session rotation. TESTED — it did NOT extend session lifetime, so
+        # it is no longer tied to the debug build (debug builds keep working queue auth); kept as
+        # a reference implementation. See YouTubeMusicAccount.build_browser_authenticated_client.
+        strip_rotating_cookies = os.environ.get(
+            self.STRIP_ROTATING_COOKIES_ENV_VAR, ""
+        ).lower() in {"1", "true", "yes", "on"}
+        if strip_rotating_cookies:
+            print("[experiment] Building queue client with rotating session cookies stripped.")
+
         try:
-            return self.youtube_account.build_browser_authenticated_client()
+            return self.youtube_account.build_browser_authenticated_client(
+                strip_rotating_cookies=strip_rotating_cookies
+            )
         except Exception as e:
             print(f"Could not initialize YouTube Music browser-auth client: {e}")
             return None
@@ -521,7 +562,10 @@ class PlaylistManagerUI:
     def _schedule_temporary_playlist_cleanup_prompt(self):
         if not self.youtube_account.load_temporary_playlists():
             return
-        self.root.after(3500, self._handle_startup_temporary_playlists)
+        # Show this almost immediately (just after the main window paints) so the user has to
+        # deal with it before starting to click around — a long delay risks a misclick when the
+        # modal suddenly appears. It also lands before the silent update check (1500 ms).
+        self.root.after(200, self._handle_startup_temporary_playlists)
 
     def _handle_startup_temporary_playlists(self):
         records = self.youtube_account.load_temporary_playlists()
@@ -544,23 +588,19 @@ class PlaylistManagerUI:
         if not records:
             return
 
-        listed = "\n".join(
-            f"• {record.title} — {self._format_relative_age(record.created_at)}"
-            f"{self._temp_playlist_sources_suffix(record)}"
-            for record in records[:8]
-        )
-        if len(records) > 8:
-            listed += f"\n• …and {len(records) - 8} more"
-
+        count = len(records)
         should_delete = messagebox.askyesno(
             "Temporary YouTube Music Playlists",
             (
-                f"{len(records)} temporary playlist"
-                f"{'' if len(records) == 1 else 's'} from previous queue sessions are still on "
-                "your account:\n\n"
-                f"{listed}\n\n"
-                "Delete them now? (You can also review them later in Settings > Temporary Playlists.)"
-            )
+                f"{count} temporary playlist{'' if count == 1 else 's'} from previous queue "
+                f"sessions {'is' if count == 1 else 'are'} still on your account.\n\n"
+                "Delete them now? You can also review each one — and what it was merged "
+                "from — later in Settings > Temporary Playlists."
+            ),
+            parent=self.root,
+            # Default to "No" so an accidental Enter / misclick on the just-appeared modal does
+            # not delete playlists; deletion stays a deliberate choice (or later, manual cleanup).
+            default=messagebox.NO,
         )
         if should_delete:
             self.delete_temporary_youtube_playlists(prompt=False)
@@ -597,9 +637,38 @@ class PlaylistManagerUI:
                 names.append(f"{prefix}: {name}" if prefix else name)
         return ", ".join(names)
 
-    def _temp_playlist_sources_suffix(self, record):
-        sources = self._temp_playlist_sources_text(record)
-        return f" (from {sources})" if sources else ""
+    def _temp_playlist_source_names(self, record):
+        # Just the playlist names, no "YouTube:"/"Spotify:" prefix — the source is conveyed by
+        # the row's logo in the list, so repeating it as text only adds bulk.
+        names = []
+        for source in getattr(record, "source_playlists", None) or []:
+            if not isinstance(source, dict):
+                continue
+            name = str(source.get("name") or "").strip()
+            if name:
+                names.append(name)
+        return ", ".join(names)
+
+    def _temp_playlist_source_kinds(self, record):
+        kinds = set()
+        for source in getattr(record, "source_playlists", None) or []:
+            if not isinstance(source, dict):
+                continue
+            kind = str(source.get("source") or "").strip().lower()
+            if kind:
+                kinds.add(kind)
+        return kinds
+
+    def _fit_text_to_pixels(self, text, font, max_pixels):
+        # Truncate text with an ellipsis so it fits within max_pixels for the given font.
+        text = str(text)
+        if max_pixels <= 0 or not text or font.measure(text) <= max_pixels:
+            return text
+        ellipsis = "…"
+        truncated = text
+        while truncated and font.measure(truncated + ellipsis) > max_pixels:
+            truncated = truncated[:-1]
+        return (truncated.rstrip() + ellipsis) if truncated else ellipsis
 
     def _format_temp_playlist_created_at(self, created_at):
         try:
@@ -845,6 +914,21 @@ class PlaylistManagerUI:
             'videos': sorted(self._coerce_id_set(pl_data.get('videos'))),
             'tracks': self._normalize_tracks(source, pl_data.get('tracks', []))
         }
+
+    def _delete_saved_playlists(self, playlist_keys):
+        """Remove saved playlists from memory + disk and refresh the sidebar selectors.
+
+        Returns the number actually removed.
+        """
+        removed = 0
+        for key in playlist_keys:
+            if key in self.saved_playlists:
+                del self.saved_playlists[key]
+                removed += 1
+        if removed:
+            self.save_playlists()
+            self.refresh_playlist_selectors()
+        return removed
 
     def save_playlists(self):
         """Save playlists to file"""
@@ -1279,6 +1363,22 @@ class PlaylistManagerUI:
         content_canvas.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         y_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
 
+        # Let the mouse wheel scroll from anywhere in the window, not just over the scrollbar.
+        # The Toplevel is in every descendant's bindtags, so binding here catches wheel events
+        # over any child widget. (macOS/Windows use <MouseWheel>; X11 uses Button-4/5.)
+        def on_mousewheel(event):
+            if event.num == 4:
+                content_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                content_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                step = -int(event.delta) if sys.platform == "darwin" else -int(event.delta / 120)
+                content_canvas.yview_scroll(step or (-1 if event.delta > 0 else 1), "units")
+
+        info_window.bind("<MouseWheel>", on_mousewheel)
+        info_window.bind("<Button-4>", on_mousewheel)
+        info_window.bind("<Button-5>", on_mousewheel)
+
         info_window.columnconfigure(0, weight=1)
         info_window.rowconfigure(0, weight=1)
         return info_window, outer_frame, content_frame
@@ -1298,8 +1398,11 @@ class PlaylistManagerUI:
         if actions:
             action_frame = ttk.Frame(header_frame)
             action_frame.grid(row=0, column=1, rowspan=2, sticky=tk.E, padx=(12, 0))
-            for index, (label, command) in enumerate(actions):
-                button = ttk.Button(action_frame, text=label, command=command)
+            for index, action in enumerate(actions):
+                # Actions are (label, command) or (label, command, style).
+                label, command = action[0], action[1]
+                button_style = action[2] if len(action) > 2 else "TButton"
+                button = ttk.Button(action_frame, text=label, command=command, style=button_style)
                 button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
 
     def _add_info_section(self, parent, title, row):
@@ -1309,8 +1412,13 @@ class PlaylistManagerUI:
         separator.grid(row=row + 1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 6))
         return row + 2
 
-    def _add_info_row(self, parent, row, label, value, action=None):
-        label_widget = ttk.Label(parent, text=f"{label}:", width=18, anchor=tk.E)
+    def _add_info_row(self, parent, row, label, value, action=None, label_image=None):
+        if label_image is not None:
+            # A small source logo stands in for the text label (used by "Merged from" rows).
+            # The column is already sized by the text labels above, so anchor east to align it.
+            label_widget = ttk.Label(parent, image=label_image, anchor=tk.E)
+        else:
+            label_widget = ttk.Label(parent, text=f"{label}:", width=18, anchor=tk.E)
         label_widget.grid(row=row, column=0, sticky=tk.NE, padx=(0, 14), pady=3)
 
         # Pin the value to the top of the row (tk.N) so it lines up with the label
@@ -1325,7 +1433,9 @@ class PlaylistManagerUI:
         if action:
             action_label, command = action
             button = ttk.Button(value_frame, text=action_label, command=command)
-            button.grid(row=0, column=1, sticky=tk.E, padx=(10, 0))
+            # Pin the button to the top of the row (tk.NE) so it lines up with the label and
+            # the first line of the value instead of centering when the value wraps.
+            button.grid(row=0, column=1, sticky=tk.NE, padx=(10, 0))
 
         return row + 1
 
@@ -1645,7 +1755,8 @@ class PlaylistManagerUI:
             text=(
                 "Private playlists created by the queue feature. The timestamp shows how "
                 "out of date a queue is, and 'Merged from' lists the playlists it was built "
-                "from. Delete them when you no longer need them."
+                "from. Double-click a row for full details and a link to open it on the web. "
+                "Delete them when you no longer need them."
             ),
             wraplength=760,
             justify=tk.LEFT,
@@ -1665,15 +1776,25 @@ class PlaylistManagerUI:
         tree_frame.rowconfigure(0, weight=1)
 
         columns = ("title", "created", "age", "sources")
-        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="extended")
+        tree = ttk.Treeview(
+            tree_frame,
+            columns=columns,
+            show="tree headings",
+            selectmode="extended",
+            style="SourceLogo.Treeview",
+        )
+        tree.heading("#0", text="")
         tree.heading("title", text="Playlist")
         tree.heading("created", text="Created")
         tree.heading("age", text="Age")
         tree.heading("sources", text="Merged from")
-        tree.column("title", width=220, anchor=tk.W)
-        tree.column("created", width=130, anchor=tk.W)
-        tree.column("age", width=110, anchor=tk.W)
-        tree.column("sources", width=300, anchor=tk.W)
+        # Only "Merged from" stretches; the fixed-width columns on the left don't grow into
+        # empty space, so widening the window reveals more of the merged-source list instead.
+        tree.column("#0", width=38, minwidth=38, stretch=False, anchor=tk.CENTER)
+        tree.column("title", width=220, minwidth=140, stretch=False, anchor=tk.W)
+        tree.column("created", width=130, minwidth=110, stretch=False, anchor=tk.W)
+        tree.column("age", width=110, minwidth=90, stretch=False, anchor=tk.W)
+        tree.column("sources", width=260, minwidth=120, stretch=True, anchor=tk.W)
         tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
@@ -1681,19 +1802,41 @@ class PlaylistManagerUI:
         tree.configure(yscrollcommand=scrollbar.set)
 
         for record in records:
+            kinds = self._temp_playlist_source_kinds(record) or {"youtube"}
             tree.insert(
                 "",
                 tk.END,
                 iid=record.playlist_id,
+                image=self._source_logo_for_sources(kinds),
                 values=(
                     record.title,
                     self._format_temp_playlist_created_at(record.created_at),
                     self._format_relative_age(record.created_at),
-                    self._temp_playlist_sources_text(record) or "—",
+                    self._temp_playlist_source_names(record) or "—",
                 ),
             )
 
         records_by_id = {record.playlist_id: record for record in records}
+
+        # Truncate the (potentially long) "Merged from" text with an ellipsis to the column's
+        # current width, and re-fit it whenever the tree is resized or a column is dragged, so
+        # the list never spills off-screen and widening the window reveals more.
+        sources_font = tkfont.nametofont("TkDefaultFont")
+        fixed_source_cols = ("#0", "title", "created", "age")
+
+        def refresh_sources_ellipsis(_event=None):
+            tree_width = tree.winfo_width()
+            if tree_width <= 1:
+                return
+            fixed = sum(int(tree.column(col, "width")) for col in fixed_source_cols)
+            available = max(40, tree_width - fixed - 8)
+            for item_id, record in records_by_id.items():
+                full_text = self._temp_playlist_source_names(record) or "—"
+                tree.set(item_id, "sources", self._fit_text_to_pixels(full_text, sources_font, available))
+
+        tree.bind("<Configure>", refresh_sources_ellipsis)
+        tree.bind("<ButtonRelease-1>", refresh_sources_ellipsis, add="+")
+        self.root.after(0, refresh_sources_ellipsis)
 
         def selected_records():
             return [records_by_id[item] for item in tree.selection() if item in records_by_id]
@@ -1721,7 +1864,12 @@ class PlaylistManagerUI:
             if should_delete:
                 self.delete_temporary_youtube_playlists(prompt=False, records=chosen)
 
-        tree.bind("<Double-1>", lambda event: open_selected())
+        def open_details(event):
+            item = tree.identify_row(event.y)
+            if item in records_by_id:
+                self.show_temporary_playlist_details_window(records_by_id[item])
+
+        tree.bind("<Double-1>", open_details)
 
         actions = ttk.Frame(parent)
         actions.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
@@ -1743,6 +1891,74 @@ class PlaylistManagerUI:
             command=self.delete_temporary_youtube_playlists,
         )
         delete_all_button.grid(row=0, column=2)
+
+    def show_temporary_playlist_details_window(self, record):
+        details_window, outer_frame, content_frame = self._create_info_window(
+            "Temporary Playlist Info", geometry="720x500"
+        )
+        content_frame.columnconfigure(1, weight=1)
+
+        playlist_url = (
+            self.youtube_account.playlist_url(record.playlist_id) if record.playlist_id else ""
+        )
+
+        actions = []
+        if playlist_url:
+            actions.append(("Open in Browser", lambda: self._open_external_url(playlist_url)))
+        actions.append(("Close", details_window.destroy))
+        self._add_info_header(
+            outer_frame,
+            record.title or "Untitled Temporary Playlist",
+            f"Created {self._format_temp_playlist_created_at(record.created_at)} "
+            f"({self._format_relative_age(record.created_at)})",
+            actions=actions,
+        )
+
+        row = 0
+        row = self._add_info_section(content_frame, "General", row)
+        row = self._add_info_row(content_frame, row, "Title", record.title or "Untitled")
+        row = self._add_info_row(
+            content_frame, row, "Created", self._format_temp_playlist_created_at(record.created_at)
+        )
+        row = self._add_info_row(content_frame, row, "Age", self._format_relative_age(record.created_at))
+        row = self._add_info_row(content_frame, row, "Playlist ID", record.playlist_id or "Unknown")
+        row = self._add_info_row(
+            content_frame,
+            row,
+            "Playlist Link",
+            playlist_url or "Unavailable",
+            action=("Open", lambda: self._open_external_url(playlist_url)) if playlist_url else None,
+        )
+
+        row = self._add_info_section(content_frame, "Merged from", row)
+        sources = record.source_playlists or []
+        if not sources:
+            row = self._add_info_row(content_frame, row, "Sources", "Unknown")
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            name = str(source.get("name") or "Unnamed Playlist")
+            source_kind = str(source.get("source") or "").strip().lower()
+            source_label = self._source_name(source_kind) if source_kind else "Source"
+            source_id = str(source.get("id") or "")
+            source_url = self._playlist_url(source_kind, source_id) if source_id else ""
+            source_logo = (
+                self._source_logo_image(source_kind, size="sidebar")
+                if source_kind in ("youtube", "spotify")
+                else None
+            )
+            row = self._add_info_row(
+                content_frame,
+                row,
+                source_label,
+                name,
+                action=(
+                    ("Open", lambda link=source_url: self._open_external_url(link))
+                    if source_url
+                    else None
+                ),
+                label_image=source_logo,
+            )
 
     def show_youtube_music_auth_display(self):
         self._show_display("Connect YouTube Music", self._build_youtube_music_auth_display, geometry="820x620")
@@ -1919,6 +2135,28 @@ class PlaylistManagerUI:
         self.youtube_queue_headers_verified = False
         self.browser_authenticated_ytmusic = None
         self.youtube_queue_auth_error = self._format_browser_auth_test_error(error)
+
+    def _prompt_browser_auth_refresh(self, error):
+        """Flag the queue auth as failed and offer a one-click jump to re-paste headers.
+
+        Used whenever a queue/delete request fails with an auth-like error — typically the
+        saved session expired because Google rotated it (not because the user signed out).
+        """
+        self._mark_youtube_queue_auth_failed(error)
+        detail = self.youtube_queue_auth_error or str(error)
+        should_refresh = messagebox.askyesno(
+            "YouTube Music Session Expired",
+            (
+                "Your saved YouTube Music queue headers were rejected. This usually means the "
+                "session expired — Google rotates it periodically, so it happens even if you "
+                "never signed out.\n\n"
+                f"{detail}\n\n"
+                "Re-paste fresh headers now?"
+            ),
+            parent=self.root,
+        )
+        if should_refresh:
+            self.show_youtube_music_browser_auth_display()
 
     def _build_youtube_music_auth_display(self, parent):
         self.current_display_view = 'youtube_auth'
@@ -2691,17 +2929,7 @@ class PlaylistManagerUI:
 
         if error:
             if self._is_browser_auth_refresh_error(error):
-                self._mark_youtube_queue_auth_failed(error)
-                should_refresh = messagebox.askyesno(
-                    "Refresh Queue Headers",
-                    (
-                        "YouTube Music rejected the saved queue headers or returned a non-API response.\n\n"
-                        f"{self.youtube_queue_auth_error}\n\n"
-                        "Open Queue Headers now?"
-                    )
-                )
-                if should_refresh:
-                    self.show_youtube_music_browser_auth_display()
+                self._prompt_browser_auth_refresh(error)
                 return
 
             messagebox.showerror("YouTube Music", f"Failed to create the temporary playlist: {error}")
@@ -2827,11 +3055,36 @@ class PlaylistManagerUI:
             self.youtube_account.forget_temporary_playlists(deleted_ids)
 
         if failed:
+            for record, error in failed:
+                print(f"Failed to delete temporary playlist {record.playlist_id!r} "
+                      f"({record.title!r}): {error!r}")
+
+            auth_error = next(
+                (error for _record, error in failed if self._is_browser_auth_refresh_error(error)),
+                None,
+            )
+            if auth_error is not None:
+                # Expired session: refreshing the display first, then offer one-click recovery.
+                self._refresh_temporary_playlist_views()
+                self._prompt_browser_auth_refresh(auth_error)
+                return
+
+            detail_lines = [
+                f"• {record.title}: {self._format_browser_auth_test_error(error)}"
+                for record, error in failed[:5]
+            ]
+            if len(failed) > 5:
+                detail_lines.append(f"• …and {len(failed) - 5} more")
+            detail = "\n".join(detail_lines)
+
             messagebox.showwarning(
                 "Temporary Playlist Cleanup",
                 (
                     f"Deleted {len(deleted_ids)} playlist"
-                    f"{'' if len(deleted_ids) == 1 else 's'}, but {len(failed)} could not be deleted."
+                    f"{'' if len(deleted_ids) == 1 else 's'}, but {len(failed)} could not be "
+                    f"deleted:\n\n{detail}\n\nIf a playlist was already removed on "
+                    "music.youtube.com it can't be deleted again — you can clear it from this "
+                    "list with no further effect."
                 )
             )
         else:
@@ -2840,6 +3093,9 @@ class PlaylistManagerUI:
                 f"Deleted {len(deleted_ids)} temporary playlist{'' if len(deleted_ids) == 1 else 's'}."
             )
 
+        self._refresh_temporary_playlist_views()
+
+    def _refresh_temporary_playlist_views(self):
         if self.current_display_view == 'settings':
             self.show_settings_display()
         elif self.current_display_view == 'temporary_playlists':
@@ -2949,7 +3205,7 @@ class PlaylistManagerUI:
             if isinstance(track, dict) and (track.get('id') or track.get('trackId') or track.get('videoId'))
         })
 
-    def show_playlist_details_window(self, playlist_key):
+    def show_playlist_details_window(self, playlist_key, on_change=None):
         pl_data = self.saved_playlists.get(playlist_key)
         if not pl_data:
             messagebox.showinfo("No Selection", "Select a saved playlist first.")
@@ -2965,9 +3221,23 @@ class PlaylistManagerUI:
         details_window, outer_frame, content_frame = self._create_info_window("Playlist Info", geometry="720x500")
         content_frame.columnconfigure(1, weight=1)
 
+        def delete_this_playlist():
+            if not messagebox.askyesno(
+                "Remove Saved Playlist",
+                f"Remove “{playlist_name}” from your saved playlists?\n\nThis only removes the "
+                "local copy in this app; it does not change the playlist on YouTube or Spotify.",
+                parent=details_window,
+            ):
+                return
+            self._delete_saved_playlists([playlist_key])
+            if on_change:
+                on_change()
+            details_window.destroy()
+
         actions = []
         if playlist_url:
             actions.append(("Open", lambda: self._open_external_url(playlist_url)))
+        actions.append(("Delete", delete_this_playlist, "Danger.TButton"))
         actions.append(("Close", details_window.destroy))
         self._add_info_header(outer_frame, playlist_name, source_name, actions=actions)
 
@@ -3252,20 +3522,54 @@ class PlaylistManagerUI:
 
         playlist_by_item = {}
 
+        def selected_playlist_keys():
+            return [
+                playlist_by_item[item]
+                for item in playlists_tree.selection()
+                if item in playlist_by_item
+            ]
+
         def selected_playlist_key():
-            selected_items = playlists_tree.selection()
-            if not selected_items:
+            keys = selected_playlist_keys()
+            if not keys:
                 messagebox.showinfo("No Selection", "Select a saved playlist first.")
                 return None
-            return playlist_by_item.get(selected_items[0])
+            return keys[0]
 
         def show_selected_playlist_details():
             playlist_key = selected_playlist_key()
             if playlist_key:
-                self.show_playlist_details_window(playlist_key)
+                self.show_playlist_details_window(playlist_key, on_change=reload_playlist_rows)
+
+        def delete_selected_playlists():
+            keys = selected_playlist_keys()
+            if not keys:
+                messagebox.showinfo("No Selection", "Select a saved playlist to delete first.")
+                return
+            if len(keys) == 1:
+                name = self.saved_playlists.get(keys[0], {}).get('name', 'this playlist')
+                prompt = f"Remove “{name}” from your saved playlists?"
+            else:
+                prompt = f"Remove {len(keys)} saved playlists?"
+            prompt += (
+                "\n\nThis only removes the local copy in this app; it does not change the "
+                "playlist on YouTube or Spotify."
+            )
+            if not messagebox.askyesno("Remove Saved Playlist", prompt):
+                return
+            self._delete_saved_playlists(keys)
+            reload_playlist_rows()
 
         details_button = ttk.Button(header_frame, text="Details", command=show_selected_playlist_details)
         details_button.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=(8, 0))
+
+        delete_button = ttk.Button(
+            header_frame,
+            text="Delete Selected",
+            style="Danger.TButton",
+            command=delete_selected_playlists,
+        )
+        delete_button.grid(row=1, column=2, sticky=tk.W, padx=(6, 0), pady=(8, 0))
 
         table_frame = ttk.Frame(parent)
         table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -3304,18 +3608,23 @@ class PlaylistManagerUI:
         playlists_tree.column('id', width=260, minwidth=160, stretch=False)
 
         playlist_rows = []
-        for playlist_key, pl_data in self._sorted_playlist_items():
-            source = pl_data.get('source', 'youtube')
-            videos = pl_data.get('videos', set())
-            tracks = pl_data.get('tracks', [])
-            row_values = (
-                pl_data.get('name', 'Unnamed'),
-                self._source_name(source),
-                len(videos),
-                len(tracks),
-                pl_data.get('id', playlist_key)
-            )
-            playlist_rows.append((playlist_key, source, row_values))
+
+        def load_playlist_rows():
+            playlist_rows.clear()
+            for playlist_key, pl_data in self._sorted_playlist_items():
+                source = pl_data.get('source', 'youtube')
+                videos = pl_data.get('videos', set())
+                tracks = pl_data.get('tracks', [])
+                row_values = (
+                    pl_data.get('name', 'Unnamed'),
+                    self._source_name(source),
+                    len(videos),
+                    len(tracks),
+                    pl_data.get('id', playlist_key)
+                )
+                playlist_rows.append((playlist_key, source, row_values))
+
+        load_playlist_rows()
 
         def refresh_playlist_rows(*_):
             playlist_by_item.clear()
@@ -3344,6 +3653,11 @@ class PlaylistManagerUI:
                     values=row_values
                 )
                 playlist_by_item[item_id] = playlist_key
+
+        def reload_playlist_rows():
+            load_playlist_rows()
+            title.configure(text=f"Saved Playlists ({len(self.saved_playlists)})")
+            refresh_playlist_rows()
 
         playlists_tree.bind("<Double-1>", lambda _event: show_selected_playlist_details())
         display_find_var.trace_add("write", refresh_playlist_rows)

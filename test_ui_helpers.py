@@ -1036,4 +1036,51 @@ def test_temp_playlist_sources_text_prefixes_known_sources():
 
     empty_record = SimpleNamespace(source_playlists=[])
     assert manager._temp_playlist_sources_text(empty_record) == ''
-    assert manager._temp_playlist_sources_suffix(empty_record) == ''
+
+
+def test_temp_playlist_source_names_drops_prefix():
+    manager = make_manager()
+    record = SimpleNamespace(
+        source_playlists=[
+            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
+            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
+            {'id': 'X', 'name': '', 'source': 'youtube'},
+        ]
+    )
+
+    assert manager._temp_playlist_source_names(record) == 'Morning, Evening'
+    assert manager._temp_playlist_source_names(SimpleNamespace(source_playlists=[])) == ''
+
+
+def test_temp_playlist_source_kinds_collects_unique_sources():
+    manager = make_manager()
+    record = SimpleNamespace(
+        source_playlists=[
+            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
+            {'id': 'PL2', 'name': 'Noon', 'source': 'youtube'},
+            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
+            {'id': 'X', 'name': 'Bad', 'source': ''},
+        ]
+    )
+
+    assert manager._temp_playlist_source_kinds(record) == {'youtube', 'spotify'}
+    assert manager._temp_playlist_source_kinds(SimpleNamespace(source_playlists=[])) == set()
+
+
+def test_fit_text_to_pixels_truncates_with_ellipsis():
+    manager = make_manager()
+
+    class FakeFont:
+        def measure(self, s):
+            return len(s) * 10  # 10px per character
+
+    font = FakeFont()
+
+    # Fits: returned unchanged.
+    assert manager._fit_text_to_pixels("Morning", font, 1000) == "Morning"
+    # Too wide: truncated so text + ellipsis fits within the budget.
+    fitted = manager._fit_text_to_pixels("Morning, Evening", font, 50)
+    assert fitted.endswith("…")
+    assert font.measure(fitted) <= 50
+    # Degenerate budget still returns something printable.
+    assert manager._fit_text_to_pixels("Morning", font, 0) == "Morning"

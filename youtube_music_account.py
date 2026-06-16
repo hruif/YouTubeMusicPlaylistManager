@@ -62,6 +62,8 @@ class YouTubeMusicAccount:
         "x-youtube-client-name",
         "x-youtube-client-version",
     }
+    # Per-session cookies Google rotates roughly hourly; the snapshot's copies go stale fast.
+    ROTATING_COOKIE_NAMES = frozenset({"__Secure-1PSIDTS", "__Secure-3PSIDTS"})
     REQUIRED_TOKEN_FIELDS = (
         "access_token",
         "refresh_token",
@@ -276,11 +278,32 @@ class YouTubeMusicAccount:
     def _remove_json_trailing_commas(self, text):
         return re.sub(r",(\s*[}\]])", r"\1", text)
 
-    def build_browser_authenticated_client(self):
+    def build_browser_authenticated_client(self, strip_rotating_cookies=False):
         if not self.repair_browser_auth_file() or not self.has_browser_auth():
             raise RuntimeError("YouTube Music browser headers have not been saved yet.")
 
+        if strip_rotating_cookies:
+            # EXPERIMENTAL: drop the per-session rotating cookies so ytmusicapi authenticates
+            # purely from the stable SAPISID (it recomputes the SAPISIDHASH per request). The
+            # theory is that the snapshot then survives Google's ~hourly session rotation. May
+            # instead break auth entirely; only used behind the debug flag.
+            data = self._strip_rotating_cookies(self.load_browser_auth_data())
+            return self.ytmusic_cls(auth=data)
+
         return self.ytmusic_cls(auth=str(self.browser_auth_file))
+
+    def _strip_rotating_cookies(self, data):
+        data = dict(data or {})
+        cookie = data.get("cookie")
+        if not cookie:
+            return data
+        kept = [
+            pair
+            for pair in (segment.strip() for segment in cookie.split(";"))
+            if pair and pair.split("=", 1)[0].strip() not in self.ROTATING_COOKIE_NAMES
+        ]
+        data["cookie"] = "; ".join(kept)
+        return data
 
     def build_oauth_credentials(self):
         credentials = self.load_client_credentials()
