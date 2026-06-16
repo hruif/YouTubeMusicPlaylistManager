@@ -2,6 +2,8 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+import playlist_store
+
 
 class PlaylistURLWindow:
     """Dialog for importing a playlist URL into the main app."""
@@ -71,7 +73,7 @@ class PlaylistURLWindow:
 
             playlist_name = playlist_entry['name']
             saved_count = len(playlist_entry['videos'])
-            store_key = self.parent_ui._playlist_storage_key(source, playlist_id)
+            store_key = playlist_store.playlist_storage_key(source, playlist_id)
             self.saved_playlists[store_key] = playlist_entry
             self.parent_ui.save_playlists()
             self.parent_ui.refresh_playlist_selectors(
