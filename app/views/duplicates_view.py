@@ -39,7 +39,7 @@ def build(controller, parent, duplicate_entries, selected_count):
     x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
     x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    duplicate_columns = ("title", "artist", "playlists")
+    duplicate_columns = ("title", "artist", "custom_name", "playlists")
 
     duplicates_tree = ttk.Treeview(
         table_frame,
@@ -57,14 +57,17 @@ def build(controller, parent, duplicate_entries, selected_count):
     duplicates_tree.heading("#0", text="")
     duplicates_tree.heading("title", text="Title")
     duplicates_tree.heading("artist", text="Artist")
+    duplicates_tree.heading("custom_name", text="Custom Name")
     duplicates_tree.heading("playlists", text="Playlists")
 
     duplicates_tree.column("#0", width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
     duplicates_tree.column("title", width=260, minwidth=160, stretch=False)
     duplicates_tree.column("artist", width=190, minwidth=120, stretch=False)
+    duplicates_tree.column("custom_name", width=180, minwidth=120, stretch=False)
     # Smaller by default but stretches with the window and is resizable; the full
     # playlist list (untruncated) is available in the song's Details window.
     duplicates_tree.column("playlists", width=320, minwidth=140, stretch=True)
+    duplicates_tree.configure(displaycolumns=controller.song_tree_display_columns())
 
     entry_by_item = {}
     visible_entries = []
@@ -86,6 +89,7 @@ def build(controller, parent, duplicate_entries, selected_count):
 
     def refresh_duplicate_rows(*_):
         nonlocal visible_entries
+        duplicates_tree.configure(displaycolumns=controller.song_tree_display_columns())
         entry_by_item.clear()
         for item_id in duplicates_tree.get_children():
             duplicates_tree.delete(item_id)
@@ -97,6 +101,7 @@ def build(controller, parent, duplicate_entries, selected_count):
                 [
                     entry["title"],
                     entry["artist"],
+                    controller._entry_custom_name(entry),
                     controller._format_playlist_occurrences(entry, limit=None),
                     ", ".join(sorted(controller._source_name(source) for source in entry["sources"])),
                 ],
@@ -115,12 +120,17 @@ def build(controller, parent, duplicate_entries, selected_count):
                 message = f"No duplicates found in {selected_count} selected playlists."
             if duplicate_entries:
                 message = "No duplicate songs match the current find text."
-            duplicates_tree.insert("", tk.END, values=(message, "", ""))
+            duplicates_tree.insert("", tk.END, values=(message, "", "", ""))
             return
 
         for entry in visible_entries:
             playlist_text = controller._format_playlist_occurrences(entry, controller.PLAYLIST_DISPLAY_LIMIT)
-            row_values = (entry["title"], entry["artist"], playlist_text)
+            row_values = (
+                controller._entry_display_title(entry),
+                entry["artist"],
+                controller._entry_custom_name(entry),
+                playlist_text,
+            )
             item_id = duplicates_tree.insert(
                 "",
                 tk.END,

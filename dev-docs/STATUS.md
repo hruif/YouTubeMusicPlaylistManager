@@ -64,6 +64,15 @@ for architecture/layout.
   YouTube/Spotify); the same Delete action is in the double-click playlist details window. Deletes
   persist via `save_playlists()` and refresh the sidebar selectors live (`_delete_saved_playlists`).
   The list also has a **right-click menu** (Playlist details / Open in browser / Delete).
+- **Custom song names (local aliases).** Set a custom name on a song — right-click it ("Set
+  custom name…") or use the editable field in its Details window — to make hard-to-type/foreign
+  titles easy to find. Local-only metadata (`services/custom_names.py` →
+  `custom_song_names.json`), keyed by the normalized title+artist so the alias follows the song
+  across playlists. Aliases are always **searchable** in the in-list Search box and shown in a
+  **Custom Name** column on the song lists (View Songs + duplicates); the real title always stays
+  in Details. A Settings toggle, **"Replace song titles with custom names in lists"**
+  (`REPLACE_TITLES_WITH_CUSTOM_NAMES`), instead shows the alias in place of the title and hides the
+  column (live via `displaycolumns`). Covered by `tests/test_custom_names.py`.
 - **In-list Search box.** Each display (View Songs, duplicates, saved playlists) has a Search box
   that filters its rows instantly as you type (`_create_display_find_controls` +
   `text_utils.matches_find_query`); Ctrl/Cmd+F focuses it (`_focus_active_find`). This is the only

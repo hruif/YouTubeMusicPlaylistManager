@@ -41,6 +41,26 @@ def build(controller, parent):
     )
     description.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
 
+    custom_name_setting = ttk.Checkbutton(
+        display_frame,
+        text="Replace song titles with custom names in lists",
+        variable=controller.replace_titles_var,
+        command=controller._on_replace_titles_changed,
+    )
+    custom_name_setting.grid(row=2, column=0, sticky=tk.W, pady=(10, 0))
+
+    custom_name_description = ttk.Label(
+        display_frame,
+        text=(
+            "Set a custom name on a song (right-click it, or use its Details window) to make it "
+            "easier to find. Custom names are always searchable and shown in the Custom Name "
+            "column; enable this to show them in place of the title instead. The real title "
+            "always stays in the song's Details."
+        ),
+        wraplength=520,
+    )
+    custom_name_description.grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
+
     account_frame = ttk.LabelFrame(parent, text="YouTube Music Account", padding="12")
     account_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(12, 0))
     account_frame.columnconfigure(0, weight=1)

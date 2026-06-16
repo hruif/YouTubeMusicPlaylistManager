@@ -13,6 +13,7 @@ from app.app_paths import user_data_path
 
 AUTO_DELETE_TEMP_ON_EXIT = "auto_delete_temp_on_exit"
 USE_DISPLAY_WINDOWS = "use_display_windows"
+REPLACE_TITLES_WITH_CUSTOM_NAMES = "replace_titles_with_custom_names"
 
 
 class AppSettings:

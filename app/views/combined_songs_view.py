@@ -73,7 +73,7 @@ def build_results(controller, parent, playlist_keys, live=False):
     x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
     x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-    song_columns = ("title", "artist", "playlists")
+    song_columns = ("title", "artist", "custom_name", "playlists")
 
     songs_tree = ttk.Treeview(
         table_frame,
@@ -91,14 +91,18 @@ def build_results(controller, parent, playlist_keys, live=False):
     songs_tree.heading("#0", text="")
     songs_tree.heading("title", text="Title")
     songs_tree.heading("artist", text="Artist")
+    songs_tree.heading("custom_name", text="Custom Name")
     songs_tree.heading("playlists", text="Playlists")
 
     songs_tree.column("#0", width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
     songs_tree.column("title", width=260, minwidth=160, stretch=False)
     songs_tree.column("artist", width=190, minwidth=120, stretch=False)
+    songs_tree.column("custom_name", width=180, minwidth=120, stretch=False)
     # Smaller by default but stretches with the window and is resizable; the full
     # playlist list (untruncated) is available in the song's Details window.
     songs_tree.column("playlists", width=320, minwidth=140, stretch=True)
+    # The Custom Name column is hidden when the setting replaces the title with the alias.
+    songs_tree.configure(displaycolumns=controller.song_tree_display_columns())
 
     entry_by_item = {}
     visible_entries = []
@@ -120,6 +124,8 @@ def build_results(controller, parent, playlist_keys, live=False):
 
     def refresh_results(*_):
         nonlocal visible_entries
+        # Re-read the alias display mode each refresh so the Settings toggle applies live.
+        songs_tree.configure(displaycolumns=controller.song_tree_display_columns())
         selected_playlist_keys = playlist_keys() if callable(playlist_keys) else playlist_keys
         entries = controller._collect_combined_tracks(selected_playlist_keys, merge_duplicates=True)
         entries = controller._sort_combined_tracks(entries, sort_var.get())
@@ -130,6 +136,7 @@ def build_results(controller, parent, playlist_keys, live=False):
                 [
                     entry["title"],
                     entry["artist"],
+                    controller._entry_custom_name(entry),
                     controller._format_playlist_occurrences(entry, limit=None),
                     ", ".join(sorted(controller._source_name(source) for source in entry["sources"])),
                 ],
@@ -146,11 +153,16 @@ def build_results(controller, parent, playlist_keys, live=False):
             message = "No songs found for the selected playlists."
             if entries:
                 message = "No songs match the current find text."
-            songs_tree.insert("", tk.END, values=(message, "", ""))
+            songs_tree.insert("", tk.END, values=(message, "", "", ""))
         else:
             for entry in filtered_entries:
                 playlist_text = controller._format_playlist_occurrences(entry, controller.PLAYLIST_DISPLAY_LIMIT)
-                row_values = (entry["title"], entry["artist"], playlist_text)
+                row_values = (
+                    controller._entry_display_title(entry),
+                    entry["artist"],
+                    controller._entry_custom_name(entry),
+                    playlist_text,
+                )
                 item_id = songs_tree.insert(
                     "",
                     tk.END,

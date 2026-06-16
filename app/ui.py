@@ -8,13 +8,19 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from ytmusicapi import YTMusic
 from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
 from app.app_info import APP_NAME, APP_VERSION
 from app.app_paths import resource_path, user_data_path
-from app.app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_WINDOWS
+from app.app_settings import (
+    AppSettings,
+    AUTO_DELETE_TEMP_ON_EXIT,
+    USE_DISPLAY_WINDOWS,
+    REPLACE_TITLES_WITH_CUSTOM_NAMES,
+)
+from app.services.custom_names import CustomNamesStore
 from app.views.playlist_url_window import PlaylistURLWindow
 from app.views import combined_songs_view
 from app.views import duplicates_view
@@ -111,6 +117,10 @@ class PlaylistManagerUI:
         self.auto_delete_temp_on_exit_var = tk.BooleanVar(
             value=self.app_settings.get_bool(AUTO_DELETE_TEMP_ON_EXIT, False)
         )
+        self.replace_titles_var = tk.BooleanVar(
+            value=self.app_settings.get_bool(REPLACE_TITLES_WITH_CUSTOM_NAMES, False)
+        )
+        self.custom_names = CustomNamesStore()
         self._closing = False
         self.app_icon_image = self._load_app_icon_image()
         self.source_logo_images = self._build_source_logo_images()
@@ -1174,6 +1184,82 @@ class PlaylistManagerUI:
             return
         self._play_entry(entry)
 
+    # --- Custom song names (local-only aliases for easier searching). ----------------
+
+    def get_custom_name(self, track):
+        return self.custom_names.get(track or {})
+
+    def _entry_custom_name(self, entry):
+        cached = entry.get('custom_name')
+        if cached is not None:
+            return cached
+        return self.get_custom_name(entry.get('track') or {})
+
+    def _entry_display_title(self, entry):
+        """Title to show in the song lists: the alias when 'replace titles' is on and
+        one is set, otherwise the real title."""
+        title = entry.get('title', 'Unknown Title')
+        if self.replace_titles_var.get():
+            custom = self._entry_custom_name(entry)
+            if custom:
+                return custom
+        return title
+
+    def song_tree_display_columns(self):
+        """displaycolumns for the song trees — hide the Custom Name column when the
+        alias replaces the title instead."""
+        if self.replace_titles_var.get():
+            return ("title", "artist", "playlists")
+        return ("title", "artist", "custom_name", "playlists")
+
+    def set_song_custom_name(self, track, name, on_done=None):
+        if self.custom_names.set(track or {}, name):
+            self._refresh_after_custom_name_change()
+        if on_done:
+            on_done()
+
+    def prompt_set_custom_name(self, entry):
+        track = entry.get('track') or {}
+        current = self.get_custom_name(track)
+        name = simpledialog.askstring(
+            "Custom Name",
+            f'Custom name for "{entry.get("title", "this song")}"\n(leave blank to clear):',
+            initialvalue=current,
+            parent=self.root,
+        )
+        if name is None:  # cancelled
+            return
+        self.set_song_custom_name(track, name)
+
+    def _on_replace_titles_changed(self):
+        self.app_settings.set(REPLACE_TITLES_WITH_CUSTOM_NAMES, bool(self.replace_titles_var.get()))
+        self._refresh_after_custom_name_change()
+
+    def _refresh_after_custom_name_change(self):
+        # The live View Songs list re-reads aliases + display columns on refresh.
+        self._refresh_live_combined_if_active()
+
+    def _add_custom_name_row(self, parent, row, entry):
+        """An editable 'Custom name: [____] [Save]' row for the Details window."""
+        track = entry.get('track') or {}
+        label_widget = ttk.Label(parent, text="Custom name:", width=18, anchor=tk.E)
+        label_widget.grid(row=row, column=0, sticky=tk.NE, padx=(0, 14), pady=3)
+
+        value_frame = ttk.Frame(parent)
+        value_frame.grid(row=row, column=1, sticky=(tk.W, tk.E, tk.N), pady=3)
+        value_frame.columnconfigure(0, weight=1)
+
+        name_var = tk.StringVar(value=self.get_custom_name(track))
+        name_entry = ttk.Entry(value_frame, textvariable=name_var)
+        name_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        name_entry.bind("<Return>", lambda _event: self.set_song_custom_name(track, name_var.get()))
+        ttk.Button(
+            value_frame,
+            text="Save",
+            command=lambda: self.set_song_custom_name(track, name_var.get()),
+        ).grid(row=0, column=1, sticky=tk.NE, padx=(10, 0))
+        return row + 1
+
     # --- Add / remove songs on the user's YouTube Music playlists (browser-auth,
     # account-touching, YouTube only). ------------------------------------------------
 
@@ -1389,6 +1475,7 @@ class PlaylistManagerUI:
                          state=tk.NORMAL if appearances else tk.DISABLED)
 
         menu.add_separator()
+        menu.add_command(label="Set custom name…", command=lambda: self.prompt_set_custom_name(entry))
         menu.add_command(label="Song details", command=lambda: self.show_song_details_window(entry))
         menu.add_command(label="Play", command=lambda: self._play_entry(entry))
         return menu
@@ -1565,6 +1652,7 @@ class PlaylistManagerUI:
         row = self._add_info_section(content_frame, "General", row)
         row = self._add_info_row(content_frame, row, "Title", entry.get('title', 'Unknown Title'))
         row = self._add_info_row(content_frame, row, "Artist", entry.get('artist', 'Unknown Artist'))
+        row = self._add_custom_name_row(content_frame, row, entry)
         row = self._add_info_row(
             content_frame,
             row,
