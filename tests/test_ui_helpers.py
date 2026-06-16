@@ -209,32 +209,6 @@ def test_serialize_playlist_entry_normalizes_sets_and_track_ids():
     }
 
 
-def test_find_matching_tracks_uses_cached_data_only():
-    manager = make_manager()
-    manager.saved_playlists = {
-        'spotify:SP123': {
-            'source': 'spotify',
-            'id': 'SP123',
-            'name': 'Dream Pop',
-            'videos': {'track1'},
-            'tracks': [
-                {
-                    'id': 'track1',
-                    'trackId': 'track1',
-                    'title': 'Space Song',
-                    'artist': 'Beach House',
-                    'source': 'spotify'
-                }
-            ]
-        }
-    }
-
-    matches = manager._find_matching_tracks('space beach')
-
-    assert list(matches) == ['space song beach house']
-    assert matches['space song beach house']['playlists'] == {'Spotify: Dream Pop'}
-
-
 def test_collect_combined_tracks_merges_duplicates_across_playlists():
     manager = make_manager()
     manager.saved_playlists = {

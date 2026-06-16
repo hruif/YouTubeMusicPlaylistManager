@@ -11,14 +11,13 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 - **Add YouTube Playlists**: Import any public YouTube Music playlist by URL
 - **Add Spotify Playlists**: Import public Spotify playlists by URL using SpotAPI
 - **Persistent Storage**: Playlists are automatically saved and loaded between sessions
-- **Smart Search**: Search for songs and see which of your playlists contain them
-- **Display Pane**: Use the right side to show search results, saved playlists, duplicate results, settings, or a combined song table
+- **Display Pane**: Use the right side to show saved playlists, duplicate results, settings, or a combined song table
 - **Playlist Info**: Double-click saved playlists to inspect source, IDs, cache stats, and playlist links
 - **Live Combined Song View**: Select playlists in the sidebar and browse their combined songs in a sortable table
 - **Selected Duplicate Finder**: Find songs that appear more than once in the selected playlist set, including repeats inside a single playlist
 - **Song Details and Playback Links**: Open full playlist-occurrence details and launch YouTube Music or Spotify links for playable tracks
 - **Edit YouTube Playlists**: Right-click a song (or use its Details window) to add it to another YouTube Music playlist or remove it from one — the change is made on your real account. Requires queue headers (Settings > Set Queue Headers); YouTube only.
-- **Display Find**: Press Ctrl+F to search within the active display
+- **Search box**: Each display (View Songs, duplicates, saved playlists) has a Search box that filters the list instantly as you type; press Ctrl+F to jump to it. Select all playlists in the sidebar to search your whole library in View Songs.
 - **Display Window Mode**: Use Settings to send display output to separate windows and keep playlist selection on the right side
 - **Source Logos**: Spotify and YouTube playlists are shown with bundled app-style logo assets for easy differentiation
 - **App Updates**: Check GitHub Releases on startup and from Settings, then open the download page when a newer version is available
@@ -36,9 +35,9 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
    - Paste the playlist URL and the playlist name and songs are automatically saved
 
 3. **Search songs**:
-   - Type a song name in the search bar
-   - Only songs from your saved playlists will appear
-   - Results show which playlists contain each song
+   - Open "View Songs" and type in its Search box to filter the combined list as you type (Ctrl+F focuses it)
+   - Select all playlists in the sidebar to search your whole library; the Playlists column shows which playlists contain each song
+   - Right-click a result to add it to another YouTube playlist or remove it (see "Edit YouTube Playlists")
 
 4. **View saved playlists**:
    - Click "View Saved Playlists" to see all saved playlists

@@ -18,10 +18,10 @@ for architecture/layout.
 
 - **Add / remove songs on your real YouTube Music playlists.** Account-touching writes via the
   same browser-auth client as the queue feature (YouTube only).
-  - **Surfaces:** a right-click context menu on the "View Songs" list ("Add to playlist ▸" /
-    "Remove from playlist ▸" submenus, plus Details/Play), and an "Edit on YouTube Music" section
-    in the song Details window (per-playlist Remove buttons + an "Add to playlist" dropdown). The
-    Details section shows wherever song details open (combined / search / duplicates).
+  - **Surfaces:** a right-click context menu on the song lists — "View Songs" and the duplicates
+    list — ("Add to playlist ▸" / "Remove from playlist ▸" submenus, plus Details/Play), and an
+    "Edit on YouTube Music" section in the song Details window (per-playlist Remove buttons + an
+    "Add to playlist" dropdown). The Details section shows wherever song details open.
   - **Add targets:** only saved YouTube playlists that don't already contain the song
     (`duplicates=False`). **Remove** asks for confirmation (it deletes from the live account, not
     just the local copy) and fetches the playlist first to get the `setVideoId` ytmusicapi needs.
@@ -63,6 +63,12 @@ for architecture/layout.
   aware, with a confirmation that clarifies it only removes the local copy, not the playlist on
   YouTube/Spotify); the same Delete action is in the double-click playlist details window. Deletes
   persist via `save_playlists()` and refresh the sidebar selectors live (`_delete_saved_playlists`).
+  The list also has a **right-click menu** (Playlist details / Open in browser / Delete).
+- **In-list Search box.** Each display (View Songs, duplicates, saved playlists) has a Search box
+  that filters its rows instantly as you type (`_create_display_find_controls` +
+  `text_utils.matches_find_query`); Ctrl/Cmd+F focuses it (`_focus_active_find`). This is the only
+  search path — select all sidebar playlists to search the whole library in View Songs. (Replaced
+  the old global Search screen; see Removed.)
 - **In-app release update checker.** Checks for newer published releases and notifies the user
   when one is available.
 - **Single-instance lock** (`app_lock.py`) — prevents two instances racing on the temp-playlist
@@ -85,6 +91,12 @@ for architecture/layout.
 
 ## Removed
 
+- **Global Search screen** (the sidebar "Search songs" box/button, `on_search`,
+  `_find_matching_tracks`, `show_search_results_display`, and `views/search_results_view.py`).
+  Superseded by the in-list Search box (above): View Songs + its Search box is a strict superset —
+  same cached-track data, but a sortable table with source logos, the Playlists column, and
+  right-click add/remove, versus the old read-only text list. "Select All" in the sidebar
+  reproduces the old all-playlists scope. The "Find" boxes were renamed "Search" to match.
 - **Embedded local queue player** (the old `youtube_player.py` / `youtube_player_window.py` /
   `web/youtube_queue_player.html`, the "Play Queue" / "Play YouTube Queue" actions, the
   "Playback" columns, and the `pywebview` dependency). Deleted because YouTube Music tracks

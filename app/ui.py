@@ -25,7 +25,6 @@ from app.services.queue_service import QueueService
 from app.views import playlist_checkbox_selector
 from app.views import playlist_selection_view
 from app.services import playlist_store
-from app.views import search_results_view
 from app.views import saved_playlists_view
 from app.views import settings_view
 from app.views import temporary_playlists_view
@@ -148,22 +147,10 @@ class PlaylistManagerUI:
         title = ttk.Label(self.sidebar_frame, text="Playlist Manager", font=("Helvetica", 15, "bold"))
         title.grid(row=0, column=0, sticky=tk.W, pady=(0, 14))
 
-        search_label = ttk.Label(self.sidebar_frame, text="Search songs:")
-        search_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
-
-        # Keep the Search button directly beside the search field so the pairing is obvious.
-        search_row = ttk.Frame(self.sidebar_frame)
-        search_row.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
-        search_row.columnconfigure(0, weight=1)
-
-        self.search_entry = ttk.Entry(search_row)
-        self.search_entry.grid(row=0, column=0, sticky=(tk.W, tk.E))
-        self.search_entry.bind("<Return>", lambda e: self.on_search())
-        self.root.bind_all("<Control-f>", self._focus_active_find_or_sidebar)
-        self.root.bind_all("<Command-f>", self._focus_active_find_or_sidebar)
-
-        search_button = ttk.Button(search_row, text="Search", command=self.on_search)
-        search_button.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(6, 0))
+        # Ctrl/Cmd+F focuses the Search box in the active display (the per-view filter
+        # that replaced the old global search screen).
+        self.root.bind_all("<Control-f>", self._focus_active_find)
+        self.root.bind_all("<Command-f>", self._focus_active_find)
 
         button_frame = ttk.Frame(self.sidebar_frame)
         button_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -1139,24 +1126,16 @@ class PlaylistManagerUI:
                 return "break"
         except tk.TclError:
             pass
-        return self._focus_sidebar_search()
-
-    def _focus_sidebar_search(self, _event=None):
-        try:
-            self.search_entry.focus_set()
-            self.search_entry.selection_range(0, tk.END)
-        except tk.TclError:
-            pass
         return "break"
 
-    def _focus_active_find_or_sidebar(self, _event=None):
+    def _focus_active_find(self, _event=None):
         if self.active_find_entry is not None:
             try:
                 if self.active_find_entry.winfo_exists():
                     return self._focus_widget(self.active_find_entry)
             except tk.TclError:
                 self.active_find_entry = None
-        return self._focus_sidebar_search()
+        return "break"
 
     def _register_display_find_entry(self, parent, find_entry):
         self.active_find_entry = find_entry
@@ -1169,7 +1148,7 @@ class PlaylistManagerUI:
         top_level.bind("<Command-f>", focus_find)
 
     def _create_display_find_controls(self, parent, find_var):
-        find_label = ttk.Label(parent, text="Find:")
+        find_label = ttk.Label(parent, text="Search:")
         find_entry = ttk.Entry(parent, textvariable=find_var, width=24)
         find_entry.bind("<Escape>", lambda _event: (find_var.set(""), "break")[-1])
         self._register_display_find_entry(parent, find_entry)
@@ -2079,35 +2058,6 @@ class PlaylistManagerUI:
         messagebox.showinfo("YouTube Music Queue", "YouTube Music queue headers have been cleared.")
         self.show_settings_display()
 
-    def _find_matching_tracks(self, query):
-        query_terms = [term for term in text_utils.normalize_search_text(query).split() if term]
-        if not query_terms:
-            return {}
-
-        matches = {}
-        for pl_id, pl_data in self.saved_playlists.items():
-            playlist_name = pl_data.get('name', f'Playlist {pl_id}')
-            source = pl_data.get('source', 'youtube')
-            source_label = f"{self._source_name(source)}: {playlist_name}"
-            for track in pl_data.get('tracks', []):
-                title = track.get('title', '')
-                artist = track.get('artist', '')
-                searchable_text = text_utils.normalize_search_text(f"{title} {artist}")
-
-                if all(term in searchable_text for term in query_terms):
-                    track_key = playlist_store.normalize_song_key(title, artist)
-                    if not track_key:
-                        continue
-
-                    if track_key not in matches:
-                        matches[track_key] = {
-                            'track': track,
-                            'playlists': set()
-                        }
-                    matches[track_key]['playlists'].add(source_label)
-
-        return matches
-
     def _playlist_label(self, playlist_key, pl_data):
         return pl_data.get('name', f'Playlist {playlist_key}')
 
@@ -2700,29 +2650,6 @@ class PlaylistManagerUI:
 
         return sorted(tracks, key=sorters.get(sort_mode, sorters['title']))
 
-    def on_search(self):
-        query = self.search_entry.get().strip()
-        if not query:
-            messagebox.showwarning("Input", "Please enter a song name")
-            return
-        
-        if not self.saved_playlists:
-            messagebox.showwarning("No Playlists", "Please add at least one playlist first")
-            return
-
-        filtered_results = self._find_matching_tracks(query)
-        self.show_search_results_display(query, filtered_results)
-
-    def show_search_results_display(self, query, filtered_results):
-        sorted_results = sorted(
-            filtered_results.values(),
-            key=lambda entry: entry['track'].get('title', '').lower()
-        )
-        self._show_display(
-            "Search Results",
-            lambda parent: search_results_view.build(self, parent, query, sorted_results),
-        )
-    
     def open_playlist_window(self):
         PlaylistURLWindow(self.root, self.ytmusic, self.saved_playlists, self)
 

@@ -33,7 +33,7 @@ def build(controller, parent):
     description = ttk.Label(
         display_frame,
         text=(
-            "When enabled, search results, saved playlists, combined songs, "
+            "When enabled, saved playlists, combined songs, "
             "duplicate results, and settings open in windows. The main display "
             "is used for playlist selection."
         ),

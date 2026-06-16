@@ -173,7 +173,34 @@ def build(controller, parent):
         title.configure(text=f"Saved Playlists ({len(controller.saved_playlists)})")
         refresh_playlist_rows()
 
+    def show_playlist_context_menu(event):
+        row_id = playlists_tree.identify_row(event.y)
+        if not row_id or row_id not in playlist_by_item:
+            return
+        playlists_tree.selection_set(row_id)
+        playlist_key = playlist_by_item[row_id]
+        pl_data = controller.saved_playlists.get(playlist_key, {})
+        source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
+        playlist_url = controller._playlist_url(source, playlist_id)
+
+        menu = tk.Menu(playlists_tree, tearoff=0)
+        menu.add_command(label="Playlist details", command=show_selected_playlist_details)
+        if playlist_url:
+            menu.add_command(
+                label="Open in browser",
+                command=lambda url=playlist_url: controller._open_external_url(url),
+            )
+        menu.add_separator()
+        menu.add_command(label="Delete", command=delete_selected_playlists)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
     playlists_tree.bind("<Double-1>", lambda _event: show_selected_playlist_details())
+    # Right-click a row for details / open in browser / delete (delete keeps its confirmation).
+    for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        playlists_tree.bind(sequence, show_playlist_context_menu)
     display_find_var.trace_add("write", refresh_playlist_rows)
     refresh_playlist_rows()
 

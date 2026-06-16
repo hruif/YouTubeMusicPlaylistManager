@@ -130,5 +130,11 @@ def build(controller, parent, duplicate_entries, selected_count):
             entry_by_item[item_id] = entry
 
     duplicates_tree.bind("<Double-1>", lambda _event: controller._show_selected_entry_details(duplicates_tree, entry_by_item))
+    # Right-click menu to add/remove the song on the user's YouTube playlists (same as View Songs).
+    for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+        duplicates_tree.bind(
+            sequence,
+            lambda event: controller._show_song_context_menu(event, duplicates_tree, entry_by_item),
+        )
     display_find_var.trace_add("write", refresh_duplicate_rows)
     refresh_duplicate_rows()
