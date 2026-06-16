@@ -6,6 +6,7 @@ Unit tests for UI helper logic that does not require a Tk root window.
 from pathlib import Path
 
 import playlist_store
+from playlist_library import PlaylistLibrary
 from playlist_url_window import PlaylistURLWindow
 from ui import PlaylistManagerUI
 
@@ -69,8 +70,13 @@ def make_manager():
     manager = PlaylistManagerUI.__new__(PlaylistManagerUI)
     manager.ytmusic = None
     manager.spotapi_available = False
+    manager.library = PlaylistLibrary(
+        PlaylistManagerUI.PLAYLIST_FILE,
+        manager._normalize_playlist_entry,
+        manager._serialize_playlist_entry,
+        manager._playlist_sort_key,
+    )
     manager.saved_playlists = {}
-    manager.playlists_file = PlaylistManagerUI.PLAYLIST_FILE
     manager.use_display_windows_var = FakeBool(False)
     manager.sidebar_playlist_vars = []
     manager.display_playlist_vars = []

@@ -19,6 +19,7 @@ from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_WIND
 from playlist_url_window import PlaylistURLWindow
 import combined_songs_view
 import duplicates_view
+from playlist_library import PlaylistLibrary
 import playlist_checkbox_selector
 import playlist_selection_view
 import playlist_store
@@ -84,10 +85,16 @@ class PlaylistManagerUI:
         # Initialize SpotAPI support (for Spotify-like imports)
         self.spotapi_available = SPOTAPI_AVAILABLE
         
-        # Store saved playlists
-        self.saved_playlists = {}  # {source:playlist_id: {source, id, name, videos, tracks}}
-        self.playlists_file = self.PLAYLIST_FILE
-        
+        # The saved-playlists state + persistence live in the PlaylistLibrary service; the
+        # controller reaches the dict through the saved_playlists property below. Per-entry
+        # normalization/serialization/ordering are injected (they need network/source access).
+        self.library = PlaylistLibrary(
+            self.PLAYLIST_FILE,
+            normalize_entry=self._normalize_playlist_entry,
+            serialize_entry=self._serialize_playlist_entry,
+            sort_key=self._playlist_sort_key,
+        )
+
         # Load saved playlists on startup
         self.load_playlists()
         
@@ -163,7 +170,7 @@ class PlaylistManagerUI:
         combined_songs_button = ttk.Button(button_frame, text="View Songs", style="Primary.TButton", command=self.open_combined_songs_selector)
         combined_songs_button.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(2, 8))
 
-        add_playlist_button = ttk.Button(button_frame, text="Add Playlist URL", command=self.open_playlist_window)
+        add_playlist_button = ttk.Button(button_frame, text="Add Playlist", command=self.open_playlist_window)
         add_playlist_button.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
 
         view_playlists_button = ttk.Button(button_frame, text="View Saved Playlists", command=self.view_saved_playlists)
@@ -673,61 +680,31 @@ class PlaylistManagerUI:
         if should_open:
             self._open_external_url(update_info.url)
     
+    @property
+    def saved_playlists(self):
+        return self.library.playlists
+
+    @saved_playlists.setter
+    def saved_playlists(self, value):
+        self.library.playlists = value
+
+    def _playlist_sort_key(self, item):
+        playlist_key, pl_data = item
+        return (
+            text_utils.normalize_search_text(pl_data.get('name', '')),
+            text_utils.normalize_search_text(self._source_name(pl_data.get('source', 'youtube'))),
+            str(playlist_key).lower(),
+        )
+
     def load_playlists(self):
-        """Load saved playlists from file"""
-        try:
-            if not self.playlists_file.exists():
-                print("No saved playlists file found, starting fresh")
-                self.saved_playlists = {}
-                return
-
-            with self.playlists_file.open('r', encoding='utf-8') as f:
-                data = json.load(f)
-
-            if not isinstance(data, dict):
-                print("Invalid playlist data format, starting fresh")
-                self.saved_playlists = {}
-                return
-
-            self.saved_playlists = {}
-            migrated = False
-            for stored_key, pl_data in data.items():
-                entry = self._normalize_playlist_entry(stored_key, pl_data)
-                if not entry:
-                    migrated = True
-                    continue
-
-                store_key = playlist_store.playlist_storage_key(entry['source'], entry['id'])
-                self.saved_playlists[store_key] = entry
-                if store_key != stored_key or not self._is_current_playlist_format(pl_data):
-                    migrated = True
-
-            print(f"Loaded {len(self.saved_playlists)} playlists from {self.playlists_file}")
-
-            if migrated:
-                print("Migrating playlist data to the current format...")
-                self.save_playlists()
-                print("Migration complete.")
-        except json.JSONDecodeError as e:
-            print(f"Corrupted playlist file: {e}, starting fresh")
-            self.saved_playlists = {}
-            # Backup the corrupted file
-            if self.playlists_file.exists():
-                backup_file = self._playlists_backup_file()
-                self.playlists_file.replace(backup_file)
-                print(f"Backed up corrupted file to {backup_file}")
-        except Exception as e:
-            print(f"Error loading playlists: {e}")
-            self.saved_playlists = {}
+        """Load saved playlists from disk, re-saving if older data needed migrating."""
+        if self.library.load():
+            print("Migrating playlist data to the current format...")
+            self.save_playlists()
+            print("Migration complete.")
 
     # SpotAPI (spotapi.PublicPlaylist) is used for public Spotify playlist access.
     # No client credentials are required for public playlist fetching via SpotAPI.
-
-    def _playlists_backup_file(self):
-        return self.playlists_file.with_name(f"{self.playlists_file.name}.backup")
-
-    def _playlists_temp_file(self):
-        return self.playlists_file.with_name(f"{self.playlists_file.name}.tmp")
 
     def _normalize_playlist_entry(self, stored_key, pl_data):
         if not isinstance(pl_data, dict):
@@ -751,15 +728,6 @@ class PlaylistManagerUI:
             playlist_name=pl_data.get('name', 'Unnamed Playlist'),
             item_ids=videos,
             tracks=tracks
-        )
-
-    def _is_current_playlist_format(self, pl_data):
-        return (
-            isinstance(pl_data, dict)
-            and 'source' in pl_data
-            and 'id' in pl_data
-            and 'tracks' in pl_data
-            and isinstance(pl_data.get('videos'), list)
         )
 
     def _coerce_id_set(self, values):
@@ -860,42 +828,19 @@ class PlaylistManagerUI:
 
         Returns the number actually removed.
         """
-        removed = 0
-        for key in playlist_keys:
-            if key in self.saved_playlists:
-                del self.saved_playlists[key]
-                removed += 1
+        removed = self.library.delete(playlist_keys)
         if removed:
             self.save_playlists()
             self.refresh_playlist_selectors()
         return removed
 
     def save_playlists(self):
-        """Save playlists to file"""
+        """Persist playlists to disk (the library handles atomic write + backup restore)."""
         try:
-            json_data = {}
-            for playlist_key, pl_data in self._sorted_playlist_items():
-                source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
-                store_key = playlist_store.playlist_storage_key(source, playlist_id)
-                json_data[store_key] = self._serialize_playlist_entry(playlist_key, pl_data)
-
-            temp_file = self._playlists_temp_file()
-            with temp_file.open('w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
-
-            if self.playlists_file.exists():
-                self.playlists_file.replace(self._playlists_backup_file())
-
-            temp_file.replace(self.playlists_file)
-            print(f"Saved {len(self.saved_playlists)} playlists to {self.playlists_file}")
+            self.library.save()
         except Exception as e:
             print(f"Error saving playlists: {e}")
             messagebox.showerror("Error", f"Failed to save playlists: {e}")
-            # Try to restore backup
-            backup_file = self._playlists_backup_file()
-            if backup_file.exists():
-                backup_file.replace(self.playlists_file)
-                print("Restored backup file")
     
     def _extract_playlist_name(self, playlist, fallback_name='Unnamed Playlist'):
         playlist_name = self._extract_text_value(playlist.get('title'))
@@ -1145,15 +1090,7 @@ class PlaylistManagerUI:
         return self.SOURCE_LABELS.get(source, source.title() if source else 'Unknown')
 
     def _sorted_playlist_items(self):
-        def sort_key(item):
-            playlist_key, pl_data = item
-            return (
-                text_utils.normalize_search_text(pl_data.get('name', '')),
-                text_utils.normalize_search_text(self._source_name(pl_data.get('source', 'youtube'))),
-                str(playlist_key).lower()
-            )
-
-        return sorted(self.saved_playlists.items(), key=sort_key)
+        return self.library.sorted_items()
 
     def _build_source_logo_images(self):
         return {
