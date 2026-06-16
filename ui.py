@@ -17,6 +17,8 @@ from app_info import APP_NAME, APP_VERSION
 from app_paths import resource_path, user_data_path
 from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT
 from playlist_url_window import PlaylistURLWindow
+import playlist_store
+import text_utils
 from update_checker import UpdateChecker
 from youtube_music_account import YouTubeMusicAccount
 
@@ -40,10 +42,7 @@ class PlaylistManagerUI:
     STRIP_ROTATING_COOKIES_ENV_VAR = "PLAYLIST_MANAGER_STRIP_ROTATING_COOKIES"
     PLAYLIST_DISPLAY_LIMIT = 140
     YOUTUBE_TEMP_PLAYLIST_CHUNK_SIZE = 50
-    SOURCE_LABELS = {
-        'youtube': 'YouTube',
-        'spotify': 'Spotify'
-    }
+    SOURCE_LABELS = playlist_store.SOURCE_LABELS
     YOUTUBE_MUSIC_ONLY_TYPES = {
         'MUSIC_VIDEO_TYPE_ATV'
     }
@@ -605,80 +604,6 @@ class PlaylistManagerUI:
         if should_delete:
             self.delete_temporary_youtube_playlists(prompt=False)
 
-    def _format_relative_age(self, created_at):
-        try:
-            created_at = int(created_at)
-        except (TypeError, ValueError):
-            created_at = 0
-        if created_at <= 0:
-            return "unknown age"
-
-        seconds = max(0, int(time.time()) - created_at)
-        minutes = seconds // 60
-        hours = minutes // 60
-        days = hours // 24
-        if days >= 1:
-            return f"{days} day{'' if days == 1 else 's'} ago"
-        if hours >= 1:
-            return f"{hours} hour{'' if hours == 1 else 's'} ago"
-        if minutes >= 1:
-            return f"{minutes} minute{'' if minutes == 1 else 's'} ago"
-        return "just now"
-
-    def _temp_playlist_sources_text(self, record):
-        names = []
-        for source in getattr(record, "source_playlists", None) or []:
-            if not isinstance(source, dict):
-                continue
-            name = str(source.get("name") or "").strip()
-            source_kind = str(source.get("source") or "").strip().lower()
-            prefix = {"youtube": "YouTube", "spotify": "Spotify"}.get(source_kind, "")
-            if name:
-                names.append(f"{prefix}: {name}" if prefix else name)
-        return ", ".join(names)
-
-    def _temp_playlist_source_names(self, record):
-        # Just the playlist names, no "YouTube:"/"Spotify:" prefix — the source is conveyed by
-        # the row's logo in the list, so repeating it as text only adds bulk.
-        names = []
-        for source in getattr(record, "source_playlists", None) or []:
-            if not isinstance(source, dict):
-                continue
-            name = str(source.get("name") or "").strip()
-            if name:
-                names.append(name)
-        return ", ".join(names)
-
-    def _temp_playlist_source_kinds(self, record):
-        kinds = set()
-        for source in getattr(record, "source_playlists", None) or []:
-            if not isinstance(source, dict):
-                continue
-            kind = str(source.get("source") or "").strip().lower()
-            if kind:
-                kinds.add(kind)
-        return kinds
-
-    def _fit_text_to_pixels(self, text, font, max_pixels):
-        # Truncate text with an ellipsis so it fits within max_pixels for the given font.
-        text = str(text)
-        if max_pixels <= 0 or not text or font.measure(text) <= max_pixels:
-            return text
-        ellipsis = "…"
-        truncated = text
-        while truncated and font.measure(truncated + ellipsis) > max_pixels:
-            truncated = truncated[:-1]
-        return (truncated.rstrip() + ellipsis) if truncated else ellipsis
-
-    def _format_temp_playlist_created_at(self, created_at):
-        try:
-            created_at = int(created_at)
-        except (TypeError, ValueError):
-            created_at = 0
-        if created_at <= 0:
-            return "Unknown"
-        return datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M")
-
     def check_for_updates(self, silent=False):
         def worker():
             try:
@@ -734,7 +659,7 @@ class PlaylistManagerUI:
                     migrated = True
                     continue
 
-                store_key = self._playlist_storage_key(entry['source'], entry['id'])
+                store_key = playlist_store.playlist_storage_key(entry['source'], entry['id'])
                 self.saved_playlists[store_key] = entry
                 if store_key != stored_key or not self._is_current_playlist_format(pl_data):
                     migrated = True
@@ -766,34 +691,11 @@ class PlaylistManagerUI:
     def _playlists_temp_file(self):
         return self.playlists_file.with_name(f"{self.playlists_file.name}.tmp")
 
-    def _playlist_storage_key(self, source, playlist_id):
-        return f"{source}:{playlist_id}"
-
-    def _split_storage_key(self, stored_key):
-        if isinstance(stored_key, str) and ':' in stored_key:
-            source, playlist_id = stored_key.split(':', 1)
-            if source in self.SOURCE_LABELS and playlist_id:
-                return source, playlist_id
-        return 'youtube', stored_key
-
-    def _normalize_playlist_identity(self, stored_key, pl_data):
-        stored_source, stored_playlist_id = self._split_storage_key(stored_key)
-
-        source = pl_data.get('source') or stored_source
-        if source not in self.SOURCE_LABELS:
-            source = stored_source
-
-        playlist_id = pl_data.get('id') or stored_playlist_id
-        if isinstance(playlist_id, str) and playlist_id.startswith(f"{source}:"):
-            playlist_id = playlist_id.split(':', 1)[1]
-
-        return source, playlist_id
-
     def _normalize_playlist_entry(self, stored_key, pl_data):
         if not isinstance(pl_data, dict):
             return None
 
-        source, playlist_id = self._normalize_playlist_identity(stored_key, pl_data)
+        source, playlist_id = playlist_store.normalize_playlist_identity(stored_key, pl_data)
         if not playlist_id:
             return None
 
@@ -906,7 +808,7 @@ class PlaylistManagerUI:
         }
 
     def _serialize_playlist_entry(self, playlist_key, pl_data):
-        source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
         return {
             'source': source,
             'id': playlist_id,
@@ -935,8 +837,8 @@ class PlaylistManagerUI:
         try:
             json_data = {}
             for playlist_key, pl_data in self._sorted_playlist_items():
-                source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
-                store_key = self._playlist_storage_key(source, playlist_id)
+                source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
+                store_key = playlist_store.playlist_storage_key(source, playlist_id)
                 json_data[store_key] = self._serialize_playlist_entry(playlist_key, pl_data)
 
             temp_file = self._playlists_temp_file()
@@ -1201,18 +1103,6 @@ class PlaylistManagerUI:
 
         return self._build_playlist_entry('spotify', playlist_id, playlist_name, track_ids, tracks_data)
 
-    def _normalize_song_key(self, title, artist):
-        combined = f"{title or ''} {artist or ''}".lower()
-        combined = re.sub(r"[^\w\s]", "", combined)
-        combined = re.sub(r"\s+", " ", combined).strip()
-        return combined
-
-    def _normalize_search_text(self, text):
-        normalized = str(text or '').lower()
-        normalized = re.sub(r"[^\w\s]", "", normalized)
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        return normalized
-
     def _source_name(self, source):
         return self.SOURCE_LABELS.get(source, source.title() if source else 'Unknown')
 
@@ -1220,8 +1110,8 @@ class PlaylistManagerUI:
         def sort_key(item):
             playlist_key, pl_data = item
             return (
-                self._normalize_search_text(pl_data.get('name', '')),
-                self._normalize_search_text(self._source_name(pl_data.get('source', 'youtube'))),
+                text_utils.normalize_search_text(pl_data.get('name', '')),
+                text_utils.normalize_search_text(self._source_name(pl_data.get('source', 'youtube'))),
                 str(playlist_key).lower()
             )
 
@@ -1305,14 +1195,6 @@ class PlaylistManagerUI:
         find_entry.bind("<Escape>", lambda _event: (find_var.set(""), "break")[-1])
         self._register_display_find_entry(parent, find_entry)
         return find_label, find_entry
-
-    def _matches_find_query(self, values, query):
-        terms = [term for term in self._normalize_search_text(query).split() if term]
-        if not terms:
-            return True
-
-        haystack = self._normalize_search_text(" ".join(str(value or "") for value in values))
-        return all(term in haystack for term in terms)
 
     def _selected_tree_entry(self, tree, entry_by_item):
         selected_items = tree.selection()
@@ -1802,7 +1684,7 @@ class PlaylistManagerUI:
         tree.configure(yscrollcommand=scrollbar.set)
 
         for record in records:
-            kinds = self._temp_playlist_source_kinds(record) or {"youtube"}
+            kinds = text_utils.temp_playlist_source_kinds(record) or {"youtube"}
             tree.insert(
                 "",
                 tk.END,
@@ -1810,9 +1692,9 @@ class PlaylistManagerUI:
                 image=self._source_logo_for_sources(kinds),
                 values=(
                     record.title,
-                    self._format_temp_playlist_created_at(record.created_at),
-                    self._format_relative_age(record.created_at),
-                    self._temp_playlist_source_names(record) or "—",
+                    text_utils.format_timestamp(record.created_at),
+                    text_utils.format_relative_age(record.created_at),
+                    text_utils.temp_playlist_source_names(record) or "—",
                 ),
             )
 
@@ -1831,8 +1713,8 @@ class PlaylistManagerUI:
             fixed = sum(int(tree.column(col, "width")) for col in fixed_source_cols)
             available = max(40, tree_width - fixed - 8)
             for item_id, record in records_by_id.items():
-                full_text = self._temp_playlist_source_names(record) or "—"
-                tree.set(item_id, "sources", self._fit_text_to_pixels(full_text, sources_font, available))
+                full_text = text_utils.temp_playlist_source_names(record) or "—"
+                tree.set(item_id, "sources", text_utils.fit_text_to_pixels(full_text, sources_font, available))
 
         tree.bind("<Configure>", refresh_sources_ellipsis)
         tree.bind("<ButtonRelease-1>", refresh_sources_ellipsis, add="+")
@@ -1909,8 +1791,8 @@ class PlaylistManagerUI:
         self._add_info_header(
             outer_frame,
             record.title or "Untitled Temporary Playlist",
-            f"Created {self._format_temp_playlist_created_at(record.created_at)} "
-            f"({self._format_relative_age(record.created_at)})",
+            f"Created {text_utils.format_timestamp(record.created_at)} "
+            f"({text_utils.format_relative_age(record.created_at)})",
             actions=actions,
         )
 
@@ -1918,9 +1800,9 @@ class PlaylistManagerUI:
         row = self._add_info_section(content_frame, "General", row)
         row = self._add_info_row(content_frame, row, "Title", record.title or "Untitled")
         row = self._add_info_row(
-            content_frame, row, "Created", self._format_temp_playlist_created_at(record.created_at)
+            content_frame, row, "Created", text_utils.format_timestamp(record.created_at)
         )
-        row = self._add_info_row(content_frame, row, "Age", self._format_relative_age(record.created_at))
+        row = self._add_info_row(content_frame, row, "Age", text_utils.format_relative_age(record.created_at))
         row = self._add_info_row(content_frame, row, "Playlist ID", record.playlist_id or "Unknown")
         row = self._add_info_row(
             content_frame,
@@ -2506,7 +2388,7 @@ class PlaylistManagerUI:
         self.show_settings_display()
 
     def _find_matching_tracks(self, query):
-        query_terms = [term for term in self._normalize_search_text(query).split() if term]
+        query_terms = [term for term in text_utils.normalize_search_text(query).split() if term]
         if not query_terms:
             return {}
 
@@ -2518,10 +2400,10 @@ class PlaylistManagerUI:
             for track in pl_data.get('tracks', []):
                 title = track.get('title', '')
                 artist = track.get('artist', '')
-                searchable_text = self._normalize_search_text(f"{title} {artist}")
+                searchable_text = text_utils.normalize_search_text(f"{title} {artist}")
 
                 if all(term in searchable_text for term in query_terms):
-                    track_key = self._normalize_song_key(title, artist)
+                    track_key = playlist_store.normalize_song_key(title, artist)
                     if not track_key:
                         continue
 
@@ -2595,28 +2477,6 @@ class PlaylistManagerUI:
         value = os.environ.get(self.YOUTUBE_QUEUE_ACTIONS_ENV_VAR, "")
         return value.lower() in {"1", "true", "yes", "on"}
 
-    def _youtube_playlist_sources_from_keys(self, playlist_keys):
-        youtube_playlists = []
-        skipped_playlists = []
-        for playlist_key in playlist_keys:
-            pl_data = self.saved_playlists.get(playlist_key)
-            if not pl_data:
-                continue
-
-            source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
-            playlist_info = {
-                'key': playlist_key,
-                'id': playlist_id,
-                'name': pl_data.get('name', 'Unnamed Playlist'),
-                'source': source
-            }
-            if source == 'youtube':
-                youtube_playlists.append(playlist_info)
-            else:
-                skipped_playlists.append(playlist_info)
-
-        return youtube_playlists, skipped_playlists
-
     def play_selection_in_youtube_music(self):
         if not self.saved_playlists:
             messagebox.showwarning("No Playlists", "Please add at least one playlist first.")
@@ -2627,7 +2487,9 @@ class PlaylistManagerUI:
             messagebox.showwarning("No Selection", "Please choose at least one playlist.")
             return
 
-        youtube_playlists, skipped_playlists = self._youtube_playlist_sources_from_keys(selected_playlist_keys)
+        youtube_playlists, skipped_playlists = playlist_store.select_youtube_playlist_sources(
+            self.saved_playlists, selected_playlist_keys
+        )
         if not youtube_playlists:
             messagebox.showinfo(
                 "YouTube Music",
@@ -3107,7 +2969,7 @@ class PlaylistManagerUI:
             messagebox.showinfo("No Selection", "Select a saved playlist first.")
             return
 
-        source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
         url = self._playlist_url(source, playlist_id)
         if not url:
             messagebox.showinfo("No Playlist Link", "No playable source link is available for this playlist.")
@@ -3211,7 +3073,7 @@ class PlaylistManagerUI:
             messagebox.showinfo("No Selection", "Select a saved playlist first.")
             return
 
-        source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+        source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
         source_name = self._source_name(source)
         playlist_name = pl_data.get('name', 'Unnamed Playlist')
         videos = pl_data.get('videos', set())
@@ -3278,20 +3140,6 @@ class PlaylistManagerUI:
                 f"{last_track.get('title', 'Unknown Title')} - {last_track.get('artist', 'Unknown Artist')}"
             )
 
-    def _combined_track_key(self, track):
-        title = track.get('title', '')
-        artist = track.get('artist', '')
-        song_key = self._normalize_song_key(title, artist)
-        if song_key:
-            return song_key
-
-        source = track.get('source', 'youtube')
-        track_id = track.get('id') or track.get('trackId') or track.get('videoId')
-        if track_id:
-            return f"{source}:{track_id}"
-
-        return None
-
     def _collect_combined_tracks(self, playlist_keys, merge_duplicates=True):
         combined = []
         merged_entries = {}
@@ -3309,7 +3157,7 @@ class PlaylistManagerUI:
 
                 title = track.get('title') or 'Unknown Title'
                 artist = track.get('artist') or 'Unknown Artist'
-                entry_key = self._combined_track_key(track)
+                entry_key = playlist_store.combined_track_key(track)
                 if not entry_key:
                     entry_key = f"{playlist_key}:{track_order}"
 
@@ -3356,7 +3204,7 @@ class PlaylistManagerUI:
         sort_mode = self.COMBINED_SORT_OPTIONS.get(sort_label, sort_label)
 
         def normalized(value):
-            return self._normalize_search_text(value)
+            return text_utils.normalize_search_text(value)
 
         def playlist_name(entry):
             return normalized(next(iter(sorted(entry['playlists'])), ''))
@@ -3634,7 +3482,7 @@ class PlaylistManagerUI:
             visible_rows = [
                 row
                 for row in playlist_rows
-                if self._matches_find_query(row[2], display_find_var.get())
+                if text_utils.matches_find_query(row[2], display_find_var.get())
             ]
 
             if not visible_rows:
@@ -3927,7 +3775,7 @@ class PlaylistManagerUI:
             filtered_entries = [
                 entry
                 for entry in entries
-                if self._matches_find_query(
+                if text_utils.matches_find_query(
                     [
                         entry['title'],
                         entry['artist'],
@@ -4075,7 +3923,7 @@ class PlaylistManagerUI:
                 visible_entries = [
                     entry
                     for entry in duplicate_entries
-                    if self._matches_find_query(
+                    if text_utils.matches_find_query(
                         [
                             entry['title'],
                             entry['artist'],
@@ -4204,7 +4052,7 @@ class PlaylistManagerUI:
                     progress_var.set((idx / total_playlists) * 100)
                     progress_window.update()
 
-                    source, playlist_id = self._normalize_playlist_identity(playlist_key, pl_data)
+                    source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
                     if source == 'youtube':
                         self.saved_playlists[playlist_key] = self._fetch_youtube_playlist_entry(playlist_id, pl_name)
                     elif source == 'spotify':

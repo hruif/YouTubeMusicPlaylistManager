@@ -4,8 +4,8 @@ Unit tests for UI helper logic that does not require a Tk root window.
 """
 
 from pathlib import Path
-from types import SimpleNamespace
 
+import playlist_store
 from playlist_url_window import PlaylistURLWindow
 from ui import PlaylistManagerUI
 
@@ -541,13 +541,6 @@ def test_find_duplicate_songs_allows_one_selected_playlist(monkeypatch):
     assert shown[0][0][0]['title'] == 'Repeated Song'
 
 
-def test_matches_find_query_requires_all_terms():
-    manager = make_manager()
-
-    assert manager._matches_find_query(('Alpha Song', 'First Artist'), 'alpha first')
-    assert not manager._matches_find_query(('Alpha Song', 'First Artist'), 'alpha second')
-
-
 def test_sort_combined_tracks_by_artist_and_original_order():
     manager = make_manager()
     entries = [
@@ -608,10 +601,10 @@ def test_youtube_playlist_sources_from_keys_filters_spotify():
         }
     }
 
-    youtube_playlists, skipped_playlists = manager._youtube_playlist_sources_from_keys([
-        'spotify:SP1',
-        'youtube:PL1'
-    ])
+    youtube_playlists, skipped_playlists = playlist_store.select_youtube_playlist_sources(
+        manager.saved_playlists,
+        ['spotify:SP1', 'youtube:PL1'],
+    )
 
     assert youtube_playlists == [
         {
@@ -1007,80 +1000,3 @@ def test_sorted_playlist_items_orders_by_name_then_source():
         'youtube:PL1',
         'youtube:PL2'
     ]
-
-
-def test_format_relative_age_buckets_by_largest_unit():
-    import time as _time
-
-    manager = make_manager()
-    now = int(_time.time())
-
-    assert manager._format_relative_age(now) == 'just now'
-    assert manager._format_relative_age(now - 5 * 60) == '5 minutes ago'
-    assert manager._format_relative_age(now - 2 * 3600) == '2 hours ago'
-    assert manager._format_relative_age(now - 3 * 86400) == '3 days ago'
-    assert manager._format_relative_age(0) == 'unknown age'
-
-
-def test_temp_playlist_sources_text_prefixes_known_sources():
-    manager = make_manager()
-    record = SimpleNamespace(
-        source_playlists=[
-            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
-            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
-            {'id': 'X', 'name': '', 'source': 'youtube'},
-        ]
-    )
-
-    assert manager._temp_playlist_sources_text(record) == 'YouTube: Morning, Spotify: Evening'
-
-    empty_record = SimpleNamespace(source_playlists=[])
-    assert manager._temp_playlist_sources_text(empty_record) == ''
-
-
-def test_temp_playlist_source_names_drops_prefix():
-    manager = make_manager()
-    record = SimpleNamespace(
-        source_playlists=[
-            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
-            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
-            {'id': 'X', 'name': '', 'source': 'youtube'},
-        ]
-    )
-
-    assert manager._temp_playlist_source_names(record) == 'Morning, Evening'
-    assert manager._temp_playlist_source_names(SimpleNamespace(source_playlists=[])) == ''
-
-
-def test_temp_playlist_source_kinds_collects_unique_sources():
-    manager = make_manager()
-    record = SimpleNamespace(
-        source_playlists=[
-            {'id': 'PL1', 'name': 'Morning', 'source': 'youtube'},
-            {'id': 'PL2', 'name': 'Noon', 'source': 'youtube'},
-            {'id': 'SP1', 'name': 'Evening', 'source': 'spotify'},
-            {'id': 'X', 'name': 'Bad', 'source': ''},
-        ]
-    )
-
-    assert manager._temp_playlist_source_kinds(record) == {'youtube', 'spotify'}
-    assert manager._temp_playlist_source_kinds(SimpleNamespace(source_playlists=[])) == set()
-
-
-def test_fit_text_to_pixels_truncates_with_ellipsis():
-    manager = make_manager()
-
-    class FakeFont:
-        def measure(self, s):
-            return len(s) * 10  # 10px per character
-
-    font = FakeFont()
-
-    # Fits: returned unchanged.
-    assert manager._fit_text_to_pixels("Morning", font, 1000) == "Morning"
-    # Too wide: truncated so text + ellipsis fits within the budget.
-    fitted = manager._fit_text_to_pixels("Morning, Evening", font, 50)
-    assert fitted.endswith("…")
-    assert font.measure(fitted) <= 50
-    # Degenerate budget still returns something printable.
-    assert manager._fit_text_to_pixels("Morning", font, 0) == "Morning"

@@ -12,6 +12,16 @@ _Last updated: 2026-06-15_
 
 ## Released — always on (normal and debug builds)
 
+- **Refactor (step 1 of decomposing `ui.py`): pure logic extracted into testable modules.**
+  `text_utils.py` (search-text normalization, find-query matching, relative-age/timestamp
+  formatting, ellipsis text-fitting, temp-playlist source name/kind/text helpers) and
+  `playlist_store.py` (song/track-key generation, storage-key split/join, playlist-identity
+  normalization, YouTube source selection, plus the canonical `SOURCE_LABELS`). The controller
+  now calls these; `ui.py` shed ~150 lines and ~14 methods. New `test_text_utils.py` /
+  `test_playlist_store.py` cover the moved logic directly. **Deferred:** playlist file I/O +
+  `saved_playlists` state and the queue-creation/deletion orchestration stay in the controller —
+  they are Tk/threading-coupled and belong with the step-2 view extraction.
+
 - **Debug bundle is fully isolated from the release build.** Previously only the bundle *name*
   differed; both builds resolved to the same user-data folder and `instance.lock` (derived from
   `APP_NAME`), so they couldn't run at the same time and shared playlists/headers/temp-records.
