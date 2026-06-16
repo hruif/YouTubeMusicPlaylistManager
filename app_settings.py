@@ -12,6 +12,7 @@ from pathlib import Path
 from app_paths import user_data_path
 
 AUTO_DELETE_TEMP_ON_EXIT = "auto_delete_temp_on_exit"
+USE_DISPLAY_WINDOWS = "use_display_windows"
 
 
 class AppSettings:

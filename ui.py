@@ -15,10 +15,14 @@ from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
 from app_info import APP_NAME, APP_VERSION
 from app_paths import resource_path, user_data_path
-from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT
+from app_settings import AppSettings, AUTO_DELETE_TEMP_ON_EXIT, USE_DISPLAY_WINDOWS
 from playlist_url_window import PlaylistURLWindow
 import combined_songs_view
+import duplicates_view
+import playlist_checkbox_selector
+import playlist_selection_view
 import playlist_store
+import search_results_view
 import saved_playlists_view
 import settings_view
 import temporary_playlists_view
@@ -92,8 +96,10 @@ class PlaylistManagerUI:
             print(f"Loaded {len(self.saved_playlists)} saved playlists")
             # Could add a status label here if desired
 
-        self.use_display_windows_var = tk.BooleanVar(value=False)
         self.app_settings = AppSettings()
+        self.use_display_windows_var = tk.BooleanVar(
+            value=self.app_settings.get_bool(USE_DISPLAY_WINDOWS, False)
+        )
         self.auto_delete_temp_on_exit_var = tk.BooleanVar(
             value=self.app_settings.get_bool(AUTO_DELETE_TEMP_ON_EXIT, False)
         )
@@ -201,8 +207,13 @@ class PlaylistManagerUI:
         self.display_frame.columnconfigure(0, weight=1)
         self.display_frame.rowconfigure(1, weight=1)
         self.refresh_sidebar_playlists()
-        # Land on the primary "View Songs" view; it tracks the sidebar selection live.
-        self.show_combined_songs_display([], live=True)
+        if self.use_display_windows_var.get():
+            # Separate-windows mode persisted on: set up that layout (sidebar selector hidden,
+            # the playlist picker in the main area) instead of the inline combined landing.
+            self._on_display_mode_changed()
+        else:
+            # Land on the primary "View Songs" view; it tracks the sidebar selection live.
+            self.show_combined_songs_display([], live=True)
         self._schedule_initial_update_check()
         self._schedule_temporary_playlist_cleanup_prompt()
 
@@ -1448,6 +1459,7 @@ class PlaylistManagerUI:
         return self._selected_playlist_keys(self._active_playlist_vars())
 
     def _on_display_mode_changed(self):
+        self.app_settings.set(USE_DISPLAY_WINDOWS, bool(self.use_display_windows_var.get()))
         selected_keys = set(self._selected_playlist_keys_from_active_display())
         if self.use_display_windows_var.get():
             self.playlist_selector_container.grid_remove()
@@ -2660,69 +2672,10 @@ class PlaylistManagerUI:
             filtered_results.values(),
             key=lambda entry: entry['track'].get('title', '').lower()
         )
-
-        def build_search_display(parent):
-            self.current_display_view = 'search'
-            self._active_combined_refresh = None
-            parent.columnconfigure(0, weight=1)
-            parent.rowconfigure(1, weight=1)
-
-            header_frame = ttk.Frame(parent)
-            header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 8))
-            header_frame.columnconfigure(0, weight=1)
-
-            results_label = ttk.Label(header_frame, text=f"Search Results: {query}", font=("Helvetica", 15, "bold"))
-            results_label.grid(row=0, column=0, sticky=tk.W)
-
-            display_find_var = tk.StringVar()
-            find_frame = ttk.Frame(header_frame)
-            find_frame.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
-            find_label, find_entry = self._create_display_find_controls(find_frame, display_find_var)
-            find_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
-            find_entry.grid(row=0, column=1, sticky=tk.W)
-
-            results_text = tk.Text(parent, height=18, width=90, state=tk.NORMAL)
-            results_text.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-            results_text.tag_configure("display_find_match", background="#fff2a8")
-
-            if not sorted_results:
-                results_text.insert(tk.END, f"No songs matching '{query}' were found in your saved playlists.\n\nTry a different query or add more playlists.")
-            else:
-                for i, entry in enumerate(sorted_results, 1):
-                    track = entry['track']
-                    in_playlists = sorted(entry['playlists'])
-                    title = track.get('title', 'Unknown')
-                    artist = track.get('artist', 'Unknown')
-
-                    result_str = f"{i}. {title} by {artist}\n   Found in: {', '.join(in_playlists)}\n\n"
-                    results_text.insert(tk.END, result_str)
-
-            results_text.config(state=tk.DISABLED)
-
-            def refresh_find_matches(*_):
-                results_text.tag_remove("display_find_match", "1.0", tk.END)
-                find_text = display_find_var.get().strip()
-                if not find_text:
-                    return
-
-                start_index = "1.0"
-                first_match = None
-                while True:
-                    match_index = results_text.search(find_text, start_index, tk.END, nocase=True)
-                    if not match_index:
-                        break
-                    match_end = f"{match_index}+{len(find_text)}c"
-                    results_text.tag_add("display_find_match", match_index, match_end)
-                    if first_match is None:
-                        first_match = match_index
-                    start_index = match_end
-
-                if first_match:
-                    results_text.see(first_match)
-
-            display_find_var.trace_add("write", refresh_find_matches)
-
-        self._show_display("Search Results", build_search_display)
+        self._show_display(
+            "Search Results",
+            lambda parent: search_results_view.build(self, parent, query, sorted_results),
+        )
     
     def open_playlist_window(self):
         PlaylistURLWindow(self.root, self.ytmusic, self.saved_playlists, self)
@@ -2764,49 +2717,7 @@ class PlaylistManagerUI:
         self.show_combined_songs_display(selected_keys, live=not self.use_display_windows_var.get())
 
     def show_playlist_selection_display(self, selected_keys=None):
-        self.current_display_view = 'playlist_selection'
-        self._active_combined_refresh = None
-        if selected_keys is None:
-            selected_keys = set(self._selected_playlist_keys_from_active_display())
-
-        self._clear_display_frame()
-
-        header_frame = ttk.Frame(self.display_frame)
-        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        header_frame.columnconfigure(0, weight=1)
-
-        title = ttk.Label(header_frame, text="Selected Playlists", font=("Helvetica", 15, "bold"))
-        title.grid(row=0, column=0, sticky=tk.W)
-
-        settings_button = ttk.Button(header_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=0, column=1, sticky=tk.E)
-
-        selector_frame = ttk.LabelFrame(self.display_frame, text="Playlists", padding=(8, 6))
-        selector_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        self.display_playlist_vars = self._build_playlist_checkbox_selector(
-            selector_frame,
-            selected_keys=selected_keys
-        )
-
-        action_frame = ttk.Frame(self.display_frame)
-        action_frame.grid(row=2, column=0, sticky=tk.E, pady=(8, 0))
-
-        select_all_button = ttk.Button(
-            action_frame,
-            text="Select All",
-            command=lambda: self._set_playlist_selection(self.display_playlist_vars, True)
-        )
-        select_all_button.grid(row=0, column=0, padx=5)
-
-        clear_button = ttk.Button(
-            action_frame,
-            text="Clear",
-            command=lambda: self._set_playlist_selection(self.display_playlist_vars, False)
-        )
-        clear_button.grid(row=0, column=1, padx=5)
-
-        self.display_frame.columnconfigure(0, weight=1)
-        self.display_frame.rowconfigure(1, weight=1)
+        playlist_selection_view.build(self, selected_keys)
 
     def show_combined_songs_display(self, playlist_keys, live=False):
         self._show_display(
@@ -2823,83 +2734,11 @@ class PlaylistManagerUI:
     def _selected_playlist_keys(self, playlist_vars):
         return [playlist_key for playlist_key, selected_var in playlist_vars if selected_var.get()]
 
-    def _build_playlist_checkbox_selector(self, parent, on_change=None, selected_keys=None):
-        list_frame = ttk.Frame(parent)
-        list_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-        canvas = tk.Canvas(list_frame, borderwidth=0, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=canvas.yview)
-        checkbox_frame = ttk.Frame(canvas)
-
-        checkbox_window = canvas.create_window((0, 0), window=checkbox_frame, anchor=tk.NW)
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        def update_scroll_region(_event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def update_checkbox_width(event):
-            canvas.itemconfigure(checkbox_window, width=event.width)
-
-        def on_mousewheel(event):
-            if getattr(event, 'num', None) == 4:
-                scroll_units = -3
-            elif getattr(event, 'num', None) == 5:
-                scroll_units = 3
-            elif event.delta:
-                scroll_units = -1 if event.delta > 0 else 1
-            else:
-                scroll_units = 0
-
-            if scroll_units:
-                canvas.yview_scroll(scroll_units, "units")
-            return "break"
-
-        def bind_mousewheel(widget):
-            widget.bind("<MouseWheel>", on_mousewheel)
-            widget.bind("<Button-4>", on_mousewheel)
-            widget.bind("<Button-5>", on_mousewheel)
-
-        # Bind both the canvas and row widgets so scrolling works over the whole list area.
-        checkbox_frame.bind("<Configure>", update_scroll_region)
-        canvas.bind("<Configure>", update_checkbox_width)
-        for widget in (list_frame, canvas, checkbox_frame):
-            bind_mousewheel(widget)
-
-        canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
-
-        playlist_vars = []
-        for row_index, (playlist_key, pl_data) in enumerate(self._sorted_playlist_items()):
-            source = pl_data.get('source', 'youtube')
-            playlist_name = pl_data.get('name', f'Playlist {playlist_key}')
-            song_count = len(pl_data.get('tracks') or pl_data.get('videos', set()))
-            selected_var = tk.BooleanVar(value=selected_keys is None or playlist_key in selected_keys)
-            playlist_vars.append((playlist_key, selected_var))
-
-            row_frame = ttk.Frame(checkbox_frame, padding=(0, 1))
-            row_frame.grid(row=row_index, column=0, sticky=(tk.W, tk.E))
-            checkbox_frame.columnconfigure(0, weight=1)
-            row_frame.columnconfigure(1, weight=1)
-
-            badge = self._create_source_badge(row_frame, source)
-            badge.grid(row=0, column=0, padx=(0, 5), sticky=tk.W)
-
-            checkbutton = ttk.Checkbutton(
-                row_frame,
-                text=f"{playlist_name} ({song_count} songs)",
-                variable=selected_var,
-                command=on_change
-            )
-            checkbutton.grid(row=0, column=1, sticky=tk.W)
-            for widget in (row_frame, badge, checkbutton):
-                bind_mousewheel(widget)
-
-        return playlist_vars
+    def _build_playlist_checkbox_selector(self, parent, on_change=None, selected_keys=None, highlight_selected=False):
+        return playlist_checkbox_selector.build(
+            self, parent, on_change=on_change, selected_keys=selected_keys,
+            highlight_selected=highlight_selected,
+        )
 
     def _find_duplicate_entries(self, playlist_keys):
         combined_entries = self._collect_combined_tracks(playlist_keys, merge_duplicates=True)
@@ -2914,136 +2753,11 @@ class PlaylistManagerUI:
             duplicate_entries,
             key=lambda entry: (-entry['appearance_count'], entry['title'].lower(), entry['artist'].lower())
         )
-
-        def build_duplicate_display(parent):
-            self.current_display_view = 'duplicates'
-            self._active_combined_refresh = None
-            parent.columnconfigure(0, weight=1)
-            parent.rowconfigure(1, weight=1)
-
-            header_frame = ttk.Frame(parent)
-            header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-            header_frame.columnconfigure(0, weight=1)
-
-            title_var = tk.StringVar()
-            title = ttk.Label(header_frame, textvariable=title_var, font=("Helvetica", 15, "bold"))
-            title.grid(row=0, column=0, sticky=tk.W)
-
-            display_find_var = tk.StringVar()
-            find_frame = ttk.Frame(header_frame)
-            find_frame.grid(row=1, column=0, sticky=tk.W, pady=(8, 0))
-            find_label, find_entry = self._create_display_find_controls(find_frame, display_find_var)
-            find_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
-            find_entry.grid(row=0, column=1, sticky=tk.W)
-
-            table_frame = ttk.Frame(parent)
-            table_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-
-            y_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL)
-            y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-            x_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
-            x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-            duplicate_columns = ('title', 'artist', 'playlists')
-
-            duplicates_tree = ttk.Treeview(
-                table_frame,
-                columns=duplicate_columns,
-                show='tree headings',
-                style="SourceLogo.Treeview",
-                yscrollcommand=y_scrollbar.set,
-                xscrollcommand=x_scrollbar.set
-            )
-            duplicates_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-            y_scrollbar.config(command=duplicates_tree.yview)
-            x_scrollbar.config(command=duplicates_tree.xview)
-
-            duplicates_tree.heading('#0', text='')
-            duplicates_tree.heading('title', text='Title')
-            duplicates_tree.heading('artist', text='Artist')
-            duplicates_tree.heading('playlists', text='Playlists')
-
-            duplicates_tree.column('#0', width=36, minwidth=36, stretch=False, anchor=tk.CENTER)
-            duplicates_tree.column('title', width=260, minwidth=160, stretch=False)
-            duplicates_tree.column('artist', width=190, minwidth=120, stretch=False)
-            # Smaller by default but stretches with the window and is resizable; the full
-            # playlist list (untruncated) is available in the song's Details window.
-            duplicates_tree.column('playlists', width=320, minwidth=140, stretch=True)
-
-            entry_by_item = {}
-            visible_entries = []
-
-            # Queue playback intentionally uses the filtered duplicate rows currently on screen.
-            details_button = ttk.Button(
-                header_frame,
-                text="Details",
-                command=lambda: self._show_selected_entry_details(duplicates_tree, entry_by_item)
-            )
-            details_button.grid(row=1, column=1, sticky=tk.W, padx=(10, 4), pady=(8, 0))
-
-            play_button = ttk.Button(
-                header_frame,
-                text="Play",
-                command=lambda: self._play_selected_tree_entry(duplicates_tree, entry_by_item)
-            )
-            play_button.grid(row=1, column=2, sticky=tk.W, padx=4, pady=(8, 0))
-
-            def refresh_duplicate_rows(*_):
-                nonlocal visible_entries
-                entry_by_item.clear()
-                for item_id in duplicates_tree.get_children():
-                    duplicates_tree.delete(item_id)
-
-                visible_entries = [
-                    entry
-                    for entry in duplicate_entries
-                    if text_utils.matches_find_query(
-                        [
-                            entry['title'],
-                            entry['artist'],
-                            self._format_playlist_occurrences(entry, limit=None),
-                            ', '.join(sorted(self._source_name(source) for source in entry['sources']))
-                        ],
-                        display_find_var.get()
-                    )
-                ]
-
-                if display_find_var.get().strip() and len(visible_entries) != len(duplicate_entries):
-                    title_var.set(f"Selected Playlist Duplicates ({len(visible_entries)} of {len(duplicate_entries)} shown)")
-                else:
-                    title_var.set(f"Selected Playlist Duplicates ({len(duplicate_entries)} found)")
-
-                if not visible_entries:
-                    message = f"No duplicates found in {selected_count} selected playlist."
-                    if selected_count != 1:
-                        message = f"No duplicates found in {selected_count} selected playlists."
-                    if duplicate_entries:
-                        message = "No duplicate songs match the current find text."
-                    duplicates_tree.insert(
-                        '',
-                        tk.END,
-                        values=(message, '', '')
-                    )
-                    return
-
-                for entry in visible_entries:
-                    playlist_text = self._format_playlist_occurrences(entry, self.PLAYLIST_DISPLAY_LIMIT)
-                    row_values = (entry['title'], entry['artist'], playlist_text)
-                    item_id = duplicates_tree.insert(
-                        '',
-                        tk.END,
-                        image=self._source_logo_for_sources(entry['sources']),
-                        values=row_values
-                    )
-                    entry_by_item[item_id] = entry
-
-            duplicates_tree.bind("<Double-1>", lambda _event: self._show_selected_entry_details(duplicates_tree, entry_by_item))
-            display_find_var.trace_add("write", refresh_duplicate_rows)
-            refresh_duplicate_rows()
-
-        self._show_display("Selected Playlist Duplicates", build_duplicate_display, geometry="1080x620")
+        self._show_display(
+            "Selected Playlist Duplicates",
+            lambda parent: duplicates_view.build(self, parent, duplicate_entries, selected_count),
+            geometry="1080x620",
+        )
     
     def find_duplicate_songs(self):
         """Find and display songs that appear multiple times in selected playlists"""
