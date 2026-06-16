@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -90,8 +89,17 @@ def build_app(debug=False):
         raise FileNotFoundError(f"Expected app bundle was not created: {app_path}")
 
     archive_suffix = "-debug" if debug else ""
-    archive_base = ROOT / "dist" / f"YouTubeMusicPlaylistManager-{APP_VERSION}{archive_suffix}-macOS"
-    archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=app_path.parent, base_dir=app_path.name)
+    archive_path = ROOT / "dist" / f"YouTubeMusicPlaylistManager-{APP_VERSION}{archive_suffix}-macOS.zip"
+    if archive_path.exists():
+        archive_path.unlink()
+    # Package with ditto, NOT shutil.make_archive: Python's zip follows symlinks, which on
+    # a macOS .app duplicates the framework tree (~2x size) and invalidates the code
+    # signature, so the downloaded app fails Gatekeeper as "damaged". ditto preserves
+    # symlinks + the signature.
+    subprocess.run(
+        ["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app_path), str(archive_path)],
+        check=True,
+    )
     print(f"Built {app_path}")
     print(f"Packaged {archive_path}")
 

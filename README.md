@@ -164,6 +164,8 @@ The script creates:
 
 Attach the zip file to a GitHub Release so the built-in update checker can find it. The app bundle uses the bundled app icon and launches under the name "YouTube Music Playlist Manager" instead of "Python".
 
+The zip is created with `ditto` (not `shutil.make_archive`) so the `.app`'s symlinks and code signature survive the round-trip — Python's zip follows symlinks, which duplicates the framework tree (~2x size) and invalidates the signature, making the downloaded app fail Gatekeeper as "damaged". The build is only ad-hoc signed (not notarized — that needs a paid Apple Developer ID), so on first launch users must clear the quarantine flag (`xattr -dr com.apple.quarantine "…/YouTube Music Playlist Manager.app"`) or Control-click → Open. The download page documents this.
+
 ## Publish the download page
 
 The static GitHub Pages site lives in `docs/` and is deployed by `.github/workflows/pages.yml`.

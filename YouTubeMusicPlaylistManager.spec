@@ -25,7 +25,9 @@ a = Analysis(
     binaries=[],
     datas=[
         ("assets", "assets"),
-        *collect_data_files("tls_client", includes=["dependencies/*"]),
+        # macOS build: only the .dylib backends are loadable here. Bundling the Windows
+        # .dll / Linux .so files (~79 MB) just bloats the app, so keep mac dylibs only.
+        *collect_data_files("tls_client", includes=["dependencies/*.dylib"]),
         *collect_data_files("ytmusicapi", includes=["locales/**/*"]),
     ],
     hiddenimports=[
