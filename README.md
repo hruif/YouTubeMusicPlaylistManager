@@ -199,6 +199,30 @@ python main.py
 
 > Note: `spotapi` fetches public Spotify playlist information without requiring Spotify Web API credentials. Review the library's licensing and usage terms before using it.
 
+## Legal / Terms of Service
+
+**This is an unofficial tool and is not affiliated with, endorsed by, or connected to YouTube,
+YouTube Music, Google, or Spotify.** Use it at your own risk.
+
+The app talks to YouTube Music's **internal (unofficial) API** using your own logged-in browser
+session, because the sanctioned YouTube Data API cannot perform YouTube Music playlist edits
+(its OAuth tokens are rejected by those endpoints). Accessing the service this way most likely
+**violates YouTube's Terms of Service**, which generally require access only through the official
+interface or the official API.
+
+A few things to understand before using or distributing it:
+
+- **A ToS violation is a contract matter, not (by itself) a crime.** You access only *your own*
+  account with *your own* credentials; the tool does not crack, scrape others' data, or
+  circumvent any DRM/technical protection measure.
+- **The practical risk falls on your account.** Google could rate-limit, block, or in principle
+  suspend an account that uses unofficial API access. That risk is yours to accept.
+- **Intended for personal, non-commercial use.** Do not sell it or run it as a hosted service —
+  commercial use materially raises the legal profile.
+- Google may change or block the internal API at any time, which can break the app without notice.
+
+If you are not comfortable with the above, do not use the app.
+
 ## Contributing & development
 
 Working on the project (or handing it off to another person or AI agent)? Start here:
