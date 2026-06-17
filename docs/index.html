@@ -114,5 +114,43 @@
 
       wireLatestRelease();
     </script>
+
+    <!--
+      Tier 2 usage tracking (see dev-docs/FUTURE_DIRECTIONS.md): privacy-friendly, cookieless
+      page analytics via GoatCounter (https://www.goatcounter.com/). No cookies, no personal data,
+      no consent banner required; the dashboard is PRIVATE by default (counts are not shown here).
+
+      OFF until you set a code. To enable:
+        1. Create a free site at https://www.goatcounter.com/ (choose a code, e.g. "ytmpm").
+        2. Replace YOUR_CODE_HERE below with that code.
+      Until then nothing loads and no request is made.
+    -->
+    <script>
+      (function () {
+        var GOATCOUNTER_CODE = "YOUR_CODE_HERE"; // e.g. "ytmpm"
+        if (!GOATCOUNTER_CODE || GOATCOUNTER_CODE === "YOUR_CODE_HERE") return;
+
+        var script = document.createElement("script");
+        script.async = true;
+        script.src = "//gc.zgo.at/count.js";
+        script.setAttribute("data-goatcounter", "https://" + GOATCOUNTER_CODE + ".goatcounter.com/count");
+        script.addEventListener("load", function () {
+          // Count download-button clicks as an event (still no personal data).
+          var dl = document.getElementById("download-link");
+          if (dl && window.goatcounter && window.goatcounter.count) {
+            dl.addEventListener("click", function () {
+              window.goatcounter.count({ path: "download", title: "Download click", event: true });
+            });
+          }
+          // Small, accurate disclosure — shown only when analytics is actually active.
+          var note = document.createElement("p");
+          note.className = "release-status";
+          note.style.marginTop = "2rem";
+          note.textContent = "This site uses privacy-friendly, cookieless analytics (no personal data).";
+          (document.querySelector(".page-shell") || document.body).appendChild(note);
+        });
+        document.head.appendChild(script);
+      })();
+    </script>
   </body>
 </html>
