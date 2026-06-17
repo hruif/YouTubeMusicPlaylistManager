@@ -169,8 +169,37 @@ struct ProxyHttpResponse {
 /// Faithful HTTP proxy so youtubei.js's fetch can reach YouTube with the session cookies attached
 /// (the app's own origin can't send them cross-site). reqwest handles (de)compression, so we strip
 /// `accept-encoding` on the way in and `content-encoding`/`content-length` on the way out.
+///
+/// Crucially, we attach the `Cookie` header from the stored session ourselves: youtubei.js sets it
+/// on a WebKit `Headers` object, but WKWebView strips `Cookie` as a forbidden header, so it never
+/// reaches us. youtubei.js's `Authorization: SAPISIDHASH` survives; we supply the matching cookie.
 #[tauri::command]
-async fn proxy_http_request(input: ProxyHttpRequestInput) -> Result<ProxyHttpResponse, String> {
+async fn proxy_http_request(
+    input: ProxyHttpRequestInput,
+    state: tauri::State<'_, SessionState>,
+) -> Result<ProxyHttpResponse, String> {
+    let stored_cookie = state.0.lock().unwrap().clone();
+
+    let host = url::Url::parse(&input.url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()));
+    let is_google_host = host
+        .as_deref()
+        .map(|h| h.ends_with("youtube.com") || h.ends_with("google.com") || h.ends_with("ytimg.com"))
+        .unwrap_or(false);
+    let inject_cookie = is_google_host && stored_cookie.is_some();
+
+    let had_cookie = input.headers.keys().any(|k| k.eq_ignore_ascii_case("cookie"));
+    let had_auth = input.headers.keys().any(|k| k.eq_ignore_ascii_case("authorization"));
+    eprintln!(
+        "[proxy] {} {} had_cookie={} had_auth={} inject_cookie={}",
+        input.method,
+        host.as_deref().unwrap_or("?"),
+        had_cookie,
+        had_auth,
+        inject_cookie
+    );
+
     let method = reqwest::Method::from_bytes(input.method.as_bytes()).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
         .user_agent(SAFARI_USER_AGENT)
@@ -182,7 +211,14 @@ async fn proxy_http_request(input: ProxyHttpRequestInput) -> Result<ProxyHttpRes
         if key.eq_ignore_ascii_case("accept-encoding") {
             continue;
         }
+        // Drop any (likely stripped/partial) Cookie when we're supplying our own.
+        if inject_cookie && key.eq_ignore_ascii_case("cookie") {
+            continue;
+        }
         request = request.header(key, value);
+    }
+    if inject_cookie {
+        request = request.header("Cookie", stored_cookie.as_deref().unwrap());
     }
     if let Some(body_base64) = input.body_base64 {
         let bytes = STANDARD.decode(body_base64).map_err(|e| e.to_string())?;
@@ -190,6 +226,7 @@ async fn proxy_http_request(input: ProxyHttpRequestInput) -> Result<ProxyHttpRes
     }
 
     let response = request.send().await.map_err(|e| e.to_string())?;
+    eprintln!("[proxy]   -> {} {}", response.status().as_u16(), input.url);
     let status = response.status().as_u16();
     let mut headers = HashMap::new();
     for (key, value) in response.headers().iter() {

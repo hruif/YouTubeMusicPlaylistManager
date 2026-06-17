@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   signIn,
   trySilentSignIn,
@@ -37,7 +37,10 @@ function App() {
   }
 
   // Auto sign-in on startup from the persisted WebView session (no window if already logged in).
+  const autoSignInStarted = useRef(false);
   useEffect(() => {
+    if (autoSignInStarted.current) return; // guard React StrictMode's double-invoke in dev
+    autoSignInStarted.current = true;
     run("Auto sign-in (startup)", async () => {
       const names = await trySilentSignIn();
       if (names) {
