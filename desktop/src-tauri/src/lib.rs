@@ -30,6 +30,10 @@ const SAFARI_USER_AGENT: &str =
 #[derive(Default)]
 struct SessionState(Mutex<Option<String>>);
 
+/// Shared pooled HTTP client — connection reuse makes batched fetches faster and avoids the
+/// transient "error sending request" failures from building a fresh client per request.
+struct HttpClient(reqwest::Client);
+
 #[derive(Serialize)]
 struct SignInResult {
     cookie: String,
@@ -177,8 +181,10 @@ struct ProxyHttpResponse {
 async fn proxy_http_request(
     input: ProxyHttpRequestInput,
     state: tauri::State<'_, SessionState>,
+    http: tauri::State<'_, HttpClient>,
 ) -> Result<ProxyHttpResponse, String> {
     let stored_cookie = state.0.lock().unwrap().clone();
+    let client = http.0.clone();
 
     let host = url::Url::parse(&input.url)
         .ok()
@@ -190,31 +196,46 @@ async fn proxy_http_request(
     let inject_cookie = is_google_host && stored_cookie.is_some();
 
     let method = reqwest::Method::from_bytes(input.method.as_bytes()).map_err(|e| e.to_string())?;
-    let client = reqwest::Client::builder()
-        .user_agent(SAFARI_USER_AGENT)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let body_bytes: Option<Vec<u8>> = match input.body_base64 {
+        Some(b64) => Some(STANDARD.decode(b64).map_err(|e| e.to_string())?),
+        None => None,
+    };
 
-    let mut request = client.request(method, &input.url);
-    for (key, value) in &input.headers {
-        if key.eq_ignore_ascii_case("accept-encoding") {
-            continue;
+    // Pooled client + a couple of retries smooths over transient send failures under load.
+    let mut response = None;
+    let mut last_err = String::from("request failed");
+    for attempt in 0..3u32 {
+        let mut request = client.request(method.clone(), &input.url);
+        for (key, value) in &input.headers {
+            if key.eq_ignore_ascii_case("accept-encoding") {
+                continue;
+            }
+            // Drop any (likely stripped/partial) Cookie when we're supplying our own.
+            if inject_cookie && key.eq_ignore_ascii_case("cookie") {
+                continue;
+            }
+            request = request.header(key, value);
         }
-        // Drop any (likely stripped/partial) Cookie when we're supplying our own.
-        if inject_cookie && key.eq_ignore_ascii_case("cookie") {
-            continue;
+        if inject_cookie {
+            request = request.header("Cookie", stored_cookie.as_deref().unwrap());
         }
-        request = request.header(key, value);
+        if let Some(bytes) = &body_bytes {
+            request = request.body(bytes.clone());
+        }
+        match request.send().await {
+            Ok(r) => {
+                response = Some(r);
+                break;
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt < 2 {
+                    thread::sleep(Duration::from_millis(300));
+                }
+            }
+        }
     }
-    if inject_cookie {
-        request = request.header("Cookie", stored_cookie.as_deref().unwrap());
-    }
-    if let Some(body_base64) = input.body_base64 {
-        let bytes = STANDARD.decode(body_base64).map_err(|e| e.to_string())?;
-        request = request.body(bytes);
-    }
-
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    let response = response.ok_or(last_err)?;
     let status = response.status().as_u16();
     let mut headers = HashMap::new();
     for (key, value) in response.headers().iter() {
@@ -235,17 +256,51 @@ async fn proxy_http_request(
     })
 }
 
+// --- Local library cache (text JSON in the app data dir) ---------------------------------------
+// The library is all text, so caching it lets the app load instantly and fetch only on an explicit
+// update (mirrors the Python app's saved_playlists.json). The frontend owns the JSON shape.
+
+fn cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("library_cache.json"))
+}
+
+#[tauri::command]
+fn read_cache(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let path = cache_path(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn write_cache(app: tauri::AppHandle, contents: String) -> Result<(), String> {
+    let path = cache_path(&app)?;
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let http_client = reqwest::Client::builder()
+        .user_agent(SAFARI_USER_AGENT)
+        .build()
+        .expect("failed to build HTTP client");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(SessionState::default())
+        .manage(HttpClient(http_client))
         .invoke_handler(tauri::generate_handler![
             sign_in_youtube_music,
             try_silent_sign_in,
             sign_out_youtube_music,
             session_status,
-            proxy_http_request
+            proxy_http_request,
+            read_cache,
+            write_cache
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

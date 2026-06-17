@@ -126,6 +126,7 @@ function normalizePlaylistId(playlistId: string): string {
   return id.startsWith("VL") ? id.slice(2) : id;
 }
 
+export type Playlist = { id: string; title: string };
 export type Track = { videoId: string; title: string; artist: string };
 export type CombinedSong = Track & { playlists: string[] };
 
@@ -158,16 +159,47 @@ export async function getPlaylistTracks(playlistId: string): Promise<Track[]> {
 }
 
 /**
- * Combined song view across the selected playlists: one row per song (deduped by videoId), with
- * the list of playlists each song appears in — the app's signature feature.
+ * Fetch tracks for many playlists with bounded concurrency, tolerating per-playlist failures
+ * (returned in `failures`) so one transient error doesn't abort the whole update.
  */
-export async function getCombinedSongs(
-  selected: Array<{ id: string; title: string }>,
-): Promise<CombinedSong[]> {
+export async function fetchTracksForPlaylists(
+  playlists: Playlist[],
+  concurrency = 4,
+  onDone?: (done: number, total: number, playlist: Playlist, ok: boolean) => void,
+): Promise<{ tracksByPlaylist: Record<string, Track[]>; failures: Playlist[] }> {
+  const tracksByPlaylist: Record<string, Track[]> = {};
+  const failures: Playlist[] = [];
+  let next = 0;
+  let done = 0;
+  const worker = async (): Promise<void> => {
+    while (next < playlists.length) {
+      const playlist = playlists[next++];
+      try {
+        tracksByPlaylist[playlist.id] = await getPlaylistTracks(playlist.id);
+        onDone?.(++done, playlists.length, playlist, true);
+      } catch {
+        failures.push(playlist);
+        onDone?.(++done, playlists.length, playlist, false);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, playlists.length) }, () => worker()),
+  );
+  return { tracksByPlaylist, failures };
+}
+
+/**
+ * Combined song view across the selected playlists, computed from already-cached tracks (no
+ * network): one row per song (deduped by videoId) with the playlists it appears in.
+ */
+export function combineFromCache(
+  selected: Playlist[],
+  tracksByPlaylist: Record<string, Track[]>,
+): CombinedSong[] {
   const byVideo = new Map<string, CombinedSong>();
   for (const playlist of selected) {
-    const tracks = await getPlaylistTracks(playlist.id);
-    for (const track of tracks) {
+    for (const track of tracksByPlaylist[playlist.id] ?? []) {
       const existing = byVideo.get(track.videoId);
       if (existing) {
         if (!existing.playlists.includes(playlist.title)) existing.playlists.push(playlist.title);
