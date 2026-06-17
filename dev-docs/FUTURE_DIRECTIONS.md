@@ -73,6 +73,43 @@ second rewrite.
 - Lowest effort, but Tkinter's ceiling is low; it won't reach "modern," and it doesn't touch the
   auth problem. Reasonable as a stopgap, not the destination.
 
+### Option D — PySide6 (Qt) + QtWebEngine (Python, considered & rejected for the product goal)
+- Would keep the entire Python core (services, tests, `spotapi`) and replace only the Tkinter UI
+  with Qt, with embedded-webview auth via QtWebEngine. **Least effort** by far — but the decision
+  was made on *best product*, not effort, and on that axis Tauri wins (see "Tauri vs Qt" below).
+
+## Decision: Tauri vs Qt (best-product lens, effort/reuse discounted)
+
+Chosen: **Tauri.** They are *not* balanced — Tauri has real advantages for this specific app:
+
+1. **Auth robustness (decisive).** The product hinges on an embedded-webview login slipping past
+   Google's "This browser or app may not be secure" block on embedded webviews (enforced since
+   Sept 2021, and documented to hit **Electron and QtWebEngine**). On macOS, Tauri uses
+   **WKWebView — literally Safari's engine** — so a Safari user-agent is nearly indistinguishable
+   from real Safari and passes (this is exactly why JustAnotherMusicClient works). **Qt's
+   QtWebEngine is embedded Chromium**, which Google fingerprints and blocks, with only flaky
+   UA-spoof workarounds. Tauri-on-macOS is the demonstrated-working path; Qt is the more likely to
+   be blocked. (Caveat: on Windows Tauri uses Chromium-based WebView2 and loses this edge — so it's
+   a macOS-specific advantage, which suits this macOS-first app.)
+2. **Footprint.** Tauri uses the *system* WebView for UI + login → tiny binary. Qt must **bundle a
+   full Chromium (QtWebEngine) just for the login window** (~150MB), shipped regardless — heavier
+   than Tauri's whole architecture.
+3. **UI ceiling + ecosystem.** Web/CSS/React has the highest ceiling for a modern, custom UI and a
+   far larger component/tooling ecosystem. QML is capable but smaller; Qt Widgets is native but
+   utilitarian. We want modern/clean, not native-widgets → web wins.
+4. **Distribution.** Tauri has first-class signing/notarization/DMG + a built-in auto-updater;
+   Qt + PyInstaller is more manual and QtWebEngine complicates notarization.
+
+Qt's only real wins (native OS controls, single-language reuse, consistent cross-platform
+rendering) are exactly the effort/native-feel factors discounted for this decision.
+
+**Caveat bigger than Tauri-vs-Qt:** the *entire* embedded-login premise depends on continuing to
+evade Google's block. JustAnotherMusicClient on WKWebView is the best evidence it currently works,
+but Google could tighten it. The **only** approach immune to this is the **Chrome extension** (it
+rides the real, already-authenticated browser session — no embedded login to detect). Keep it as a
+fallback if Google ever blocks the WKWebView path. This makes the **Phase 0 auth spike the first
+and most important step** — it validates the riskiest assumption before any UI investment.
+
 ## Feature-parity / porting notes (applies to A and B)
 
 The successor must reproduce what the Python app already does (`README.md` + `STATUS.md` are the

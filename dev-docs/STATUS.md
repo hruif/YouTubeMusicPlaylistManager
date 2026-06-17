@@ -177,15 +177,16 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **UI revamp / successor app (major, proposed).** Improve the barebones UI **and** fix the
-  manual-header auth friction. Options scoped in `dev-docs/FUTURE_DIRECTIONS.md`: a **Chrome
-  extension** (runs in the live signed-in session — auth friction largely disappears; under Web
-  Store review), a **Tauri desktop app** (embedded WebView login + `youtubei.js`, adaptable under
-  JustAnotherMusicClient's Apache-2.0 license; distribute yourself), or theme the current Tkinter
-  UI (stopgap). Recommended: build a **shared TypeScript core** so either frontend is cheap to add,
-  start with the extension. Doc covers parity target, risks (Spotify has no JS `spotapi` equivalent;
-  some write paths unproven), legal/ToS posture, and distribution-risk analysis. The Python app
-  keeps shipping until a successor reaches parity.
+- [ ] **UI revamp / successor app — Tauri rewrite (major, in progress).** Rebuild as a **Tauri**
+  (Rust + web frontend) desktop app to fix the manual-header auth friction and get a modern UI.
+  Decision recorded in `dev-docs/FUTURE_DIRECTIONS.md` (Tauri chosen over Qt/Electron on a
+  best-product lens — chiefly macOS WKWebView being the most robust path through Google's
+  embedded-webview sign-in block, plus footprint and frontend ecosystem). Auth/`youtubei.js`
+  approach adaptable under JustAnotherMusicClient's Apache-2.0 license. **Phase 0 spike first**
+  (embedded WKWebView login + one real read/write — validates the riskiest assumption) in a
+  `desktop/` subfolder. Known risks: Spotify has no JS `spotapi` equivalent (re-port); some
+  `youtubei.js` write paths unproven; the whole embedded-login premise depends on evading Google's
+  block (Chrome extension is the immune fallback). The Python app keeps shipping until parity.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
