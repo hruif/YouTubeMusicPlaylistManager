@@ -73,12 +73,19 @@ export async function getLibraryPlaylists(): Promise<Array<{ id: string; title: 
   }));
 }
 
+// A music.youtube.com playlist URL has `list=VLPLxxxx` or `list=PLxxxx`; addVideos wants the bare
+// playlist id, so strip a leading browse-id "VL".
+function normalizePlaylistId(playlistId: string): string {
+  const id = playlistId.trim();
+  return id.startsWith("VL") ? id.slice(2) : id;
+}
+
 /** Write test — add a video to a playlist you own. */
 export async function addVideo(playlistId: string, videoId: string): Promise<void> {
-  await requireClient().playlist.addVideos(playlistId, [videoId]);
+  await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), [videoId.trim()]);
 }
 
 /** Cleanup for the write test. */
 export async function removeVideo(playlistId: string, videoId: string): Promise<void> {
-  await requireClient().playlist.removeVideos(playlistId, [videoId]);
+  await requireClient().playlist.removeVideos(normalizePlaylistId(playlistId), [videoId.trim()]);
 }

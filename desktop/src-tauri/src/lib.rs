@@ -239,6 +239,10 @@ async fn proxy_http_request(
         }
     }
     let body = response.bytes().await.map_err(|e| e.to_string())?;
+    if input.url.contains("/youtubei/v1/") {
+        let snippet: String = String::from_utf8_lossy(&body).chars().take(300).collect();
+        eprintln!("[proxy]   body: {}", snippet);
+    }
 
     Ok(ProxyHttpResponse {
         status,
