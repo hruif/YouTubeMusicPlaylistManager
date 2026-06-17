@@ -102,6 +102,13 @@ first: `pytest -q`.
       playlists you own."
 - [ ] **Stale session:** with expired/logged-out headers, an edit **prompts to refresh headers**
       (not a silent no-op), and Test Saved Headers **fails** rather than falsely reporting "worked."
+- [ ] **Pre-flight session check (no startup popup):** with expired headers, clicking "Play in
+      YouTube Music" or "Create Playlist" prompts to refresh **immediately** (a quick check up
+      front) instead of building for several seconds and then failing. Launch itself shows no popup.
+- [ ] **Ownership awareness:** with a valid signed-in session, a playlist you DON'T own shows
+      "Owned by you: No" in its Details, its "Remove repeated songs" is disabled, and it doesn't
+      appear as an "Add to playlist" target. A playlist you own shows "Owned by you: Yes" and is
+      fully editable. (Ownership is detected shortly after launch.)
 
 ## G. Custom names, export, removed-songs archive (local; no account)
 

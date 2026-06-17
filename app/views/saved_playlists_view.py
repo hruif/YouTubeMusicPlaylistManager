@@ -195,10 +195,13 @@ def build(controller, parent):
             )
         menu.add_command(label="Export…", command=lambda key=playlist_key: controller.export_playlist(key))
         if source == "youtube":
-            menu.add_command(
-                label="Remove repeated songs",
-                command=lambda key=playlist_key: controller.remove_playlist_repeats(key),
-            )
+            if controller._is_playlist_editable(playlist_key):
+                menu.add_command(
+                    label="Remove repeated songs",
+                    command=lambda key=playlist_key: controller.remove_playlist_repeats(key),
+                )
+            else:
+                menu.add_command(label="Remove repeated songs (not your playlist)", state=tk.DISABLED)
         menu.add_separator()
         menu.add_command(label="Delete", command=delete_selected_playlists)
         try:
@@ -255,7 +258,7 @@ def show_details(controller, playlist_key, on_change=None):
     if playlist_url:
         actions.append(("Open", lambda: controller._open_external_url(playlist_url)))
     actions.append(("Export…", lambda: controller.export_playlist(playlist_key)))
-    if source == "youtube":
+    if source == "youtube" and controller._is_playlist_editable(playlist_key):
         actions.append((
             "Remove repeated songs",
             lambda: controller.remove_playlist_repeats(playlist_key, on_done=reopen_with_fresh_counts),
@@ -268,6 +271,10 @@ def show_details(controller, playlist_key, on_change=None):
     row = controller._add_info_section(content_frame, "General", row)
     row = controller._add_info_row(content_frame, row, "Name", playlist_name)
     row = controller._add_info_row(content_frame, row, "Source", source_name)
+    if source == "youtube":
+        owned = pl_data.get("owned")
+        owned_text = "Yes" if owned is True else ("No — not your account's playlist" if owned is False else "Unknown")
+        row = controller._add_info_row(content_frame, row, "Owned by you", owned_text)
     row = controller._add_info_row(content_frame, row, "Playlist ID", playlist_id)
     row = controller._add_info_row(content_frame, row, "Storage Key", playlist_key)
     row = controller._add_info_row(

@@ -42,6 +42,23 @@ for architecture/layout.
   - **Live count refresh.** After any edit, just the affected playlist's sidebar "(N songs)"
     label is updated in place (`_update_playlist_count_labels`) — no list rebuild, so no flicker
     or scroll reset; the Saved Playlists list / Details refresh too.
+- **Session health + playlist ownership awareness.**
+  - **Pre-flight session check (before the work).** Header-requiring *long* operations — "Play in
+    YouTube Music" (queue) and "Create Playlist" — verify the saved session is still signed in
+    (`_verify_session_then` → `session_is_authenticated`, on a worker thread) **before** starting,
+    so they don't grind for seconds and then fail at the end on expired headers; if expired, they
+    prompt to refresh up front. (No startup popup — the check happens at the point of action.)
+  - **Ownership marking (launch).** Shortly after launch (when queue headers exist), a background
+    check (`_check_queue_session_health`) learns which saved playlists you own via a single
+    `get_library_playlists` call, matched by normalized id (`_normalize_playlist_id` strips the
+    `VL` prefix). It's ownership-only and non-intrusive (no popup, doesn't flip the queue's auth
+    state). YouTube only lets you edit playlists you own, so edit surfaces that
+    require ownership now respect it — "Add to playlist" targets (single + bulk) drop playlists you
+    don't own, "Remove repeated songs" is disabled for them, and a playlist's Details shows an
+    "Owned by you" row. `_is_playlist_editable` blocks only on a *known* `owned == False` (unknown
+    ownership stays editable). Ownership is only marked from a real, non-empty library fetch, so a
+    failed/empty/stale fetch can't wrongly flag your own playlists. Covered by
+    `tests/test_ui_helpers.py`.
 - **Create a real playlist.** Make a new **permanent** YouTube Music playlist (PRIVATE) from a
   selection of **songs** (right-click → "New playlist from … song(s)…") or from the combined songs
   of **selected playlists** (sidebar "Create Playlist from Selected"). Prompts for a name, creates
@@ -132,14 +149,6 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **Mark / disable edit actions on non-owned playlists.** Capture each playlist's `owned`
-  flag on import/update and hide or grey out the editing actions ("Remove repeated songs",
-  add/remove songs) for playlists you don't own — so it's clear upfront which are editable,
-  rather than finding out via an error. (Editing uses `setVideoId`, which YouTube only returns
-  for playlists you own; see the ownership handling in `services/playlist_editor.py`.)
-- [ ] **Proactive stale-header detection.** Use `playlist_editor.session_is_authenticated` on
-  launch (or before showing edit actions) to detect an expired/logged-out session and prompt to
-  refresh headers *before* the user hits a failure, rather than only on the failing request.
 - [ ] **Broken / unavailable tracks report** — list still-listed-but-unplayable songs across
   selected playlists (the app already computes `queueStatus`). Complements the removed-songs
   archive, which covers songs *dropped* from a playlist.

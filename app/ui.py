@@ -141,6 +141,9 @@ class PlaylistManagerUI:
         self.playlist_editor = PlaylistEditor()
         self.youtube_queue_auth_error = None
         self.youtube_queue_headers_verified = False
+        # None = unknown; True/False = whether the saved session is signed in (set by the
+        # background launch check). Drives proactive "refresh headers" + ownership marking.
+        self.youtube_queue_session_ok = None
         self.authenticated_ytmusic = self._build_authenticated_ytmusic()
         self.browser_authenticated_ytmusic = self._build_browser_authenticated_ytmusic()
         self._configure_window_icon(self.root)
@@ -234,6 +237,7 @@ class PlaylistManagerUI:
             self.show_combined_songs_display([], live=True)
         self._schedule_initial_update_check()
         self._schedule_temporary_playlist_cleanup_prompt()
+        self._schedule_queue_session_check()
 
     def _on_close(self):
         if self._closing:
@@ -608,6 +612,61 @@ class PlaylistManagerUI:
         if self.youtube_account.browser_auth_file.exists():
             return "Saved browser headers invalid, refresh needed"
         return "Not configured"
+
+    def _schedule_queue_session_check(self):
+        """If queue headers exist, check in the background whether the saved session is still
+        signed in (Google rotates it ~hourly) and which saved playlists you own — so edits can
+        prompt to refresh proactively and grey out playlists you can't edit."""
+        if not self.youtube_account.has_browser_auth():
+            return
+        # Kick off right after the first paint. The work itself runs on a background thread,
+        # so it never blocks the UI; completion is bounded only by network latency.
+        self.root.after(100, self._check_queue_session_health)
+
+    def _check_queue_session_health(self):
+        def worker():
+            try:
+                client = self.youtube_account.build_browser_authenticated_client()
+            except Exception:
+                return
+            signed_in = playlist_editor.session_is_authenticated(client)
+            owned_ids = None
+            if signed_in:
+                try:
+                    library = client.get_library_playlists(limit=None)
+                    owned_ids = {
+                        self._normalize_playlist_id(item.get('playlistId'))
+                        for item in (library or [])
+                        if isinstance(item, dict) and item.get('playlistId')
+                    }
+                except Exception:
+                    owned_ids = None
+            self.root.after(0, lambda: self._apply_queue_session_health(signed_in, owned_ids))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_queue_session_health(self, signed_in, owned_ids):
+        # Launch check is for ownership marking only — it does not surface a popup or flip the
+        # queue's auth state (operations do their own fresh pre-flight check via
+        # _verify_session_then). Only mark ownership from a real, non-empty library, so a
+        # failed/empty/stale fetch can't wrongly flag your own playlists as not-owned.
+        self.youtube_queue_session_ok = signed_in
+        if not signed_in or not owned_ids:
+            return
+        for pl_data in self.saved_playlists.values():
+            if isinstance(pl_data, dict) and pl_data.get('source', 'youtube') == 'youtube' and pl_data.get('id'):
+                pl_data['owned'] = self._normalize_playlist_id(pl_data['id']) in owned_ids
+
+    @staticmethod
+    def _normalize_playlist_id(playlist_id):
+        playlist_id = str(playlist_id or "")
+        return playlist_id[2:] if playlist_id.startswith("VL") else playlist_id
+
+    def _is_playlist_editable(self, playlist_key):
+        """True unless we positively know you don't own the playlist (owned == False).
+        Unknown ownership (None) stays editable — the edit itself surfaces a clear error."""
+        pl_data = self.saved_playlists.get(playlist_key) or {}
+        return pl_data.get('owned') is not False
 
     def _schedule_initial_update_check(self):
         if os.environ.get(self.DISABLE_UPDATE_CHECK_ENV_VAR, "").lower() in {"1", "true", "yes", "on"}:
@@ -1309,7 +1368,9 @@ class PlaylistManagerUI:
     def _youtube_targets_for_adding(self, video_id):
         if not video_id:
             return []
-        return playlist_editor.addable_target_playlists(self.saved_playlists, video_id)
+        targets = playlist_editor.addable_target_playlists(self.saved_playlists, video_id)
+        # You can only add to playlists you own, so drop ones known to be not-yours.
+        return [target for target in targets if self._is_playlist_editable(target['key'])]
 
     def _account_write_client_or_prompt(self):
         """Return the browser-auth client, or None after pointing the user at the
@@ -1322,6 +1383,38 @@ class PlaylistManagerUI:
             )
             self.show_youtube_music_browser_auth_display()
         return client
+
+    def _verify_session_then(self, proceed):
+        """Fast pre-flight: confirm the saved session is actually signed in *before* running a
+        header-requiring operation, so long operations (queue, create playlist) don't grind for
+        seconds only to fail at the end. Runs the check on a worker thread; on success calls
+        `proceed()`, otherwise prompts to refresh headers."""
+        client = self._youtube_music_queue_client()
+        if client is None:
+            messagebox.showerror(
+                "YouTube Music",
+                "The saved YouTube Music headers could not be loaded. Set or refresh them in Settings."
+            )
+            self.show_youtube_music_browser_auth_display()
+            return
+
+        def worker():
+            try:
+                signed_in = playlist_editor.session_is_authenticated(client)
+            except Exception:
+                signed_in = False
+            self.root.after(0, lambda: _resume(signed_in))
+
+        def _resume(signed_in):
+            self.youtube_queue_session_ok = signed_in
+            if signed_in:
+                proceed()
+            else:
+                self._prompt_browser_auth_refresh(
+                    "the saved YouTube Music session is not signed in (the headers expired)."
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _begin_account_edit(self, edit_key):
         """Guard against duplicate concurrent edits (fast double-clicks / repeated menu
@@ -1683,10 +1776,11 @@ class PlaylistManagerUI:
             return
         name = name.strip()
 
-        client = self._account_write_client_or_prompt()
-        if client is None:
-            return
+        # Verify the session up front so a long create doesn't grind, then fail at the end.
+        self._verify_session_then(lambda: self._create_playlist_now(items, name, on_done))
 
+    def _create_playlist_now(self, items, name, on_done):
+        client = self._youtube_music_queue_client()
         video_ids = [video_id for video_id, _ in items]
 
         progress_window = tk.Toplevel(self.root)
@@ -1892,7 +1986,8 @@ class PlaylistManagerUI:
     def _youtube_playlists_for_bulk_add(self):
         items = []
         for key, pl_data in self.saved_playlists.items():
-            if isinstance(pl_data, dict) and pl_data.get('source', 'youtube') == 'youtube' and pl_data.get('id'):
+            if (isinstance(pl_data, dict) and pl_data.get('source', 'youtube') == 'youtube'
+                    and pl_data.get('id') and self._is_playlist_editable(key)):
                 items.append({'key': key, 'id': pl_data['id'], 'name': pl_data.get('name') or 'Unnamed Playlist'})
         items.sort(key=lambda item: item['name'].lower())
         return items
@@ -2675,7 +2770,7 @@ class PlaylistManagerUI:
             if not should_continue:
                 return
 
-        if not self._is_youtube_music_queue_connected():
+        if not self.youtube_account.has_browser_auth():
             should_connect = messagebox.askyesno(
                 "Set Queue Headers",
                 (
@@ -2687,7 +2782,9 @@ class PlaylistManagerUI:
                 self.show_youtube_music_browser_auth_display()
             return
 
-        self._create_temporary_youtube_music_playlist(youtube_playlists)
+        # Verify the session is still signed in up front, so we don't spend seconds building a
+        # queue only to fail at the end on expired headers.
+        self._verify_session_then(lambda: self._create_temporary_youtube_music_playlist(youtube_playlists))
 
     def _create_temporary_youtube_music_playlist(self, youtube_playlists):
         client = self._youtube_music_queue_client()

@@ -984,3 +984,57 @@ def test_sorted_playlist_items_orders_by_name_then_source():
         'youtube:PL1',
         'youtube:PL2'
     ]
+
+
+def test_normalize_playlist_id_strips_vl_prefix():
+    assert PlaylistManagerUI._normalize_playlist_id("VLPL123") == "PL123"
+    assert PlaylistManagerUI._normalize_playlist_id("PL123") == "PL123"
+    assert PlaylistManagerUI._normalize_playlist_id(None) == ""
+
+
+def test_is_playlist_editable_only_blocks_known_not_owned():
+    manager = make_manager()
+    manager.saved_playlists = {
+        "youtube:owned": {"source": "youtube", "id": "PLowned", "owned": True},
+        "youtube:notmine": {"source": "youtube", "id": "PLother", "owned": False},
+        "youtube:unknown": {"source": "youtube", "id": "PLx"},
+    }
+    assert manager._is_playlist_editable("youtube:owned") is True
+    assert manager._is_playlist_editable("youtube:notmine") is False
+    assert manager._is_playlist_editable("youtube:unknown") is True  # unknown stays editable
+    assert manager._is_playlist_editable("missing") is True
+
+
+def test_apply_queue_session_health_marks_ownership_from_library():
+    manager = make_manager()
+    manager.youtube_queue_session_ok = None
+    manager.saved_playlists = {
+        "youtube:a": {"source": "youtube", "id": "PLmine"},
+        "youtube:b": {"source": "youtube", "id": "VLPLtheirs"},  # not in library -> not owned
+        "spotify:c": {"source": "spotify", "id": "sp"},          # untouched
+    }
+    manager._apply_queue_session_health(True, {"PLmine"})
+    assert manager.youtube_queue_session_ok is True
+    assert manager.youtube_queue_auth_error is None
+    assert manager.saved_playlists["youtube:a"]["owned"] is True
+    assert manager.saved_playlists["youtube:b"]["owned"] is False
+    assert "owned" not in manager.saved_playlists["spotify:c"]
+
+
+def test_apply_queue_session_health_stale_records_state_without_marking_or_popup():
+    manager = make_manager()
+    manager.youtube_queue_session_ok = None
+    manager.saved_playlists = {"youtube:a": {"source": "youtube", "id": "PLmine"}}
+    manager._apply_queue_session_health(False, None)
+    assert manager.youtube_queue_session_ok is False
+    # The launch check stays non-intrusive: it does not flip the queue auth error.
+    assert manager.youtube_queue_auth_error is None
+    assert "owned" not in manager.saved_playlists["youtube:a"]
+
+
+def test_apply_queue_session_health_empty_library_does_not_mark():
+    manager = make_manager()
+    manager.youtube_queue_session_ok = None
+    manager.saved_playlists = {"youtube:a": {"source": "youtube", "id": "PLmine"}}
+    manager._apply_queue_session_health(True, set())
+    assert "owned" not in manager.saved_playlists["youtube:a"]  # empty/failed library -> don't flag
