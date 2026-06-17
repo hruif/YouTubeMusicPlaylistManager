@@ -130,6 +130,9 @@ class PlaylistManagerUI:
         self.source_logo_images = self._build_source_logo_images()
         self.sidebar_playlist_vars = []
         self.display_playlist_vars = []
+        # {playlist_key: text-widget} for in-place "(N songs)" label updates after an edit.
+        self.sidebar_playlist_labels = {}
+        self.display_playlist_labels = {}
         self.active_find_entry = None
         self.current_display_view = 'empty'
         self.update_checker = UpdateChecker()
@@ -1328,7 +1331,7 @@ class PlaylistManagerUI:
         inflight.add(edit_key)
         return True
 
-    def _run_account_edit(self, work, revert, error_title, edit_key):
+    def _run_account_edit(self, work, revert, error_title, edit_key, playlist_key=None):
         """Run an optimistic account write on a worker thread. The caller has already
         applied the change locally, so success just persists it silently; failure reverts
         the local change and surfaces the error (auth-like ones via the refresh prompt).
@@ -1337,7 +1340,7 @@ class PlaylistManagerUI:
             self._inflight_account_edits.discard(edit_key)
             if error is not None:
                 revert()
-                self._refresh_after_playlist_edit()
+                self._refresh_after_playlist_edit(playlist_key)
             self.save_playlists()
             if error is not None:
                 if self._is_browser_auth_refresh_error(error):
@@ -1417,7 +1420,7 @@ class PlaylistManagerUI:
             if count:
                 playlist_editor.dedupe_local_tracks(pl_data)
                 self.save_playlists()
-                self._refresh_after_playlist_edit()
+                self._refresh_after_playlist_edit(playlist_key)
                 if on_done:
                     on_done()
                 messagebox.showinfo(
@@ -1434,9 +1437,30 @@ class PlaylistManagerUI:
             edit_key,
         )
 
-    def _refresh_after_playlist_edit(self):
-        # Song membership changed but the set of playlists did not, so refresh the views
-        # that show song/track counts (rebuilding the sidebar would reset its selection).
+    def _update_playlist_count_labels(self, playlist_key):
+        """Update just the edited playlist's "(N songs)" label in the sidebar / picker, in
+        place — no list rebuild, so no flicker or scroll reset."""
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            return
+        count = len(pl_data.get('tracks') or pl_data.get('videos', set()))
+        text = f"{pl_data.get('name', f'Playlist {playlist_key}')} ({count} songs)"
+        for labels in (self.sidebar_playlist_labels, self.display_playlist_labels):
+            widget = labels.get(playlist_key) if labels else None
+            if widget is None:
+                continue
+            try:
+                if widget.winfo_exists():
+                    widget.configure(text=text)
+            except tk.TclError:
+                pass
+
+    def _refresh_after_playlist_edit(self, playlist_key=None):
+        # A playlist's song count changed (but the set of playlists didn't). Update just that
+        # playlist's "(N songs)" label in place, then refresh the active song / saved-playlist
+        # list. (No sidebar rebuild → no flicker / scroll reset.)
+        if playlist_key:
+            self._update_playlist_count_labels(playlist_key)
         self._refresh_live_combined_if_active()
         if getattr(self, 'current_display_view', None) == 'playlists':
             refresh = getattr(self, '_active_saved_playlists_refresh', None)
@@ -1461,7 +1485,7 @@ class PlaylistManagerUI:
 
         # Optimistic: reflect the add immediately, then confirm in the background.
         playlist_editor.apply_local_add(pl_data, track, video_id)
-        self._refresh_after_playlist_edit()
+        self._refresh_after_playlist_edit(target_playlist_key)
         if on_done:
             on_done()
 
@@ -1470,6 +1494,7 @@ class PlaylistManagerUI:
             lambda: playlist_editor.apply_local_remove(pl_data, video_id),
             "Add Song",
             edit_key,
+            playlist_key=target_playlist_key,
         )
 
     def remove_song_from_playlist(self, track, playlist_key, on_done=None):
@@ -1504,7 +1529,7 @@ class PlaylistManagerUI:
         # Optimistic: drop it from the list now; restore it on failure.
         original_track = dict(track or {})
         playlist_editor.apply_local_remove(pl_data, video_id)
-        self._refresh_after_playlist_edit()
+        self._refresh_after_playlist_edit(playlist_key)
         if on_done:
             on_done()
 
@@ -1513,6 +1538,7 @@ class PlaylistManagerUI:
             lambda: playlist_editor.apply_local_add(pl_data, original_track, video_id),
             "Remove Song",
             edit_key,
+            playlist_key=playlist_key,
         )
 
     def _show_song_context_menu(self, event, tree, entry_by_item):
@@ -1861,10 +1887,12 @@ class PlaylistManagerUI:
         for child in self.playlist_selector_container.winfo_children():
             child.destroy()
 
+        self.sidebar_playlist_labels = {}
         self.sidebar_playlist_vars = self._build_playlist_checkbox_selector(
             self.playlist_selector_container,
             on_change=self._on_sidebar_playlist_changed,
-            selected_keys=selected_keys
+            selected_keys=selected_keys,
+            labels_out=self.sidebar_playlist_labels,
         )
 
     def refresh_playlist_selectors(self, selected_keys=None):
@@ -2914,10 +2942,11 @@ class PlaylistManagerUI:
     def _selected_playlist_keys(self, playlist_vars):
         return [playlist_key for playlist_key, selected_var in playlist_vars if selected_var.get()]
 
-    def _build_playlist_checkbox_selector(self, parent, on_change=None, selected_keys=None, highlight_selected=False):
+    def _build_playlist_checkbox_selector(self, parent, on_change=None, selected_keys=None,
+                                          highlight_selected=False, labels_out=None):
         return playlist_checkbox_selector.build(
             self, parent, on_change=on_change, selected_keys=selected_keys,
-            highlight_selected=highlight_selected,
+            highlight_selected=highlight_selected, labels_out=labels_out,
         )
 
     def _find_duplicate_entries(self, playlist_keys):

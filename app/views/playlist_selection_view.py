@@ -28,10 +28,12 @@ def build(controller, selected_keys=None):
 
     selector_frame = ttk.LabelFrame(controller.display_frame, text="Playlists", padding=(8, 6))
     selector_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+    controller.display_playlist_labels = {}
     controller.display_playlist_vars = controller._build_playlist_checkbox_selector(
         selector_frame,
         selected_keys=selected_keys,
         highlight_selected=True,
+        labels_out=controller.display_playlist_labels,
     )
 
     action_frame = ttk.Frame(controller.display_frame)

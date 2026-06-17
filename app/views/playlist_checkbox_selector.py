@@ -25,7 +25,9 @@ def _subtle_highlight(widget, base_color):
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def build(controller, parent, on_change=None, selected_keys=None, highlight_selected=False):
+def build(controller, parent, on_change=None, selected_keys=None, highlight_selected=False, labels_out=None):
+    # labels_out (optional dict) is filled with {playlist_key: text-widget} so callers can
+    # update a single row's "(N songs)" label in place instead of rebuilding the whole list.
     list_frame = ttk.Frame(parent)
     list_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
@@ -120,6 +122,8 @@ def build(controller, parent, on_change=None, selected_keys=None, highlight_sele
                 command=on_change,
             )
             checkbutton.grid(row=0, column=1, sticky=tk.W)
+            if labels_out is not None:
+                labels_out[playlist_key] = checkbutton
             for widget in (row_frame, badge, checkbutton):
                 bind_mousewheel(widget)
             continue
@@ -138,6 +142,8 @@ def build(controller, parent, on_change=None, selected_keys=None, highlight_sele
         badge.grid(row=0, column=1, padx=(0, 6), sticky=tk.W)
         name_label = tk.Label(row_frame, text=f"{playlist_name} ({song_count} songs)", anchor=tk.W)
         name_label.grid(row=0, column=2, sticky=(tk.W, tk.E))
+        if labels_out is not None:
+            labels_out[playlist_key] = name_label
 
         row_widgets = (row_frame, check_label, badge, name_label)
 
