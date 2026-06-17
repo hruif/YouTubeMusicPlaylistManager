@@ -36,6 +36,35 @@ class PlaylistEditor:
             raise RuntimeError(_describe_failure("remove the song", response))
         return response
 
+    def add_songs(self, client, playlist_id, video_ids):
+        """Add several songs to a playlist in one request. Caller pre-filters to songs not
+        already present. Returns the count added. Raises on failure."""
+        video_ids = list(dict.fromkeys(vid for vid in video_ids if vid))  # dedupe, keep order
+        if not video_ids:
+            return 0
+        response = client.add_playlist_items(playlist_id, videoIds=video_ids, duplicates=False)
+        if not _response_succeeded(response):
+            raise RuntimeError(_describe_failure("add the songs", response))
+        return len(video_ids)
+
+    def remove_songs(self, client, playlist_id, video_ids):
+        """Remove every occurrence of each of `video_ids` from a playlist in one request.
+        Returns the count of playlist items removed. Raises on failure."""
+        playlist = client.get_playlist(playlist_id, limit=None)
+        _require_editable(playlist, client)
+        wanted = {vid for vid in video_ids if vid}
+        items = [
+            {"videoId": track["videoId"], "setVideoId": track["setVideoId"]}
+            for track in (playlist.get("tracks") or [])
+            if isinstance(track, dict) and track.get("videoId") in wanted and track.get("setVideoId")
+        ]
+        if not items:
+            return 0
+        response = client.remove_playlist_items(playlist_id, items)
+        if not _response_succeeded(response):
+            raise RuntimeError(_describe_failure("remove the songs", response))
+        return len(items)
+
     def remove_repeats(self, client, playlist_id):
         """Remove the extra copies of any song listed more than once in this playlist,
         keeping the first occurrence. Returns the number removed (0 if none). Raises on

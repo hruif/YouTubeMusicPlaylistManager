@@ -97,6 +97,41 @@ def test_dedupe_local_tracks_keeps_first_per_id():
     assert [t.get("videoId") or t.get("title") for t in pl["tracks"]] == ["A", "B", "no id keeps"]
 
 
+def test_add_songs_dedupes_and_calls_once():
+    client = FakeClient()
+    n = PlaylistEditor().add_songs(client, "PL1", ["A", "B", "A", "", None, "C"])
+    assert n == 3
+    assert client.added == ("PL1", ["A", "B", "C"], False)
+
+
+def test_add_songs_empty_is_noop():
+    client = FakeClient()
+    assert PlaylistEditor().add_songs(client, "PL1", []) == 0
+    assert client.added is None
+
+
+def test_remove_songs_collects_all_matching_set_video_ids():
+    client = FakeClient(playlist={"tracks": [
+        {"videoId": "A", "setVideoId": "a1"},
+        {"videoId": "B", "setVideoId": "b1"},
+        {"videoId": "A", "setVideoId": "a2"},   # A appears twice -> both removed
+        {"videoId": "C", "setVideoId": "c1"},   # not requested -> kept
+    ]})
+    n = PlaylistEditor().remove_songs(client, "PL1", ["A", "B"])
+    assert n == 3
+    assert client.removed == ("PL1", [
+        {"videoId": "A", "setVideoId": "a1"},
+        {"videoId": "B", "setVideoId": "b1"},
+        {"videoId": "A", "setVideoId": "a2"},
+    ])
+
+
+def test_remove_songs_noop_when_none_present():
+    client = FakeClient(playlist={"tracks": [{"videoId": "Z", "setVideoId": "z1"}]})
+    assert PlaylistEditor().remove_songs(client, "PL1", ["A", "B"]) == 0
+    assert client.removed is None
+
+
 def test_remove_repeats_removes_extras_and_returns_count():
     client = FakeClient(playlist={"tracks": [
         {"videoId": "A", "setVideoId": "a1"},

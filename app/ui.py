@@ -1541,22 +1541,145 @@ class PlaylistManagerUI:
             playlist_key=playlist_key,
         )
 
+    def add_songs_to_playlist(self, tracks, target_playlist_key, on_done=None):
+        """Bulk add: add the selected songs to one playlist (skipping any already in it)."""
+        pl_data = self.saved_playlists.get(target_playlist_key)
+        if not pl_data:
+            messagebox.showerror("Add Songs", "Could not determine the target playlist.")
+            return
+
+        to_add = []
+        seen = set()
+        for track in tracks:
+            video_id = (track or {}).get('videoId') or (track or {}).get('id')
+            if not video_id or video_id in seen:
+                continue
+            if playlist_editor.playlist_contains_video(pl_data, video_id):
+                continue
+            seen.add(video_id)
+            to_add.append((track, video_id))
+
+        playlist_name = pl_data.get('name', 'the playlist')
+        if not to_add:
+            messagebox.showinfo("Add Songs", f"All selected songs are already in {playlist_name}.")
+            return
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        playlist_id = pl_data.get('id')
+        edit_key = ('bulk_add', playlist_id)
+        if not self._begin_account_edit(edit_key):
+            return
+
+        video_ids = [video_id for _, video_id in to_add]
+        for track, video_id in to_add:
+            playlist_editor.apply_local_add(pl_data, track, video_id)
+        self._refresh_after_playlist_edit(target_playlist_key)
+        if on_done:
+            on_done()
+
+        def revert():
+            for _, video_id in to_add:
+                playlist_editor.apply_local_remove(pl_data, video_id)
+
+        self._run_account_edit(
+            lambda: self.playlist_editor.add_songs(client, playlist_id, video_ids),
+            revert,
+            "Add Songs",
+            edit_key,
+            playlist_key=target_playlist_key,
+        )
+
+    def remove_songs_from_playlist(self, tracks, playlist_key, on_done=None):
+        """Bulk remove: delete the selected songs that are in one playlist (confirms first)."""
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showerror("Remove Songs", "Could not determine the playlist.")
+            return
+
+        in_playlist = []
+        seen = set()
+        for track in tracks:
+            video_id = (track or {}).get('videoId') or (track or {}).get('id')
+            if not video_id or video_id in seen:
+                continue
+            if playlist_editor.playlist_contains_video(pl_data, video_id):
+                seen.add(video_id)
+                in_playlist.append((dict(track or {}), video_id))
+
+        playlist_name = pl_data.get('name', 'the playlist')
+        if not in_playlist:
+            messagebox.showinfo("Remove Songs", f"None of the selected songs are in {playlist_name}.")
+            return
+
+        count = len(in_playlist)
+        confirm = messagebox.askyesno(
+            "Remove Songs",
+            (
+                f'Remove {count} song{"" if count == 1 else "s"} from "{playlist_name}" on YouTube Music?\n\n'
+                "This deletes them from the real playlist on your account, not just the local copy."
+            ),
+            parent=self.root,
+        )
+        if not confirm:
+            return
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        playlist_id = pl_data.get('id')
+        edit_key = ('bulk_remove', playlist_id)
+        if not self._begin_account_edit(edit_key):
+            return
+
+        video_ids = [video_id for _, video_id in in_playlist]
+        for _, video_id in in_playlist:
+            playlist_editor.apply_local_remove(pl_data, video_id)
+        self._refresh_after_playlist_edit(playlist_key)
+        if on_done:
+            on_done()
+
+        def revert():
+            for track, video_id in in_playlist:
+                playlist_editor.apply_local_add(pl_data, track, video_id)
+
+        self._run_account_edit(
+            lambda: self.playlist_editor.remove_songs(client, playlist_id, video_ids),
+            revert,
+            "Remove Songs",
+            edit_key,
+            playlist_key=playlist_key,
+        )
+
     def _show_song_context_menu(self, event, tree, entry_by_item):
         row_id = tree.identify_row(event.y)
         if not row_id:
             return
-        tree.selection_set(row_id)
-        entry = entry_by_item.get(row_id)
-        if not entry:
+        # Keep an existing multi-selection if the right-clicked row is part of it; otherwise
+        # select just the clicked row.
+        if row_id not in tree.selection():
+            tree.selection_set(row_id)
+        entries = [entry_by_item[item] for item in tree.selection() if item in entry_by_item]
+        if not entries:
             return
-        menu = self._build_song_context_menu(entry)
+        menu = self._build_song_context_menu(entries)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
 
-    def _build_song_context_menu(self, entry):
+    def _build_song_context_menu(self, entries):
         menu = tk.Menu(self.root, tearoff=0)
+        if len(entries) == 1:
+            self._build_single_song_menu(menu, entries[0])
+        else:
+            self._build_bulk_song_menu(menu, entries)
+        return menu
+
+    def _build_single_song_menu(self, menu, entry):
         video_id = self._entry_youtube_video_id(entry)
         track = self._entry_youtube_track(entry)
 
@@ -1591,7 +1714,63 @@ class PlaylistManagerUI:
         menu.add_command(label="Set custom name…", command=lambda: self.prompt_set_custom_name(entry))
         menu.add_command(label="Song details", command=lambda: self.show_song_details_window(entry))
         menu.add_command(label="Play", command=lambda: self._play_entry(entry))
-        return menu
+
+    def _build_bulk_song_menu(self, menu, entries):
+        youtube_entries = [entry for entry in entries if self._entry_youtube_video_id(entry)]
+        tracks = [self._entry_youtube_track(entry) for entry in youtube_entries]
+        count = len(youtube_entries)
+        plural = "" if count == 1 else "s"
+
+        add_menu = tk.Menu(menu, tearoff=0)
+        add_targets = self._youtube_playlists_for_bulk_add()
+        if count and add_targets:
+            for target in add_targets:
+                add_menu.add_command(
+                    label=target['name'],
+                    command=lambda key=target['key']: self.add_songs_to_playlist(tracks, key),
+                )
+        else:
+            add_menu.add_command(label="(no YouTube playlists)", state=tk.DISABLED)
+        menu.add_cascade(label=f"Add {count} song{plural} to playlist", menu=add_menu,
+                         state=tk.NORMAL if (count and add_targets) else tk.DISABLED)
+
+        remove_menu = tk.Menu(menu, tearoff=0)
+        remove_targets = self._youtube_playlists_containing_any(youtube_entries)
+        if remove_targets:
+            for target in remove_targets:
+                remove_menu.add_command(
+                    label=target['label'],
+                    command=lambda key=target['playlist_key']: self.remove_songs_from_playlist(tracks, key),
+                )
+        else:
+            remove_menu.add_command(label="(not in a YouTube playlist)", state=tk.DISABLED)
+        menu.add_cascade(label=f"Remove {count} song{plural} from playlist", menu=remove_menu,
+                         state=tk.NORMAL if remove_targets else tk.DISABLED)
+
+        skipped = len(entries) - count
+        if skipped:
+            menu.add_separator()
+            menu.add_command(
+                label=f"({skipped} non-YouTube song{'' if skipped == 1 else 's'} will be skipped)",
+                state=tk.DISABLED,
+            )
+
+    def _youtube_playlists_for_bulk_add(self):
+        items = []
+        for key, pl_data in self.saved_playlists.items():
+            if isinstance(pl_data, dict) and pl_data.get('source', 'youtube') == 'youtube' and pl_data.get('id'):
+                items.append({'key': key, 'id': pl_data['id'], 'name': pl_data.get('name') or 'Unnamed Playlist'})
+        items.sort(key=lambda item: item['name'].lower())
+        return items
+
+    def _youtube_playlists_containing_any(self, entries):
+        seen = {}
+        for entry in entries:
+            for appearance in self._youtube_appearances(entry):
+                key = appearance['playlist_key']
+                if key not in seen:
+                    seen[key] = {'playlist_key': key, 'label': appearance['label']}
+        return sorted(seen.values(), key=lambda item: item['label'].lower())
 
     def _add_song_to_playlist_row(self, parent, row, track, targets, details_window):
         """A 'Add to playlist: [dropdown] [Add]' row for the Details window."""

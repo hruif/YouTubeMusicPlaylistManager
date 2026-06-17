@@ -25,13 +25,16 @@ first: `pytest -q`.
 - [ ] The app opens to the "View Songs" view, and "View Songs" is the primary sidebar button.
 - [ ] Add a public YouTube playlist by URL; songs load and persist after restart.
 - [ ] Add a public Spotify playlist by URL (requires `spotapi`).
-- [ ] Search returns songs from saved playlists with playlist occurrences.
+- [ ] The in-list Search box (View Songs / duplicates / saved playlists) filters rows as you
+      type; Ctrl/⌘+F focuses it. (There is no separate global Search screen.)
 - [ ] View Songs: selecting/deselecting playlists updates the table live; sorting works;
       duplicate rows merge; details open.
 - [ ] The Playlists column is compact by default, can be widened by dragging its edge, and a
       song's Details window shows the full playlist list.
-- [ ] Find Duplicates in Selection works.
-- [ ] Update Selected Playlists refreshes only the selected playlists.
+- [ ] Find Duplicates in Selection works (songs across the *selected* playlists — distinct from
+      the per-playlist "Remove repeated songs" action in section F).
+- [ ] Update Selected Playlists refreshes only the selected playlists, and its progress window
+      renders normally (title / status / bar / Cancel laid out horizontally, not as vertical text).
 
 ## B. Temporary-playlist lifecycle (release build)
 
@@ -74,6 +77,40 @@ first: `pytest -q`.
 - [ ] A song that appears in two selected playlists is added once (not reported as skipped).
 - [ ] The "Skipped N songs" message (when present) includes a reason summary.
 - [ ] Invalid / expired headers → creation fails with a prompt to refresh headers.
+
+## F. Editing your YouTube playlists (account writes)
+
+> Needs fresh queue headers (Settings > Set Queue Headers) **and a playlist you own** — editing
+> uses `setVideoId`, which YouTube only returns for your own playlists. Optimistic UI: changes
+> show immediately and persist on success; only the Remove confirmation and errors pop up.
+
+- [ ] **Add a song:** right-click a song in View Songs → "Add to playlist" → pick one. The song
+      appears on music.youtube.com, and the target playlist's "(N songs)" in the left sidebar
+      updates immediately (no flicker, no scroll reset, selection preserved).
+- [ ] **Remove a song:** open a song's Details → "In playlist" → Remove (confirms first). Removed
+      on YouTube; counts update live.
+- [ ] The same add/remove right-click menu works in the **duplicates** list.
+- [ ] **Remove repeated songs:** on an owned playlist with a song listed twice, right-click it (or
+      use its Details) → "Remove repeated songs" → keeps one, reports "Removed N…", and the Cached
+      Tracks / sidebar counts update live; the Details window reopens with fresh counts.
+- [ ] **Bulk:** select several songs (shift / ⌘-click) → right-click → "Add N songs to playlist"
+      / "Remove N songs from playlist" → the batch is applied in one go.
+- [ ] **Not-owned playlist:** an edit on a playlist you don't own says "you can only edit
+      playlists you own."
+- [ ] **Stale session:** with expired/logged-out headers, an edit **prompts to refresh headers**
+      (not a silent no-op), and Test Saved Headers **fails** rather than falsely reporting "worked."
+
+## G. Custom names, export, removed-songs archive (local; no account)
+
+- [ ] **Custom name:** right-click a song (or use Details) → set one. It shows in the Custom Name
+      column and the Search box matches it; the real title stays in Details.
+- [ ] Settings "Replace song titles with custom names in lists" swaps the alias for the title in
+      the lists and hides the Custom Name column.
+- [ ] **Export:** a playlist's Details (or right-click) → "Export…" writes a CSV of
+      title/artist/source/id.
+- [ ] **Removed-songs archive:** after Update Selected Playlists, any song removed from a playlist
+      shows in that playlist's Details under "Removed Songs" (title + artist + relative date), and
+      the update-complete dialog reports how many were saved.
 
 ## E. Regression check (embedded player removed)
 

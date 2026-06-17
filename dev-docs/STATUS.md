@@ -34,6 +34,14 @@ for architecture/layout.
     error (auth-expiry → `_prompt_browser_auth_refresh`). **No progress/success popups** — only the
     Remove confirmation and error dialogs. An in-flight guard (`_begin_account_edit`) blocks
     duplicate concurrent writes from fast double-clicks.
+  - **Bulk edits.** Multi-select songs (shift/⌘-click) in the song lists → right-click →
+    "Add N songs to playlist" / "Remove N songs from playlist" (the remove submenu lists the
+    playlists the selection actually appears in). Batched into a single `add_songs` /
+    `remove_songs` request, optimistic with revert; add skips songs already present, remove
+    confirms first. Non-YouTube songs in the selection are skipped (noted in the menu).
+  - **Live count refresh.** After any edit, just the affected playlist's sidebar "(N songs)"
+    label is updated in place (`_update_playlist_count_labels`) — no list rebuild, so no flicker
+    or scroll reset; the Saved Playlists list / Details refresh too.
 - **Remove repeated songs (within one playlist).** Per-playlist action (Saved Playlists
   right-click + that playlist's Details, YouTube only) that deletes the *extra* copies of any
   song listed more than once **in that single playlist**, keeping the first. Confirms first,
@@ -117,6 +125,21 @@ for architecture/layout.
 
 ## Backlog — to do
 
+- [ ] **Mark / disable edit actions on non-owned playlists.** Capture each playlist's `owned`
+  flag on import/update and hide or grey out the editing actions ("Remove repeated songs",
+  add/remove songs) for playlists you don't own — so it's clear upfront which are editable,
+  rather than finding out via an error. (Editing uses `setVideoId`, which YouTube only returns
+  for playlists you own; see the ownership handling in `services/playlist_editor.py`.)
+- [ ] **Proactive stale-header detection.** Use `playlist_editor.session_is_authenticated` on
+  launch (or before showing edit actions) to detect an expired/logged-out session and prompt to
+  refresh headers *before* the user hits a failure, rather than only on the failing request.
+- [ ] **Create / save a real playlist** from a selection (permanent, via `create_playlist` +
+  `add_playlist_items`; YouTube allows duplicate playlist names, so that's not a blocker).
+- [ ] **Broken / unavailable tracks report** — list still-listed-but-unplayable songs across
+  selected playlists (the app already computes `queueStatus`). Complements the removed-songs
+  archive, which covers songs *dropped* from a playlist.
+- [ ] **Spotify → YouTube transfer** — recreate a Spotify playlist on YouTube by matching tracks
+  (hard part: match accuracy). Relates to the Spotify-in-queue item below.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice).
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
   pursuing.** The only approach that actually removes the painful step (the DevTools dance)
