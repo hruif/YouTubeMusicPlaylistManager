@@ -3,7 +3,7 @@
 Living board of what's planned, in progress, and shipped. Update this file as part of any
 feature or bug change. See `CONTRIBUTING.md` for the debug-first → release workflow.
 
-_Last updated: 2026-06-16_
+_Last updated: 2026-06-17_
 
 ## In progress — debug-gated (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS`)
 
@@ -177,6 +177,12 @@ for architecture/layout.
 
 ## Backlog — to do
 
+- [ ] **Tauri rewrite (major, proposed).** Rebuild the app as a Tauri (Rust + React) desktop app
+  modelled on JustAnotherMusicClient, for a native-feeling UI **and** an auth model that doesn't
+  need manual header re-copying (embedded WKWebView login + `youtubei.js`, adaptable under their
+  Apache-2.0 license). Full investigation, parity target, risks (Spotify has no JS `spotapi`
+  equivalent; some `youtubei.js` write paths unproven), and a phased plan are in
+  `dev-docs/TAURI_REWRITE_PLAN.md`. The Python app keeps shipping until the rewrite reaches parity.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
