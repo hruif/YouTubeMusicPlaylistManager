@@ -189,8 +189,12 @@ for architecture/layout.
     stripped by WKWebView; `Origin` must be set or the SAPISIDHASH is ignored → `yt_li=0`;
     `SAPISID`/`__Secure-3PAPISID` aliasing) documented in `dev-docs/FUTURE_DIRECTIONS.md`. (Final
     manual confirm that a write lands on music.youtube.com still pending.)
-  - **Phase 1 — next:** read-only parity via the YT Music-specific library API (playlist names,
-    full list, private playlists) + the combined song view.
+  - **Phase 1 — read-only parity (largely done).** YT Music library API (names, full list, private
+    playlists); cache-driven (library cached as JSON in the app data dir — instant browsing, network
+    only on explicit "Update", concurrent + resilient fetch, pooled HTTP client); combined sortable
+    song view with per-song details; song search; hide unwanted playlists via a "Manage playlists"
+    panel. Deferred: optional background auto-update.
+  - **Phase 2 — next:** edits (add/remove/create/delete/remove-repeats) + ownership + optimistic UI.
   - Remaining risks: Spotify has no JS `spotapi` equivalent (re-port); the embedded-login premise
     depends on continuing to evade Google's block (Chrome extension is the immune fallback).
   The Python app keeps shipping until parity.
