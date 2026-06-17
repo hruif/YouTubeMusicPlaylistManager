@@ -1,5 +1,5 @@
 APP_NAME = "YouTube Music Playlist Manager"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 APP_BUNDLE_IDENTIFIER = "com.hruif.youtube-music-playlist-manager"
 APP_REPOSITORY = "hruif/YouTubeMusicPlaylistManager"
 APP_RELEASES_URL = f"https://github.com/{APP_REPOSITORY}/releases"

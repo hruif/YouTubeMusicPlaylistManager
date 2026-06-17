@@ -163,7 +163,7 @@ python tools/build_macos_app.py
 The script creates:
 
 - `dist/YouTube Music Playlist Manager.app`
-- `dist/YouTubeMusicPlaylistManager-0.5.0-macOS.zip`
+- `dist/YouTubeMusicPlaylistManager-0.6.0-macOS.zip`
 
 Attach the zip file to a GitHub Release so the built-in update checker can find it. The app bundle uses the bundled app icon and launches under the name "YouTube Music Playlist Manager" instead of "Python".
 
@@ -179,7 +179,7 @@ After pushing the workflow, open the repository on GitHub and set Pages to deplo
 https://hruif.github.io/YouTubeMusicPlaylistManager/
 ```
 
-The page links to GitHub Releases for downloads instead of storing app binaries in the repository. Upload `dist/YouTubeMusicPlaylistManager-0.5.0-macOS.zip` or the current versioned zip to a GitHub Release when you want users to download the app.
+The page links to GitHub Releases for downloads instead of storing app binaries in the repository. Upload `dist/YouTubeMusicPlaylistManager-0.6.0-macOS.zip` or the current versioned zip to a GitHub Release when you want users to download the app.
 
 ## Optional Spotify support
 
