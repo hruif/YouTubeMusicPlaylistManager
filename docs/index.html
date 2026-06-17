@@ -50,12 +50,17 @@
             <li>Download the latest macOS zip from GitHub Releases.</li>
             <li>Unzip it and move the app to your Applications folder.</li>
             <li>
-              The app isn't notarized by Apple, so macOS quarantines it on download. On first launch,
-              clear the quarantine flag in Terminal, then open it normally:
+              The app isn't notarized by Apple, so macOS blocks it on first launch. The simplest fix:
+              double-click the app once (it gets blocked), then open
+              <strong>System Settings → Privacy &amp; Security</strong>, scroll to the Security section,
+              and click <strong>Open Anyway</strong> next to "YouTube Music Playlist Manager."
+            </li>
+            <li>
+              Alternatively, clear the quarantine flag in Terminal, then open it normally:
               <br>
               <code>xattr -dr com.apple.quarantine "/Applications/YouTube Music Playlist Manager.app"</code>
               <br>
-              (On older macOS you can instead Control-click the app and choose <strong>Open</strong>.)
+              (On older macOS you can also Control-click the app and choose <strong>Open</strong>.)
             </li>
           </ol>
         </article>
