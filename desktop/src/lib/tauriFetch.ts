@@ -60,18 +60,32 @@ async function sha1Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function applyMusicCookieAuth(headers: Record<string, string>): Promise<void> {
-  if (headers["x-youtube-client-name"] !== "67") return;
-  const origin = "https://music.youtube.com";
-  const cookie = headers.cookie ?? headers.Cookie;
-  const sapisid =
-    getCookieValue(cookie, "SAPISID") ?? getCookieValue(cookie, "__Secure-3PAPISID");
-  if (sapisid) {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const hash = await sha1Hex(`${timestamp} ${sapisid} ${origin}`);
-    headers.authorization = `SAPISIDHASH ${timestamp}_${hash}`;
-    headers["x-goog-request-time"] = timestamp.toString();
+function isYouTubeHost(host: string): boolean {
+  return /(^|\.)youtube\.com$/.test(host) || /(^|\.)google\.com$/.test(host);
+}
+
+// youtubei.js only sets the Origin header on the server platform (HTTPClient.js:127), assuming the
+// browser adds it otherwise. We bypass the browser, so we must set it — and the SAPISIDHASH is
+// bound to that origin, so a missing/mismatched Origin makes Google ignore the auth (yt_li=0).
+// For the YouTube Music client (67) the request runs on the music.youtube.com origin, where
+// youtubei.js's hash (computed for www.youtube.com) is wrong, so we recompute it here.
+async function applyAuthHeaders(headers: Record<string, string>, host: string): Promise<void> {
+  if (!isYouTubeHost(host)) return;
+  const isMusic = headers["x-youtube-client-name"] === "67";
+  const origin = isMusic ? "https://music.youtube.com" : "https://www.youtube.com";
+
+  if (isMusic) {
+    const cookie = headers.cookie ?? headers.Cookie;
+    const sapisid =
+      getCookieValue(cookie, "SAPISID") ?? getCookieValue(cookie, "__Secure-3PAPISID");
+    if (sapisid) {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const hash = await sha1Hex(`${timestamp} ${sapisid} ${origin}`);
+      headers.authorization = `SAPISIDHASH ${timestamp}_${hash}`;
+      headers["x-goog-request-time"] = timestamp.toString();
+    }
   }
+
   headers.origin = origin;
   headers["x-origin"] = origin;
   headers.referer = `${origin}/`;
@@ -119,7 +133,6 @@ export async function tauriFetch(
   const headers = headersToObject(
     init?.headers ?? (input instanceof Request ? input.headers : undefined),
   );
-  await applyMusicCookieAuth(headers);
 
   const rawUrl =
     typeof input === "string"
@@ -128,6 +141,7 @@ export async function tauriFetch(
         ? input.toString()
         : input.url;
   const url = rewriteUrlForMusic(rawUrl, headers);
+  await applyAuthHeaders(headers, new URL(url).hostname);
 
   const body_base64 = await bodyToBase64(input, init);
 

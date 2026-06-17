@@ -189,17 +189,6 @@ async fn proxy_http_request(
         .unwrap_or(false);
     let inject_cookie = is_google_host && stored_cookie.is_some();
 
-    let had_cookie = input.headers.keys().any(|k| k.eq_ignore_ascii_case("cookie"));
-    let had_auth = input.headers.keys().any(|k| k.eq_ignore_ascii_case("authorization"));
-    eprintln!(
-        "[proxy] {} {} had_cookie={} had_auth={} inject_cookie={}",
-        input.method,
-        host.as_deref().unwrap_or("?"),
-        had_cookie,
-        had_auth,
-        inject_cookie
-    );
-
     let method = reqwest::Method::from_bytes(input.method.as_bytes()).map_err(|e| e.to_string())?;
     let client = reqwest::Client::builder()
         .user_agent(SAFARI_USER_AGENT)
@@ -226,7 +215,6 @@ async fn proxy_http_request(
     }
 
     let response = request.send().await.map_err(|e| e.to_string())?;
-    eprintln!("[proxy]   -> {} {}", response.status().as_u16(), input.url);
     let status = response.status().as_u16();
     let mut headers = HashMap::new();
     for (key, value) in response.headers().iter() {
@@ -239,10 +227,6 @@ async fn proxy_http_request(
         }
     }
     let body = response.bytes().await.map_err(|e| e.to_string())?;
-    if input.url.contains("/youtubei/v1/") {
-        let snippet: String = String::from_utf8_lossy(&body).chars().take(300).collect();
-        eprintln!("[proxy]   body: {}", snippet);
-    }
 
     Ok(ProxyHttpResponse {
         status,

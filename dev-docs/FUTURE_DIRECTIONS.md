@@ -139,6 +139,34 @@ spec). By porting difficulty:
 5. **Phase 4 — Polish & local features:** custom names, removed-songs archive, export, unavailable
    finder, temp-playlist flow, update checker, packaging.
 
+## Phase 0 — VALIDATED (2026-06-17)
+
+The spike (`desktop/`) confirms the premise end-to-end on macOS:
+
+- **Embedded login works and Google does NOT block it.** A Tauri `WebviewWindow` (WKWebView) with a
+  Safari user-agent loads Google sign-in normally; no "browser may not be secure".
+- **The session persists across launches** — WKWebView keeps its profile, so a hidden window
+  re-captures the session silently on startup (no password, no UI). True no-reauth.
+- **Authenticated read + write both work** with the captured cookies via `youtubei.js` 17.0.1
+  (account/library read returns the real account's data; writes use `playlist.addVideos` etc.).
+
+Auth gotchas discovered (each cost a debugging round — keep them for the real build):
+1. **`Cookie` is stripped by WKWebView.** youtubei.js sets `Cookie` on a WebKit `Headers` object,
+   which WKWebView drops as a forbidden header. The Rust proxy must attach the session `Cookie`
+   itself for youtube/google hosts.
+2. **`Origin` must be set explicitly.** youtubei.js only sets `Origin` on the *server* platform
+   (`HTTPClient.js`: `if (Platform.shim.server)`), assuming the browser adds it. Our requests
+   bypass the browser, so without a manually-set `Origin` the SAPISIDHASH is unbound and Google
+   ignores the auth (response shows `yt_li=0`). Set `Origin`/`Referer` to the origin the hash was
+   computed for (`https://www.youtube.com`, or `https://music.youtube.com` for the music client 67,
+   where we also recompute the hash).
+3. **`SAPISID` may only be present as `__Secure-3PAPISID`** on `.youtube.com` (same value); add a
+   `SAPISID=` alias so youtubei.js's auth path finds it.
+
+Open Phase-1 items surfaced by the spike: use the **YT Music-specific library API** (not the
+generic `getLibrary()`) to get playlist **names**, the **full** list, and **private** playlists;
+and surface the correct account identity.
+
 ## Recommended path
 
 Build the **shared core** first, then start with the **Chrome extension** as the first frontend:

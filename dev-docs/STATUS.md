@@ -182,11 +182,18 @@ for architecture/layout.
   Decision recorded in `dev-docs/FUTURE_DIRECTIONS.md` (Tauri chosen over Qt/Electron on a
   best-product lens — chiefly macOS WKWebView being the most robust path through Google's
   embedded-webview sign-in block, plus footprint and frontend ecosystem). Auth/`youtubei.js`
-  approach adaptable under JustAnotherMusicClient's Apache-2.0 license. **Phase 0 spike first**
-  (embedded WKWebView login + one real read/write — validates the riskiest assumption) in a
-  `desktop/` subfolder. Known risks: Spotify has no JS `spotapi` equivalent (re-port); some
-  `youtubei.js` write paths unproven; the whole embedded-login premise depends on evading Google's
-  block (Chrome extension is the immune fallback). The Python app keeps shipping until parity.
+  approach adaptable under JustAnotherMusicClient's Apache-2.0 license, in a `desktop/` subfolder.
+  - **Phase 0 — DONE (validated 2026-06-17).** Embedded WKWebView login works (Google doesn't
+    block it), the session persists across launches (silent re-capture — true no-reauth), and
+    authenticated read **and** write both work via `youtubei.js` 17.0.1. Auth gotchas (Cookie
+    stripped by WKWebView; `Origin` must be set or the SAPISIDHASH is ignored → `yt_li=0`;
+    `SAPISID`/`__Secure-3PAPISID` aliasing) documented in `dev-docs/FUTURE_DIRECTIONS.md`. (Final
+    manual confirm that a write lands on music.youtube.com still pending.)
+  - **Phase 1 — next:** read-only parity via the YT Music-specific library API (playlist names,
+    full list, private playlists) + the combined song view.
+  - Remaining risks: Spotify has no JS `spotapi` equivalent (re-port); the embedded-login premise
+    depends on continuing to evade Google's block (Chrome extension is the immune fallback).
+  The Python app keeps shipping until parity.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
