@@ -1,0 +1,16 @@
+YouTube Music Playlist Manager — desktop (Tauri)
+
+This component's YouTube Music authentication approach — the embedded WebView sign-in with
+cookie capture, and the Rust HTTP proxy that forwards requests with the captured session — is
+adapted from JustAnotherMusicClient, which is licensed under the Apache License, Version 2.0.
+
+  JustAnotherMusicClient
+  Copyright the JustAnotherMusicClient authors
+  Licensed under the Apache License, Version 2.0 (the "License").
+  https://www.apache.org/licenses/LICENSE-2.0
+
+Adapted files:
+- src-tauri/src/lib.rs  (sign_in_youtube_music, proxy_http_request)
+- src/lib/tauriFetch.ts (fetch routing + music-origin SAPISIDHASH handling)
+
+Changes were made; this software is not endorsed by the original authors.
