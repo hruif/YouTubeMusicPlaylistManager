@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   signIn,
+  trySilentSignIn,
   signOut,
   getAccountInfo,
   getLibraryPlaylists,
@@ -35,6 +36,20 @@ function App() {
     }
   }
 
+  // Auto sign-in on startup from the persisted WebView session (no window if already logged in).
+  useEffect(() => {
+    run("Auto sign-in (startup)", async () => {
+      const names = await trySilentSignIn();
+      if (names) {
+        setSignedIn(true);
+        append(`   restored session; cookies: ${names.join(", ")}`);
+      } else {
+        append("   no saved session — click Sign in");
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <main className="container" style={{ textAlign: "left", maxWidth: 720, margin: "0 auto" }}>
       <h1>YT Music — Auth Spike</h1>
@@ -47,8 +62,9 @@ function App() {
           disabled={busy}
           onClick={() =>
             run("Sign in", async () => {
-              await signIn();
+              const names = await signIn();
               setSignedIn(true);
+              append(`   cookies: ${names.join(", ")}`);
             })
           }
         >

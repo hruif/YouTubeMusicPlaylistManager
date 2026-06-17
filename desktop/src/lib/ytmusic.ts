@@ -1,29 +1,49 @@
-// Thin youtubei.js wrapper for the Phase 0 spike: sign in via the embedded webview, then prove a
-// real authenticated read (account info) and a real write (add/remove a video on a playlist).
+// Thin youtubei.js wrapper for the Phase 0 spike: sign in via the embedded webview (interactively
+// or silently on startup), then prove a real authenticated read (account/library) and write.
 
 import { Innertube } from "youtubei.js";
 import { invoke } from "@tauri-apps/api/core";
 import { tauriFetch } from "./tauriFetch";
 
+type SignInResult = { cookie: string; cookie_names: string[] };
+
 let client: Innertube | null = null;
 
-/** Open the embedded login, capture the session, and create an authenticated youtubei.js client. */
-export async function signIn(): Promise<void> {
-  const cookie = await invoke<string>("sign_in_youtube_music");
+// youtubei.js authenticates by reading the literal `SAPISID` cookie. On the .youtube.com domain
+// that value is often only present as `__Secure-3PAPISID` (same value, different name), so we add
+// a `SAPISID=` entry when it's missing. Without this, requests go out unauthenticated.
+function normalizeCookie(cookie: string): string {
+  if (/(?:^|;\s*)SAPISID=/.test(cookie)) return cookie;
+  const match = cookie.match(/(?:^|;\s*)__Secure-3PAPISID=([^;]+)/);
+  return match ? `${cookie}; SAPISID=${match[1]}` : cookie;
+}
+
+async function createClient(cookie: string): Promise<void> {
   client = await Innertube.create({
-    cookie,
+    cookie: normalizeCookie(cookie),
     fetch: tauriFetch,
     generate_session_locally: true,
   });
 }
 
+/** Interactive sign-in (visible login window). Returns the captured cookie names (diagnostic). */
+export async function signIn(): Promise<string[]> {
+  const result = await invoke<SignInResult>("sign_in_youtube_music");
+  await createClient(result.cookie);
+  return result.cookie_names;
+}
+
+/** Startup auto sign-in from the persisted WebView session. Returns names, or null if signed out. */
+export async function trySilentSignIn(): Promise<string[] | null> {
+  const result = await invoke<SignInResult | null>("try_silent_sign_in");
+  if (!result) return null;
+  await createClient(result.cookie);
+  return result.cookie_names;
+}
+
 export async function signOut(): Promise<void> {
   await invoke("sign_out_youtube_music");
   client = null;
-}
-
-export async function sessionStatus(): Promise<boolean> {
-  return invoke<boolean>("session_status");
 }
 
 function requireClient(): Innertube {
@@ -34,7 +54,6 @@ function requireClient(): Innertube {
 /** Authenticated read — proves the captured session actually works. */
 export async function getAccountInfo(): Promise<string> {
   const info = await requireClient().account.getInfo();
-  // Shape varies across versions; pull a human-readable name defensively.
   const contents = info as unknown as {
     contents?: { contents?: Array<{ account_name?: { text?: string } }> };
   };

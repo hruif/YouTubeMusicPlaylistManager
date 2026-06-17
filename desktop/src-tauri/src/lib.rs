@@ -2,7 +2,8 @@
 //
 // Goal: prove the no-reauth premise — an embedded WKWebView login on macOS that Google does NOT
 // block, whose cookies (incl. httpOnly) we can read and use for a real read + write against the
-// account, with no manual header copying.
+// account, with no manual header copying. Validated: the login works and the WKWebView's
+// persistent profile keeps the session across launches, so we can re-capture it silently.
 //
 // The embedded-WebView sign-in + cookie-capture + HTTP-proxy approach is adapted from
 // JustAnotherMusicClient (Apache-2.0); see NOTICE. This spike keeps the credential in memory only
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const YOUTUBE_LOGIN_WINDOW: &str = "youtube-music-login";
 const YOUTUBE_LOGIN_URL: &str =
@@ -29,62 +30,78 @@ const SAFARI_USER_AGENT: &str =
 #[derive(Default)]
 struct SessionState(Mutex<Option<String>>);
 
+#[derive(Serialize)]
+struct SignInResult {
+    cookie: String,
+    cookie_names: Vec<String>,
+}
+
 fn cookie_domain_is_youtube(domain: Option<&str>) -> bool {
     domain
         .map(|d| d.trim_start_matches('.').ends_with("youtube.com"))
         .unwrap_or(false)
 }
 
-/// Open the embedded sign-in window, wait for the YouTube Music session cookies to appear, capture
-/// them, and return the `Cookie:` header (also stored in state). The frontend hands the header to
-/// youtubei.js, which computes the SAPISIDHASH auth from it.
-#[tauri::command]
-async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<String, String> {
+/// If the signed-in YouTube Music session is present in the window's cookie store, return the
+/// `Cookie:` header plus the captured cookie names (diagnostic).
+fn captured_session(window: &WebviewWindow) -> Result<Option<SignInResult>, String> {
+    let cookies = window.cookies().map_err(|e| e.to_string())?;
+    let yt_cookies: Vec<_> = cookies
+        .into_iter()
+        .filter(|c| cookie_domain_is_youtube(c.domain()))
+        .collect();
+    let names: HashSet<&str> = yt_cookies.iter().map(|c| c.name()).collect();
+    let has_auth_cookie = ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"]
+        .iter()
+        .any(|n| names.contains(n));
+    let on_music_page = window
+        .url()
+        .map(|u| u.host_str() == Some("music.youtube.com"))
+        .unwrap_or(false);
+
+    if has_auth_cookie && on_music_page {
+        let cookie = yt_cookies
+            .iter()
+            .map(|c| format!("{}={}", c.name(), c.value()))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let mut cookie_names: Vec<String> = yt_cookies.iter().map(|c| c.name().to_string()).collect();
+        cookie_names.sort();
+        Ok(Some(SignInResult { cookie, cookie_names }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn open_login_window(app: &tauri::AppHandle, visible: bool) -> Result<WebviewWindow, String> {
     if let Some(existing) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
         let _ = existing.close();
     }
-
     let login_url = url::Url::parse(YOUTUBE_LOGIN_URL).map_err(|e| e.to_string())?;
-    let window = WebviewWindowBuilder::new(&app, YOUTUBE_LOGIN_WINDOW, WebviewUrl::External(login_url))
+    WebviewWindowBuilder::new(app, YOUTUBE_LOGIN_WINDOW, WebviewUrl::External(login_url))
         .title("Sign in to YouTube Music")
         .inner_size(520.0, 760.0)
+        .visible(visible)
         .user_agent(SAFARI_USER_AGENT)
         .build()
-        .map_err(|e| e.to_string())?;
-    let _ = &window;
+        .map_err(|e| e.to_string())
+}
 
-    // Poll up to ~5 minutes for the session to establish.
+/// Interactive sign-in: open the visible login window and wait (up to ~5 min) for the session.
+#[tauri::command]
+async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<SignInResult, String> {
+    open_login_window(&app, true)?;
+
     for _ in 1..=300u32 {
         let window = match app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
             Some(w) => w,
             None => return Err("Sign-in was cancelled.".to_string()),
         };
-
-        let cookies = window.cookies().map_err(|e| e.to_string())?;
-        let yt_cookies: Vec<_> = cookies
-            .into_iter()
-            .filter(|c| cookie_domain_is_youtube(c.domain()))
-            .collect();
-        let names: HashSet<&str> = yt_cookies.iter().map(|c| c.name()).collect();
-        let has_auth_cookie = ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"]
-            .iter()
-            .any(|n| names.contains(n));
-        let on_music_page = window
-            .url()
-            .map(|u| u.host_str() == Some("music.youtube.com"))
-            .unwrap_or(false);
-
-        if has_auth_cookie && on_music_page {
-            let header = yt_cookies
-                .iter()
-                .map(|c| format!("{}={}", c.name(), c.value()))
-                .collect::<Vec<_>>()
-                .join("; ");
-            *app.state::<SessionState>().0.lock().unwrap() = Some(header.clone());
+        if let Some(result) = captured_session(&window)? {
+            *app.state::<SessionState>().0.lock().unwrap() = Some(result.cookie.clone());
             let _ = window.close();
-            return Ok(header);
+            return Ok(result);
         }
-
         thread::sleep(Duration::from_secs(1));
     }
 
@@ -92,6 +109,31 @@ async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<String, String> 
         let _ = window.close();
     }
     Err("Sign-in timed out.".to_string())
+}
+
+/// Silent sign-in for startup: open a HIDDEN login window and, if the persisted session redirects
+/// straight to music.youtube.com, capture it without ever showing UI. Returns null if not signed
+/// in (e.g. first run / signed out), in which case the user must use the interactive flow.
+#[tauri::command]
+async fn try_silent_sign_in(app: tauri::AppHandle) -> Result<Option<SignInResult>, String> {
+    open_login_window(&app, false)?;
+
+    // Give the persisted session a few seconds to load + redirect.
+    for _ in 1..=15u32 {
+        if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
+            if let Some(result) = captured_session(&window)? {
+                *app.state::<SessionState>().0.lock().unwrap() = Some(result.cookie.clone());
+                let _ = window.close();
+                return Ok(Some(result));
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
+        let _ = window.close();
+    }
+    Ok(None)
 }
 
 #[tauri::command]
@@ -175,6 +217,7 @@ pub fn run() {
         .manage(SessionState::default())
         .invoke_handler(tauri::generate_handler![
             sign_in_youtube_music,
+            try_silent_sign_in,
             sign_out_youtube_music,
             session_status,
             proxy_http_request
