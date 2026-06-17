@@ -126,6 +126,59 @@ function normalizePlaylistId(playlistId: string): string {
   return id.startsWith("VL") ? id.slice(2) : id;
 }
 
+export type Track = { videoId: string; title: string; artist: string };
+export type CombinedSong = Track & { playlists: string[] };
+
+/** Fetch all tracks of a YT Music playlist (paginated). */
+export async function getPlaylistTracks(playlistId: string): Promise<Track[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let playlist: any = await requireClient().music.getPlaylist(playlistId);
+  const out: Track[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const take = (items: any[] | undefined): void => {
+    for (const item of items ?? []) {
+      const videoId: string | undefined = item?.id;
+      const title = typeof item?.title === "string" ? item.title : item?.title?.text;
+      if (!videoId || !title) continue; // skips ContinuationItem / non-song nodes
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const artist =
+        (item?.artists ?? []).map((a: any) => a?.name).filter(Boolean).join(", ") ||
+        (typeof item?.subtitle === "string" ? item.subtitle : item?.subtitle?.text) ||
+        "";
+      out.push({ videoId, title, artist });
+    }
+  };
+  take(playlist.items);
+  let guard = 0;
+  while (playlist?.has_continuation && guard++ < 50) {
+    playlist = await playlist.getContinuation();
+    take(playlist.items);
+  }
+  return out;
+}
+
+/**
+ * Combined song view across the selected playlists: one row per song (deduped by videoId), with
+ * the list of playlists each song appears in — the app's signature feature.
+ */
+export async function getCombinedSongs(
+  selected: Array<{ id: string; title: string }>,
+): Promise<CombinedSong[]> {
+  const byVideo = new Map<string, CombinedSong>();
+  for (const playlist of selected) {
+    const tracks = await getPlaylistTracks(playlist.id);
+    for (const track of tracks) {
+      const existing = byVideo.get(track.videoId);
+      if (existing) {
+        if (!existing.playlists.includes(playlist.title)) existing.playlists.push(playlist.title);
+      } else {
+        byVideo.set(track.videoId, { ...track, playlists: [playlist.title] });
+      }
+    }
+  }
+  return [...byVideo.values()];
+}
+
 /** Write test — add a video to a playlist you own. */
 export async function addVideo(playlistId: string, videoId: string): Promise<void> {
   await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), [videoId.trim()]);
