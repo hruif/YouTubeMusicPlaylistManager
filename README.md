@@ -15,6 +15,7 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 - **Playlist Info**: Double-click saved playlists to inspect source, IDs, cache stats, and playlist links
 - **Live Combined Song View**: Select playlists in the sidebar and browse their combined songs in a sortable table
 - **Selected Duplicate Finder**: Find songs that appear more than once across your *selected* playlists ("Find Duplicates in Selection")
+- **Find Unavailable Songs**: "Find Unavailable in Selection" lists songs still in your playlists that can't be played (deleted / region-locked / no video), so you can track them down and remove them (right-click to remove, in bulk if you like)
 - **Remove Repeated Songs**: If a single playlist lists the same song more than once, remove the extra copies (keeping one) right-click the playlist (or use its Details). This edits the real YouTube playlist — distinct from the duplicate *finder* above, which spans your selection
 - **Song Details and Playback Links**: Open full playlist-occurrence details and launch YouTube Music or Spotify links for playable tracks
 - **Edit YouTube Playlists**: Right-click a song (or use its Details window) to add it to another YouTube Music playlist or remove it from one — the change is made on your real account. Select multiple songs to add/remove them in bulk, or right-click a playlist to remove its repeated songs. Requires queue headers (Settings > Set Queue Headers); YouTube only.

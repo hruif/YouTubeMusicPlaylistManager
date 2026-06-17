@@ -125,6 +125,19 @@ for architecture/layout.
   Mechanics: `services/removed_songs.py` (`diff_removed_tracks` + `RemovedSongsStore` →
   `removed_songs.json`) and `services/playlist_export.py` (`build_csv`); covered by
   `tests/test_removed_songs.py` + `tests/test_playlist_export.py`.
+- **Find unavailable songs.** Sidebar **"Find Unavailable in Selection"** lists songs still in
+  the selected playlists that can't actually be played — deleted / region-locked / missing a video
+  — by their computed `queueStatus` (`BROKEN_QUEUE_STATUSES = {"Unavailable", "No video ID"}`,
+  `_find_unavailable_entries`). It's a full song table with the same right-click **add/remove**
+  menu, so the report doubles as a cleanup tool (find dead songs → remove them in bulk).
+  Complements the removed-songs archive (which covers songs *dropped* from a playlist).
+  Implemented on a shared `views/song_results_view.py` (generalized from the old duplicates view;
+  the duplicates finder now uses it too). Covered by `tests/test_ui_helpers.py`.
+  - ⚠ **Verification note:** the finder *logic* is unit-tested (`_find_unavailable_entries`, plus a
+    `_find_duplicate_entries` regression test), and the table is the same code the duplicates
+    finder already used — but the end-to-end UI for this feature hasn't been manually run yet
+    (no test data with unavailable tracks was on hand). Run the "Find Unavailable in Selection"
+    check in `MANUAL_TESTING.md` §A before the next release.
 - **Custom song names (local aliases).** Set a custom name on a song — right-click it ("Set
   custom name…") or use the editable field in its Details window — to make hard-to-type/foreign
   titles easy to find. Local-only metadata (`services/custom_names.py` →
@@ -149,9 +162,6 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **Broken / unavailable tracks report** — list still-listed-but-unplayable songs across
-  selected playlists (the app already computes `queueStatus`). Complements the removed-songs
-  archive, which covers songs *dropped* from a playlist.
 - [ ] **Spotify → YouTube transfer** — recreate a Spotify playlist on YouTube by matching tracks
   (hard part: match accuracy). Relates to the Spotify-in-queue item below.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice).

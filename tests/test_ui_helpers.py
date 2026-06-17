@@ -1038,3 +1038,46 @@ def test_apply_queue_session_health_empty_library_does_not_mark():
     manager.saved_playlists = {"youtube:a": {"source": "youtube", "id": "PLmine"}}
     manager._apply_queue_session_health(True, set())
     assert "owned" not in manager.saved_playlists["youtube:a"]  # empty/failed library -> don't flag
+
+
+def test_find_unavailable_entries_filters_by_queue_status():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube', 'id': 'PL1', 'name': 'Mix',
+            'videos': {'ok', 'gone', 'novid', 'ytm'},
+            'tracks': [
+                {'id': 'ok', 'videoId': 'ok', 'title': 'Fine Song', 'artist': 'A',
+                 'source': 'youtube', 'queueStatus': 'Queue OK'},
+                {'id': 'gone', 'videoId': 'gone', 'title': 'Dead Song', 'artist': 'B',
+                 'source': 'youtube', 'queueStatus': 'Unavailable'},
+                {'id': 'novid', 'title': 'No Video', 'artist': 'C',
+                 'source': 'youtube', 'queueStatus': 'No video ID'},
+                {'id': 'ytm', 'videoId': 'ytm', 'title': 'YTM Song', 'artist': 'D',
+                 'source': 'youtube', 'queueStatus': 'YTM only'},
+            ],
+        }
+    }
+    entries = manager._find_unavailable_entries(['youtube:PL1'])
+    assert sorted(entry['title'] for entry in entries) == ['Dead Song', 'No Video']
+
+
+def test_find_duplicate_entries_returns_only_repeated_songs():
+    manager = make_manager()
+    manager.saved_playlists = {
+        'youtube:PL1': {
+            'source': 'youtube', 'id': 'PL1', 'name': 'A', 'videos': {'x', 'y'},
+            'tracks': [
+                {'id': 'x', 'videoId': 'x', 'title': 'Shared', 'artist': 'Z', 'source': 'youtube'},
+                {'id': 'y', 'videoId': 'y', 'title': 'Only One', 'artist': 'Q', 'source': 'youtube'},
+            ],
+        },
+        'youtube:PL2': {
+            'source': 'youtube', 'id': 'PL2', 'name': 'B', 'videos': {'x'},
+            'tracks': [
+                {'id': 'x', 'videoId': 'x', 'title': 'Shared', 'artist': 'Z', 'source': 'youtube'},
+            ],
+        },
+    }
+    entries = manager._find_duplicate_entries(['youtube:PL1', 'youtube:PL2'])
+    assert [entry['title'] for entry in entries] == ['Shared']  # in both -> appearance_count 2

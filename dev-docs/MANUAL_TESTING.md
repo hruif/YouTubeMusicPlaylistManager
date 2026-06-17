@@ -33,6 +33,9 @@ first: `pytest -q`.
       song's Details window shows the full playlist list.
 - [ ] Find Duplicates in Selection works (songs across the *selected* playlists — distinct from
       the per-playlist "Remove repeated songs" action in section F).
+- [ ] Find Unavailable in Selection lists songs that can't be played (deleted / region-locked /
+      no video) across the selected playlists; right-clicking a row offers add/remove (so you can
+      clean them up). Empty selection → it reports none found.
 - [ ] Update Selected Playlists refreshes only the selected playlists, and its progress window
       renders normally (title / status / bar / Cancel laid out horizontally, not as vertical text).
 

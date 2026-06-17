@@ -23,7 +23,7 @@ from app.app_settings import (
 from app.services.custom_names import CustomNamesStore
 from app.views.playlist_url_window import PlaylistURLWindow
 from app.views import combined_songs_view
-from app.views import duplicates_view
+from app.views import song_results_view
 from app.services import playlist_editor
 from app.services import playlist_export
 from app.services import removed_songs as removed_songs_service
@@ -69,6 +69,11 @@ class PlaylistManagerUI:
     YOUTUBE_QUEUE_PLAYABLE_STATUSES = {
         "Queue OK",
         "Unknown"
+    }
+    # Statuses for songs that are still listed but can't be played (the "unavailable" finder).
+    BROKEN_QUEUE_STATUSES = {
+        "Unavailable",
+        "No video ID",
     }
     COMBINED_SORT_OPTIONS = {
         'Title (A-Z)': 'title',
@@ -190,20 +195,23 @@ class PlaylistManagerUI:
         find_duplicates_button = ttk.Button(button_frame, text="Find Duplicates in Selection", command=self.find_duplicate_songs)
         find_duplicates_button.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=2)
 
+        find_unavailable_button = ttk.Button(button_frame, text="Find Unavailable in Selection", command=self.find_unavailable_songs)
+        find_unavailable_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
+
         update_selected_button = ttk.Button(button_frame, text="Update Selected Playlists", command=self.update_selected_playlists)
-        update_selected_button.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=2)
+        update_selected_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
         # "Play in YouTube Music" creates a private temporary playlist from the selected
         # playlists and opens it on music.youtube.com. The first use prompts to set up queue
         # headers; that one-time setup lives in Settings > Set Queue Headers, not here.
         play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
-        play_youtube_music_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
+        play_youtube_music_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
 
         create_playlist_button = ttk.Button(button_frame, text="Create Playlist from Selected", command=self.create_playlist_from_selected_playlists)
-        create_playlist_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+        create_playlist_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=2)
 
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
+        settings_button.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
 
         self.playlist_selector_container = ttk.LabelFrame(self.sidebar_frame, text="Playlists", padding=(6, 4))
         self.playlist_selector_container.grid(row=5, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -3372,12 +3380,17 @@ class PlaylistManagerUI:
             duplicate_entries,
             key=lambda entry: (-entry['appearance_count'], entry['title'].lower(), entry['artist'].lower())
         )
+        plural = "" if selected_count == 1 else "s"
         self._show_display(
             "Selected Playlist Duplicates",
-            lambda parent: duplicates_view.build(self, parent, duplicate_entries, selected_count),
+            lambda parent: song_results_view.build(
+                self, parent, duplicate_entries,
+                view_id="duplicates", title="Selected Playlist Duplicates",
+                empty_message=f"No duplicates found in {selected_count} selected playlist{plural}.",
+            ),
             geometry="1080x620",
         )
-    
+
     def find_duplicate_songs(self):
         """Find and display songs that appear multiple times in selected playlists"""
         if not self.saved_playlists:
@@ -3394,6 +3407,49 @@ class PlaylistManagerUI:
             self.show_duplicate_songs_display(duplicates, len(selected_playlist_keys))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to find duplicates: {e}")
+
+    def _find_unavailable_entries(self, playlist_keys):
+        """Songs still listed in the selected playlists that can't actually be played
+        (deleted / region-locked / missing a video), by their computed queue status."""
+        combined_entries = self._collect_combined_tracks(playlist_keys, merge_duplicates=True)
+        return [
+            entry
+            for entry in combined_entries
+            if any(
+                (appearance.get('track') or {}).get('queueStatus') in self.BROKEN_QUEUE_STATUSES
+                for appearance in entry.get('appearances', [])
+            )
+        ]
+
+    def show_unavailable_songs_display(self, entries, selected_count):
+        entries = sorted(entries, key=lambda entry: (entry['title'].lower(), entry['artist'].lower()))
+        plural = "" if selected_count == 1 else "s"
+        self._show_display(
+            "Unavailable Songs",
+            lambda parent: song_results_view.build(
+                self, parent, entries,
+                view_id="unavailable", title="Unavailable Songs",
+                empty_message=f"No unavailable songs found in {selected_count} selected playlist{plural}.",
+            ),
+            geometry="1080x620",
+        )
+
+    def find_unavailable_songs(self):
+        """Find songs in the selected playlists that are no longer playable."""
+        if not self.saved_playlists:
+            messagebox.showwarning("No Playlists", "Please add at least one playlist first")
+            return
+
+        selected_playlist_keys = self._selected_sidebar_playlist_keys()
+        if not selected_playlist_keys:
+            messagebox.showwarning("No Selection", "Please choose at least one playlist.")
+            return
+
+        try:
+            entries = self._find_unavailable_entries(selected_playlist_keys)
+            self.show_unavailable_songs_display(entries, len(selected_playlist_keys))
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to find unavailable songs: {e}")
     
     def update_selected_playlists(self):
         """Update selected saved playlists with latest data from their source"""
