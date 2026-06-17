@@ -173,6 +173,9 @@ def build(controller, parent):
         title.configure(text=f"Saved Playlists ({len(controller.saved_playlists)})")
         refresh_playlist_rows()
 
+    # Let playlist-content edits (remove repeated songs, add/remove) refresh this list live.
+    controller._active_saved_playlists_refresh = reload_playlist_rows
+
     def show_playlist_context_menu(event):
         row_id = playlists_tree.identify_row(event.y)
         if not row_id or row_id not in playlist_by_item:
@@ -191,6 +194,11 @@ def build(controller, parent):
                 command=lambda url=playlist_url: controller._open_external_url(url),
             )
         menu.add_command(label="Export…", command=lambda key=playlist_key: controller.export_playlist(key))
+        if source == "youtube":
+            menu.add_command(
+                label="Remove repeated songs",
+                command=lambda key=playlist_key: controller.remove_playlist_repeats(key),
+            )
         menu.add_separator()
         menu.add_command(label="Delete", command=delete_selected_playlists)
         try:
@@ -238,10 +246,20 @@ def show_details(controller, playlist_key, on_change=None):
             on_change()
         details_window.destroy()
 
+    def reopen_with_fresh_counts():
+        # Rebuild the window so its track counts / Removed Songs reflect the edit.
+        details_window.destroy()
+        controller.show_playlist_details_window(playlist_key, on_change=on_change)
+
     actions = []
     if playlist_url:
         actions.append(("Open", lambda: controller._open_external_url(playlist_url)))
     actions.append(("Export…", lambda: controller.export_playlist(playlist_key)))
+    if source == "youtube":
+        actions.append((
+            "Remove repeated songs",
+            lambda: controller.remove_playlist_repeats(playlist_key, on_done=reopen_with_fresh_counts),
+        ))
     actions.append(("Delete", delete_this_playlist, "Danger.TButton"))
     actions.append(("Close", details_window.destroy))
     controller._add_info_header(outer_frame, playlist_name, source_name, actions=actions)

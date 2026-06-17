@@ -34,6 +34,23 @@ for architecture/layout.
     error (auth-expiry → `_prompt_browser_auth_refresh`). **No progress/success popups** — only the
     Remove confirmation and error dialogs. An in-flight guard (`_begin_account_edit`) blocks
     duplicate concurrent writes from fast double-clicks.
+- **Remove repeated songs (within one playlist).** Per-playlist action (Saved Playlists
+  right-click + that playlist's Details, YouTube only) that deletes the *extra* copies of any
+  song listed more than once **in that single playlist**, keeping the first. Confirms first,
+  fetches the playlist for `setVideoId`s (`playlist_editor.find_repeat_items` keeps the first
+  occurrence of each `videoId` and returns the rest), removes them via `remove_repeats`, then
+  de-dupes the local cache (`dedupe_local_tracks`). Reports the count removed (or "none found").
+  **Terminology:** these in-playlist copies are **"repeats"** — distinct from the existing
+  cross-selection **"Duplicates"** finder ("Find Duplicates in Selection"), which lists songs that
+  appear across your *selected* playlists. Covered by `tests/test_playlist_editor.py`.
+  - **Editable-playlist + stale-session detection.** Edits only work on playlists you own
+    (YouTube only returns `setVideoId` for those). `_require_editable` distinguishes the two
+    `owned=False` causes via `session_is_authenticated` (a `get_account_info` check): a
+    **stale/expired session** (reads public data but isn't signed in — empty library, no account
+    info) raises a "no longer signed in" error that routes to `_prompt_browser_auth_refresh`,
+    while a genuinely-someone-else's playlist says so. Also fixed **Test Saved Headers**, which
+    used `get_library_playlists` (returns `[]` silently on a stale session → false "worked") to
+    additionally require a signed-in account.
 - **YouTube Music queue creation (browser-auth).** "Play in YouTube Music" creates and opens a
   private temporary playlist from the selected YouTube playlists — a workaround for the lack of
   an official streaming API. The write backend uses ytmusicapi **browser-header auth** (OAuth

@@ -14,7 +14,8 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 - **Display Pane**: Use the right side to show saved playlists, duplicate results, settings, or a combined song table
 - **Playlist Info**: Double-click saved playlists to inspect source, IDs, cache stats, and playlist links
 - **Live Combined Song View**: Select playlists in the sidebar and browse their combined songs in a sortable table
-- **Selected Duplicate Finder**: Find songs that appear more than once in the selected playlist set, including repeats inside a single playlist
+- **Selected Duplicate Finder**: Find songs that appear more than once across your *selected* playlists ("Find Duplicates in Selection")
+- **Remove Repeated Songs**: If a single playlist lists the same song more than once, remove the extra copies (keeping one) right-click the playlist (or use its Details). This edits the real YouTube playlist — distinct from the duplicate *finder* above, which spans your selection
 - **Song Details and Playback Links**: Open full playlist-occurrence details and launch YouTube Music or Spotify links for playable tracks
 - **Edit YouTube Playlists**: Right-click a song (or use its Details window) to add it to another YouTube Music playlist or remove it from one — the change is made on your real account. Requires queue headers (Settings > Set Queue Headers); YouTube only.
 - **Custom Song Names**: Give a song your own searchable name (right-click it or use its Details window) — handy for titles with unusual characters or in another language. Custom names show in a "Custom Name" column and are matched by the Search box; the real title always stays in Details. A Settings toggle can show custom names in place of the title instead.

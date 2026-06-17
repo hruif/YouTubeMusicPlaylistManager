@@ -1355,10 +1355,93 @@ class PlaylistManagerUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _run_account_task(self, work, on_success, error_title, edit_key):
+        """Run a non-optimistic account task on a worker thread (used when the result
+        isn't known up front, e.g. how many repeats exist). `work()` returns a value
+        passed to `on_success`; auth-like failures route to the refresh prompt."""
+        def done(result, error):
+            self._inflight_account_edits.discard(edit_key)
+            if error is not None:
+                if self._is_browser_auth_refresh_error(error):
+                    self._prompt_browser_auth_refresh(error)
+                else:
+                    messagebox.showerror(error_title, str(error))
+                return
+            on_success(result)
+
+        def worker():
+            try:
+                result = work()
+            except Exception as e:
+                self.root.after(0, lambda error=e: done(None, error))
+                return
+            self.root.after(0, lambda: done(result, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def remove_playlist_repeats(self, playlist_key, on_done=None):
+        """Delete the extra copies of any song listed more than once in a single playlist
+        (keeps one of each). Account-touching, YouTube only. `on_done` runs after a change
+        is applied (e.g. to refresh an open Details window)."""
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showinfo("Remove Repeated Songs", "Select a saved playlist first.")
+            return
+        if pl_data.get('source', 'youtube') != 'youtube':
+            messagebox.showinfo("Remove Repeated Songs", "Only YouTube Music playlists can be edited.")
+            return
+
+        playlist_name = pl_data.get('name', 'the playlist')
+        confirm = messagebox.askyesno(
+            "Remove Repeated Songs",
+            (
+                f'Remove repeated songs from "{playlist_name}" on YouTube Music?\n\n'
+                "If a song is listed more than once in this playlist, the extra copies are "
+                "deleted from the real playlist on your account (one copy of each is kept)."
+            ),
+            parent=self.root,
+        )
+        if not confirm:
+            return
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        playlist_id = pl_data.get('id')
+        edit_key = ('repeats', playlist_id)
+        if not self._begin_account_edit(edit_key):
+            return
+
+        def on_success(count):
+            if count:
+                playlist_editor.dedupe_local_tracks(pl_data)
+                self.save_playlists()
+                self._refresh_after_playlist_edit()
+                if on_done:
+                    on_done()
+                messagebox.showinfo(
+                    "Remove Repeated Songs",
+                    f'Removed {count} repeated song{"" if count == 1 else "s"} from {playlist_name}.',
+                )
+            else:
+                messagebox.showinfo("Remove Repeated Songs", f'No repeated songs found in {playlist_name}.')
+
+        self._run_account_task(
+            lambda: self.playlist_editor.remove_repeats(client, playlist_id),
+            on_success,
+            "Remove Repeated Songs",
+            edit_key,
+        )
+
     def _refresh_after_playlist_edit(self):
-        # Song membership changed but the set of playlists did not, so just refresh the
-        # visible combined-songs list (rebuilding the sidebar would reset its selection).
+        # Song membership changed but the set of playlists did not, so refresh the views
+        # that show song/track counts (rebuilding the sidebar would reset its selection).
         self._refresh_live_combined_if_active()
+        if getattr(self, 'current_display_view', None) == 'playlists':
+            refresh = getattr(self, '_active_saved_playlists_refresh', None)
+            if refresh:
+                refresh()
 
     def add_song_to_playlist(self, track, target_playlist_key, on_done=None):
         video_id = (track or {}).get('videoId') or (track or {}).get('id')
@@ -1864,6 +1947,13 @@ class PlaylistManagerUI:
         def worker():
             try:
                 client.get_library_playlists(limit=1)
+                # A stale session still reads public data (no error) but isn't signed in —
+                # which would falsely pass. Require a real signed-in account.
+                if not playlist_editor.session_is_authenticated(client):
+                    raise RuntimeError(
+                        "the saved session is not signed in to your account (the headers "
+                        "expired). Copy fresh headers from a logged-in music.youtube.com tab."
+                    )
             except Exception as e:
                 self.root.after(0, lambda error=e: finish(False, error))
                 return
@@ -1902,6 +1992,7 @@ class PlaylistManagerUI:
             or "401" in error_text
             or "Unauthorized" in error_text
             or "browser auth" in error_text
+            or "no longer signed in" in error_text
         )
 
     def _mark_youtube_queue_auth_failed(self, error):
@@ -2882,38 +2973,40 @@ class PlaylistManagerUI:
             failed_playlists = []
             cancelled = {'value': False}
             
-            # Create a progress window
+            # Create a progress window. Configure column/row weights and a single
+            # sticky column — gridding everything with columnspan into unweighted
+            # columns collapses the column width and makes labels wrap per-character.
             progress_window = tk.Toplevel(self.root)
             progress_window.title("Updating Playlists")
-            progress_window.geometry("400x150")
+            progress_window.geometry("440x190")
             progress_window.resizable(False, False)
             self._configure_window_icon(progress_window)
-            
+            progress_window.columnconfigure(0, weight=1)
+            progress_window.rowconfigure(0, weight=1)
+
             main_frame = ttk.Frame(progress_window, padding="20")
             main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-            
-            # Title
-            title = ttk.Label(main_frame, text="Updating Selected Playlists", font=("Helvetica", 12, "bold"))
-            title.grid(row=0, column=0, columnspan=2, pady=10)
-            
-            # Status label
-            status_label = ttk.Label(main_frame, text="")
-            status_label.grid(row=1, column=0, columnspan=2, pady=10)
-            
-            # Progress bar
+            main_frame.columnconfigure(0, weight=1)
+
+            title = ttk.Label(main_frame, text="Updating Selected Playlists", font=("Helvetica", 13, "bold"))
+            title.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+
+            status_var = tk.StringVar(value="Starting…")
+            status_label = ttk.Label(main_frame, textvariable=status_var, wraplength=380)
+            status_label.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+
             progress_var = tk.DoubleVar()
-            progress_bar = ttk.Progressbar(main_frame, variable=progress_var, maximum=100, length=300)
-            progress_bar.grid(row=2, column=0, columnspan=2, pady=10)
+            progress_bar = ttk.Progressbar(main_frame, variable=progress_var, maximum=100)
+            progress_bar.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 14))
 
             def cancel_update():
                 cancelled['value'] = True
-                status_label.config(text="Cancelling after current playlist...")
+                status_var.set("Cancelling after the current playlist…")
 
-            # Cancel button
             cancel_button = ttk.Button(main_frame, text="Cancel", command=cancel_update)
-            cancel_button.grid(row=3, column=0, columnspan=2, pady=10)
+            cancel_button.grid(row=3, column=0)
             progress_window.protocol("WM_DELETE_WINDOW", cancel_update)
-            
+
             progress_window.update()
             
             total_playlists = len(selected_playlist_keys)
@@ -2928,7 +3021,7 @@ class PlaylistManagerUI:
                         continue
 
                     pl_name = pl_data.get('name', f'Playlist {playlist_key}')
-                    status_label.config(text=f"Updating: {pl_name}...")
+                    status_var.set(f"Updating: {pl_name}…")
                     progress_var.set((idx / total_playlists) * 100)
                     progress_window.update()
 

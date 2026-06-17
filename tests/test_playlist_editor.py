@@ -68,11 +68,80 @@ def test_apply_local_remove_drops_video_from_set_and_tracks():
     assert [playlist_editor._track_video_id(t) for t in pl["tracks"]] == ["B"]
 
 
+def test_find_repeat_items_returns_extra_occurrences_keeping_first():
+    playlist = {
+        "tracks": [
+            {"videoId": "A", "setVideoId": "a1"},   # first A -> kept
+            {"videoId": "B", "setVideoId": "b1"},   # only B -> kept
+            {"videoId": "A", "setVideoId": "a2"},   # extra A -> remove
+            {"videoId": "A", "setVideoId": "a3"},   # extra A -> remove
+            {"videoId": "C"},                         # no setVideoId -> ignored
+        ]
+    }
+    extras = playlist_editor.find_repeat_items(playlist)
+    assert extras == [
+        {"videoId": "A", "setVideoId": "a2"},
+        {"videoId": "A", "setVideoId": "a3"},
+    ]
+    assert playlist_editor.find_repeat_items({"tracks": []}) == []
+
+
+def test_dedupe_local_tracks_keeps_first_per_id():
+    pl = {"tracks": [
+        {"videoId": "A", "title": "first"},
+        {"videoId": "B"},
+        {"videoId": "A", "title": "dup"},
+        {"title": "no id keeps"},
+    ]}
+    playlist_editor.dedupe_local_tracks(pl)
+    assert [t.get("videoId") or t.get("title") for t in pl["tracks"]] == ["A", "B", "no id keeps"]
+
+
+def test_remove_repeats_removes_extras_and_returns_count():
+    client = FakeClient(playlist={"tracks": [
+        {"videoId": "A", "setVideoId": "a1"},
+        {"videoId": "A", "setVideoId": "a2"},
+    ]})
+    count = PlaylistEditor().remove_repeats(client, "PL1")
+    assert count == 1
+    assert client.removed == ("PL1", [{"videoId": "A", "setVideoId": "a2"}])
+
+
+def test_remove_repeats_noop_when_no_duplicates():
+    client = FakeClient(playlist={"tracks": [{"videoId": "A", "setVideoId": "a1"}]})
+    assert PlaylistEditor().remove_repeats(client, "PL1") == 0
+    assert client.removed is None  # never called remove
+
+
+def test_edit_on_unowned_playlist_when_signed_in_says_not_yours():
+    # Signed in, but the playlist is genuinely someone else's (owned=False).
+    unowned = {"owned": False, "author": {"name": "Someone Else"},
+               "tracks": [{"videoId": "A"}, {"videoId": "A"}]}
+    client = FakeClient(playlist=unowned, authenticated=True)
+    with pytest.raises(RuntimeError, match="Someone Else"):
+        PlaylistEditor().remove_repeats(client, "PL1")
+    assert client.removed is None
+
+
+def test_edit_on_unowned_playlist_when_signed_out_says_session_expired():
+    # Stale session: reads public data but isn't signed in -> own playlists look unowned.
+    unowned = {"owned": False, "author": {"name": "Me"},
+               "tracks": [{"videoId": "A"}, {"videoId": "A"}]}
+    client = FakeClient(playlist=unowned, authenticated=False)
+    with pytest.raises(RuntimeError, match="no longer signed in"):
+        PlaylistEditor().remove_repeats(client, "PL1")
+    with pytest.raises(RuntimeError, match="no longer signed in"):
+        PlaylistEditor().remove_song(client, "PL1", "A")
+    assert client.removed is None
+
+
 class FakeClient:
-    def __init__(self, playlist=None, add_response="STATUS_SUCCEEDED", remove_response="STATUS_SUCCEEDED"):
+    def __init__(self, playlist=None, add_response="STATUS_SUCCEEDED", remove_response="STATUS_SUCCEEDED",
+                 authenticated=True):
         self._playlist = playlist or {"tracks": []}
         self._add_response = add_response
         self._remove_response = remove_response
+        self._authenticated = authenticated
         self.added = None
         self.removed = None
 
@@ -82,6 +151,11 @@ class FakeClient:
 
     def get_playlist(self, playlist_id, limit=None):
         return self._playlist
+
+    def get_account_info(self):
+        if not self._authenticated:
+            raise KeyError("no signed-in account")  # mimics ytmusicapi on a stale session
+        return {"accountName": "Me"}
 
     def remove_playlist_items(self, playlist_id, videos):
         self.removed = (playlist_id, videos)
