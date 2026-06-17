@@ -87,6 +87,7 @@ its own `… (Debug)` dir via `PLAYLIST_MANAGER_DEBUG_BUILD`, set by the debug r
 | `app_settings.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 | `custom_song_names.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 | `removed_songs.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
+| `unmatched_songs.json` | **`data/`** | OS `…/APP_NAME/` | OS `…/APP_NAME (Debug)/` |
 
 ### Caps & groups
 
@@ -130,7 +131,9 @@ the release bundle, collide (same group).
     (saved-playlists state + persistence), `queue_service` (YouTube Music orchestration),
     `playlist_editor` (add/remove songs on the user's YouTube playlists),
     `custom_names` (local per-song aliases), `removed_songs` (archive of songs dropped on
-    update) + `playlist_export` (CSV snapshot), `youtube_music_account`, `update_checker`.
+    update) + `playlist_export` (CSV snapshot), `spotify_matcher` (conservative Spotify→YouTube
+    track matching) + `unmatched_songs` (per-playlist record of unmatched transfer songs),
+    `youtube_music_account`, `update_checker`.
 - **`tests/`** — all `test_*.py` (`pytest.ini` sets `pythonpath=.` + `testpaths=tests`).
 - **`dev-docs/`** — `STATUS.md`, `MANUAL_TESTING.md`. **`docs/`** is the published GitHub Pages
   site (do not put dev docs there).

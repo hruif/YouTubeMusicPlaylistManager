@@ -125,6 +125,21 @@ for architecture/layout.
   Mechanics: `services/removed_songs.py` (`diff_removed_tracks` + `RemovedSongsStore` →
   `removed_songs.json`) and `services/playlist_export.py` (`build_csv`); covered by
   `tests/test_removed_songs.py` + `tests/test_playlist_export.py`.
+- **Spotify → YouTube transfer.** Right-click a saved **Spotify** playlist (or use its Details) →
+  **"Convert to YouTube playlist…"** to recreate it on YouTube Music: each Spotify track is matched
+  by a YouTube Music songs-search, a new playlist is created from the **confident** matches
+  (`create_playlist_with_videos`) and imported. Anything not confidently matched is **persisted**
+  (`services/unmatched_songs.py` → `unmatched_songs.json`, keyed by the new playlist) and shown in
+  that playlist's Details under **"Unmatched from Spotify"**, each row with a **"Search on YouTube
+  Music"** link — so the list survives restarts and you can find and add each song by hand.
+  **Conservative matching** (`services/spotify_matcher.py`): a candidate
+  must have a title-token subset match *and* an artist-word overlap, so it avoids wrong
+  versions/covers at the cost of more manual follow-up. Runs one search per track on a worker
+  thread behind a progress window; reuses `_verify_session_then` for the up-front session check.
+  Matcher logic covered by `tests/test_spotify_matcher.py`.
+  - ⚠ **Verification note:** the matcher is unit-tested and the create/import path is the same one
+    the create-playlist feature uses, but the end-to-end transfer (live search quality, large
+    playlists/rate limits) hasn't been manually run yet — see `MANUAL_TESTING.md` §F.
 - **Find unavailable songs.** Sidebar **"Find Unavailable in Selection"** lists songs still in
   the selected playlists that can't actually be played — deleted / region-locked / missing a video
   — by their computed `queueStatus` (`BROKEN_QUEUE_STATUSES = {"Unavailable", "No video ID"}`,
@@ -162,9 +177,8 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **Spotify → YouTube transfer** — recreate a Spotify playlist on YouTube by matching tracks
-  (hard part: match accuracy). Relates to the Spotify-in-queue item below.
-- [ ] Include Spotify playlists in the queue flow (currently skipped with a notice).
+- [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
+  reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
   pursuing.** The only approach that actually removes the painful step (the DevTools dance)
   was reading the browser cookie store directly, and that was rejected on trust grounds (see

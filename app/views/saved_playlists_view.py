@@ -202,6 +202,11 @@ def build(controller, parent):
                 )
             else:
                 menu.add_command(label="Remove repeated songs (not your playlist)", state=tk.DISABLED)
+        elif source == "spotify":
+            menu.add_command(
+                label="Convert to YouTube playlist…",
+                command=lambda key=playlist_key: controller.transfer_spotify_playlist_to_youtube(key),
+            )
         menu.add_separator()
         menu.add_command(label="Delete", command=delete_selected_playlists)
         try:
@@ -263,6 +268,8 @@ def show_details(controller, playlist_key, on_change=None):
             "Remove repeated songs",
             lambda: controller.remove_playlist_repeats(playlist_key, on_done=reopen_with_fresh_counts),
         ))
+    elif source == "spotify":
+        actions.append(("Convert to YouTube…", lambda: controller.transfer_spotify_playlist_to_youtube(playlist_key)))
     actions.append(("Delete", delete_this_playlist, "Danger.TButton"))
     actions.append(("Close", details_window.destroy))
     controller._add_info_header(outer_frame, playlist_name, source_name, actions=actions)
@@ -318,4 +325,24 @@ def show_details(controller, playlist_key, on_change=None):
                 row,
                 "Removed",
                 f'{song.get("title", "Unknown Title")} — {song.get("artist", "Unknown Artist")} · {when}',
+            )
+
+    unmatched = controller.unmatched_songs.for_playlist(playlist_key)
+    if unmatched:
+        row = controller._add_info_section(content_frame, f"Unmatched from Spotify ({len(unmatched)})", row)
+        for song in unmatched:
+            title = song.get("title", "Unknown Title")
+            artist = song.get("artist", "")
+            label = f"{title} — {artist}" if artist else title
+            row = controller._add_info_row(
+                content_frame,
+                row,
+                "Not matched",
+                label,
+                action=(
+                    "Search",
+                    lambda t=title, a=artist: controller._open_external_url(
+                        controller._youtube_music_search_url(t, a)
+                    ),
+                ),
             )

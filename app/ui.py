@@ -26,8 +26,10 @@ from app.views import combined_songs_view
 from app.views import song_results_view
 from app.services import playlist_editor
 from app.services import playlist_export
+from app.services import spotify_matcher
 from app.services import removed_songs as removed_songs_service
 from app.services.removed_songs import RemovedSongsStore
+from app.services.unmatched_songs import UnmatchedSongsStore
 from app.services.playlist_editor import PlaylistEditor
 from app.services.playlist_library import PlaylistLibrary
 from app.services.queue_service import QueueService
@@ -130,6 +132,7 @@ class PlaylistManagerUI:
         )
         self.custom_names = CustomNamesStore()
         self.removed_songs = RemovedSongsStore()
+        self.unmatched_songs = UnmatchedSongsStore()
         self._closing = False
         self.app_icon_image = self._load_app_icon_image()
         self.source_logo_images = self._build_source_logo_images()
@@ -1877,6 +1880,139 @@ class PlaylistManagerUI:
                     seen.add(video_id)
                     tracks.append(track)
         self.create_playlist_from_tracks(tracks)
+
+    def _youtube_music_search_url(self, title, artist):
+        from urllib.parse import quote
+        query = " ".join(part for part in [title, artist] if part).strip()
+        return f"https://music.youtube.com/search?q={quote(query)}"
+
+    def transfer_spotify_playlist_to_youtube(self, playlist_key):
+        """Recreate a saved Spotify playlist on YouTube Music by matching each track, then
+        creating a new playlist from the confident matches. Account-touching."""
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data or pl_data.get('source') != 'spotify':
+            messagebox.showerror("Convert Playlist", "Select a Spotify playlist to convert.")
+            return
+
+        spotify_tracks = [
+            track for track in pl_data.get('tracks', [])
+            if isinstance(track, dict) and (track.get('title'))
+        ]
+        if not spotify_tracks:
+            messagebox.showinfo("Convert Playlist", "This playlist has no cached songs yet — update it first.")
+            return
+
+        name = simpledialog.askstring(
+            "Convert to YouTube Playlist",
+            (
+                f"Match {len(spotify_tracks)} Spotify song{'' if len(spotify_tracks) == 1 else 's'} to "
+                "YouTube Music and create a new playlist named:"
+            ),
+            initialvalue=f"{pl_data.get('name', 'Playlist')} (from Spotify)",
+            parent=self.root,
+        )
+        if not name or not name.strip():
+            return
+        name = name.strip()
+
+        self._verify_session_then(lambda: self._transfer_spotify_now(spotify_tracks, name))
+
+    def _transfer_spotify_now(self, spotify_tracks, name):
+        client = self._youtube_music_queue_client()
+
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Converting Playlist")
+        progress_window.geometry("460x150")
+        progress_window.resizable(False, False)
+        self._configure_window_icon(progress_window)
+        progress_window.columnconfigure(0, weight=1)
+        progress_window.rowconfigure(0, weight=1)
+        main_frame = ttk.Frame(progress_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+        status_var = tk.StringVar(value="Matching songs…")
+        ttk.Label(main_frame, textvariable=status_var, wraplength=400).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=320)
+        progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        progress_bar.start(12)
+
+        def set_status(text):
+            self.root.after(0, lambda: status_var.set(text))
+
+        def worker():
+            matched_video_ids = []
+            matched_tracks = []
+            unmatched = []
+            seen = set()
+            total = len(spotify_tracks)
+            for index, track in enumerate(spotify_tracks, start=1):
+                title = track.get('title', '')
+                artist = track.get('artist', '')
+                set_status(f"Matching {index} of {total}: {title}")
+                try:
+                    results = client.search(f"{title} {artist}".strip(), filter="songs", limit=5)
+                except Exception:
+                    results = []
+                match = spotify_matcher.best_youtube_match(results, title, artist)
+                if match and match['videoId'] not in seen:
+                    seen.add(match['videoId'])
+                    matched_video_ids.append(match['videoId'])
+                    matched_tracks.append({
+                        'id': match['videoId'], 'videoId': match['videoId'],
+                        'title': match['title'], 'artist': match['artist'], 'source': 'youtube',
+                    })
+                elif not match:
+                    unmatched.append({"title": title, "artist": artist})
+
+            if not matched_video_ids:
+                self.root.after(0, lambda: finish(None, None, [], unmatched, RuntimeError(
+                    "None of the Spotify songs could be confidently matched on YouTube Music."
+                )))
+                return
+            try:
+                set_status("Creating the YouTube Music playlist…")
+                playlist_id, skipped = self.queue_service.create_playlist_with_videos(
+                    client, name, "Converted from a Spotify playlist by YouTube Music Playlist Manager.",
+                    matched_video_ids, set_status,
+                )
+            except Exception as e:
+                self.root.after(0, lambda err=e: finish(None, None, matched_tracks, unmatched, err))
+                return
+            self.root.after(0, lambda: finish(playlist_id, skipped, matched_tracks, unmatched, None))
+
+        def finish(playlist_id, skipped, matched_tracks, unmatched, error):
+            progress_bar.stop()
+            progress_window.destroy()
+            if error is not None:
+                if self._is_browser_auth_refresh_error(error):
+                    self._prompt_browser_auth_refresh(error)
+                else:
+                    messagebox.showerror("Convert Playlist", str(error))
+                return
+            skipped_ids = {item.get('video_id') for item in (skipped or [])}
+            added = [track for track in matched_tracks if track['videoId'] not in skipped_ids]
+            key = playlist_store.playlist_storage_key('youtube', playlist_id)
+            self.saved_playlists[key] = self._build_playlist_entry(
+                'youtube', playlist_id, name,
+                [track['videoId'] for track in added],
+                added,
+            )
+            # Persist the unmatched songs on the new playlist so they survive restarts and are
+            # findable later (shown in its Details with a per-song "Search on YouTube Music").
+            self.unmatched_songs.set(key, unmatched)
+            self.save_playlists()
+            self.refresh_playlist_selectors()
+
+            message = f'Created "{name}" with {len(added)} matched song{"" if len(added) == 1 else "s"}.'
+            if unmatched:
+                message += (
+                    f"\n\n{len(unmatched)} song{'' if len(unmatched) == 1 else 's'} couldn't be "
+                    "confidently matched. They're saved under this playlist's Details "
+                    "(\"Unmatched from Spotify\"), each with a Search link to find and add it."
+                )
+            messagebox.showinfo("Convert Playlist", message)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _show_song_context_menu(self, event, tree, entry_by_item):
         row_id = tree.identify_row(event.y)

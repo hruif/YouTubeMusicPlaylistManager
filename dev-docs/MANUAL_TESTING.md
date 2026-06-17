@@ -101,6 +101,12 @@ first: `pytest -q`.
 - [ ] **Create playlist:** select songs → right-click → "New playlist from … song(s)…" → name it
       → a new playlist is created on music.youtube.com and appears in the app's sidebar with the
       right count. Also try the sidebar "Create Playlist from Selected" (merges selected playlists).
+- [ ] **Spotify → YouTube transfer:** right-click a saved **Spotify** playlist → "Convert to
+      YouTube playlist…" → name it → it matches each track, creates a YouTube playlist from the
+      confident matches (appears in the sidebar), and reports the count that weren't matched. Spot-
+      check match quality and try a larger playlist (watch for slow searches / rate limits). Then
+      open the new playlist's **Details** → the **"Unmatched from Spotify"** list persists (survives
+      restart) and each row's **Search** link opens a YouTube Music search for that song.
 - [ ] **Not-owned playlist:** an edit on a playlist you don't own says "you can only edit
       playlists you own."
 - [ ] **Stale session:** with expired/logged-out headers, an edit **prompts to refresh headers**
