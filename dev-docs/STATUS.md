@@ -177,12 +177,15 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **Tauri rewrite (major, proposed).** Rebuild the app as a Tauri (Rust + React) desktop app
-  modelled on JustAnotherMusicClient, for a native-feeling UI **and** an auth model that doesn't
-  need manual header re-copying (embedded WKWebView login + `youtubei.js`, adaptable under their
-  Apache-2.0 license). Full investigation, parity target, risks (Spotify has no JS `spotapi`
-  equivalent; some `youtubei.js` write paths unproven), and a phased plan are in
-  `dev-docs/TAURI_REWRITE_PLAN.md`. The Python app keeps shipping until the rewrite reaches parity.
+- [ ] **UI revamp / successor app (major, proposed).** Improve the barebones UI **and** fix the
+  manual-header auth friction. Options scoped in `dev-docs/FUTURE_DIRECTIONS.md`: a **Chrome
+  extension** (runs in the live signed-in session — auth friction largely disappears; under Web
+  Store review), a **Tauri desktop app** (embedded WebView login + `youtubei.js`, adaptable under
+  JustAnotherMusicClient's Apache-2.0 license; distribute yourself), or theme the current Tkinter
+  UI (stopgap). Recommended: build a **shared TypeScript core** so either frontend is cheap to add,
+  start with the extension. Doc covers parity target, risks (Spotify has no JS `spotapi` equivalent;
+  some write paths unproven), legal/ToS posture, and distribution-risk analysis. The Python app
+  keeps shipping until a successor reaches parity.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not
