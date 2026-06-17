@@ -9,9 +9,15 @@ export type LibraryCache = {
   playlists: Playlist[];
   tracksByPlaylist: Record<string, Track[]>;
   updatedAt: Record<string, number>; // playlist id -> last-fetched epoch ms
+  hidden: string[]; // playlist ids hidden from the main sidebar
 };
 
-export const EMPTY_CACHE: LibraryCache = { playlists: [], tracksByPlaylist: {}, updatedAt: {} };
+export const EMPTY_CACHE: LibraryCache = {
+  playlists: [],
+  tracksByPlaylist: {},
+  updatedAt: {},
+  hidden: [],
+};
 
 export async function loadCache(): Promise<LibraryCache> {
   const raw = await invoke<string | null>("read_cache");
@@ -22,6 +28,7 @@ export async function loadCache(): Promise<LibraryCache> {
       playlists: parsed.playlists ?? [],
       tracksByPlaylist: parsed.tracksByPlaylist ?? {},
       updatedAt: parsed.updatedAt ?? {},
+      hidden: parsed.hidden ?? [],
     };
   } catch {
     return { ...EMPTY_CACHE };

@@ -13,6 +13,7 @@
 
   color: #0f0f0f;
   background-color: #f6f6f6;
+  --app-bg: #f6f6f6;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -99,6 +100,7 @@ button {
   :root {
     color: #f6f6f6;
     background-color: #2f2f2f;
+    --app-bg: #2f2f2f;
   }
 
   a:hover {
