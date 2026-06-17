@@ -64,6 +64,18 @@ for architecture/layout.
   YouTube/Spotify); the same Delete action is in the double-click playlist details window. Deletes
   persist via `save_playlists()` and refresh the sidebar selectors live (`_delete_saved_playlists`).
   The list also has a **right-click menu** (Playlist details / Open in browser / Delete).
+- **Preserve & export removed songs.** Your local cache is a snapshot until you Update; Update
+  then replaces it with the fresh fetch and would silently drop any song YouTube/Spotify removed.
+  Now, **on Update**, the app diffs old vs new tracks and archives the **title + artist** (no link
+  — it's dead) of anything that vanished into a per-playlist **"Removed Songs"** list, shown in
+  that playlist's Details window (with relative date). The update-complete summary reports how many
+  were saved. A guard skips archiving when the fresh fetch is empty (so a failed fetch can't wipe a
+  playlist into the archive). Captures removals **from the next update onward** (no record exists
+  for songs lost before this shipped). Also a **manual "Export…"** action (playlist Details +
+  right-click) writes the current tracks (title/artist/source/id) to a **CSV** you choose.
+  Mechanics: `services/removed_songs.py` (`diff_removed_tracks` + `RemovedSongsStore` →
+  `removed_songs.json`) and `services/playlist_export.py` (`build_csv`); covered by
+  `tests/test_removed_songs.py` + `tests/test_playlist_export.py`.
 - **Custom song names (local aliases).** Set a custom name on a song — right-click it ("Set
   custom name…") or use the editable field in its Details window — to make hard-to-type/foreign
   titles easy to find. Local-only metadata (`services/custom_names.py` →

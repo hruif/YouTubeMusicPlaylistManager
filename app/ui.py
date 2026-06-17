@@ -8,7 +8,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 from ytmusicapi import YTMusic
 from ytmusicapi.auth.oauth.exceptions import BadOAuthClient
 
@@ -25,6 +25,9 @@ from app.views.playlist_url_window import PlaylistURLWindow
 from app.views import combined_songs_view
 from app.views import duplicates_view
 from app.services import playlist_editor
+from app.services import playlist_export
+from app.services import removed_songs as removed_songs_service
+from app.services.removed_songs import RemovedSongsStore
 from app.services.playlist_editor import PlaylistEditor
 from app.services.playlist_library import PlaylistLibrary
 from app.services.queue_service import QueueService
@@ -121,6 +124,7 @@ class PlaylistManagerUI:
             value=self.app_settings.get_bool(REPLACE_TITLES_WITH_CUSTOM_NAMES, False)
         )
         self.custom_names = CustomNamesStore()
+        self.removed_songs = RemovedSongsStore()
         self._closing = False
         self.app_icon_image = self._load_app_icon_image()
         self.source_logo_images = self._build_source_logo_images()
@@ -2633,6 +2637,30 @@ class PlaylistManagerUI:
     def show_playlist_details_window(self, playlist_key, on_change=None):
         saved_playlists_view.show_details(self, playlist_key, on_change=on_change)
 
+    def export_playlist(self, playlist_key):
+        """Save a playlist's tracks (title/artist/source/id) to a CSV the user picks."""
+        pl_data = self.saved_playlists.get(playlist_key)
+        if not pl_data:
+            messagebox.showinfo("Export Playlist", "Select a saved playlist first.")
+            return
+
+        playlist_name = pl_data.get('name', 'playlist')
+        safe_name = re.sub(r'[^\w\- ]+', '_', playlist_name).strip() or 'playlist'
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export Playlist",
+            defaultextension=".csv",
+            initialfile=f"{safe_name}.csv",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8", newline="") as file:
+                file.write(playlist_export.build_csv(pl_data.get('tracks', [])))
+        except Exception as e:
+            messagebox.showerror("Export Playlist", f"Could not write the file: {e}")
+
     def _collect_combined_tracks(self, playlist_keys, merge_duplicates=True):
         combined = []
         merged_entries = {}
@@ -2850,6 +2878,7 @@ class PlaylistManagerUI:
 
         try:
             updated_count = 0
+            removed_total = 0
             failed_playlists = []
             cancelled = {'value': False}
             
@@ -2904,13 +2933,21 @@ class PlaylistManagerUI:
                     progress_window.update()
 
                     source, playlist_id = playlist_store.normalize_playlist_identity(playlist_key, pl_data)
+                    old_tracks = pl_data.get('tracks', [])
                     if source == 'youtube':
-                        self.saved_playlists[playlist_key] = self._fetch_youtube_playlist_entry(playlist_id, pl_name)
+                        new_entry = self._fetch_youtube_playlist_entry(playlist_id, pl_name)
                     elif source == 'spotify':
-                        self.saved_playlists[playlist_key] = self._fetch_spotify_playlist_entry(playlist_id, pl_name)
+                        new_entry = self._fetch_spotify_playlist_entry(playlist_id, pl_name)
                     else:
                         raise RuntimeError(f"Unsupported playlist source: {source}")
 
+                    # Archive songs that vanished, but only when the fetch returned tracks —
+                    # an empty/partial fetch must not wipe the playlist into the archive.
+                    new_tracks = new_entry.get('tracks', [])
+                    if new_tracks:
+                        removed = removed_songs_service.diff_removed_tracks(old_tracks, new_tracks)
+                        removed_total += self.removed_songs.record(playlist_key, pl_name, removed)
+                    self.saved_playlists[playlist_key] = new_entry
                     updated_count += 1
                     
                 except Exception as e:
@@ -2930,16 +2967,23 @@ class PlaylistManagerUI:
             progress_window.destroy()
             
             # Show results
+            removed_note = ""
+            if removed_total:
+                removed_note = (
+                    f"\n\n{removed_total} song{'' if removed_total == 1 else 's'} no longer in "
+                    "these playlists were saved to each playlist's \"Removed Songs\" "
+                    "(open a playlist's Details to see them)."
+                )
             if cancelled['value']:
                 message = f"Updated {updated_count} of {total_playlists} selected playlists before cancelling."
                 if failed_playlists:
                     message += "\n\nFailed to update:\n" + "\n".join(failed_playlists)
-                messagebox.showinfo("Update Cancelled", message)
+                messagebox.showinfo("Update Cancelled", message + removed_note)
             elif failed_playlists:
                 message = f"Updated {updated_count} of {total_playlists} selected playlists.\n\nFailed to update:\n" + "\n".join(failed_playlists)
-                messagebox.showwarning("Update Complete", message)
+                messagebox.showwarning("Update Complete", message + removed_note)
             else:
-                messagebox.showinfo("Success", f"Successfully updated {updated_count} selected playlists!")
+                messagebox.showinfo("Success", f"Successfully updated {updated_count} selected playlists!" + removed_note)
         
         except Exception as e:
             messagebox.showerror("Error", f"Failed to update playlists: {e}")

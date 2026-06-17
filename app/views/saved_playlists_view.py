@@ -190,6 +190,7 @@ def build(controller, parent):
                 label="Open in browser",
                 command=lambda url=playlist_url: controller._open_external_url(url),
             )
+        menu.add_command(label="Export…", command=lambda key=playlist_key: controller.export_playlist(key))
         menu.add_separator()
         menu.add_command(label="Delete", command=delete_selected_playlists)
         try:
@@ -240,6 +241,7 @@ def show_details(controller, playlist_key, on_change=None):
     actions = []
     if playlist_url:
         actions.append(("Open", lambda: controller._open_external_url(playlist_url)))
+    actions.append(("Export…", lambda: controller.export_playlist(playlist_key)))
     actions.append(("Delete", delete_this_playlist, "Danger.TButton"))
     actions.append(("Close", details_window.destroy))
     controller._add_info_header(outer_frame, playlist_name, source_name, actions=actions)
@@ -280,3 +282,15 @@ def show_details(controller, playlist_key, on_change=None):
             "Last Track",
             f"{last_track.get('title', 'Unknown Title')} - {last_track.get('artist', 'Unknown Artist')}",
         )
+
+    removed = controller.removed_songs.for_playlist(playlist_key)
+    if removed:
+        row = controller._add_info_section(content_frame, f"Removed Songs ({len(removed)})", row)
+        for song in sorted(removed, key=lambda s: s.get("removed_at", 0), reverse=True):
+            when = text_utils.format_relative_age(song["removed_at"]) if song.get("removed_at") else "unknown"
+            row = controller._add_info_row(
+                content_frame,
+                row,
+                "Removed",
+                f'{song.get("title", "Unknown Title")} — {song.get("artist", "Unknown Artist")} · {when}',
+            )
