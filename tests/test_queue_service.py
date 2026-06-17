@@ -64,6 +64,20 @@ def test_create_temp_playlist_rejects_empty_video_ids():
         service.create_temp_playlist(FakeClient(), [], [], lambda _t: None)
 
 
+def test_create_playlist_with_videos_returns_id_and_does_not_remember():
+    account = FakeAccount()
+    service = QueueService(account, chunk_size=50)
+    client = FakeClient(fail_video_ids=["bad"])
+
+    playlist_id, skipped = service.create_playlist_with_videos(
+        client, "My Mix", "desc", ["seed", "ok", "bad"], lambda _t: None
+    )
+
+    assert playlist_id == "TEMP"
+    assert [item["video_id"] for item in skipped] == ["bad"]
+    assert account.remembered == []  # permanent create must not touch temp bookkeeping
+
+
 def test_create_temp_playlist_reports_rejected_songs():
     service = _service()
     # The seed is the first id; "bad" is rejected when added, isolated by adaptive splitting.

@@ -95,6 +95,9 @@ first: `pytest -q`.
       Tracks / sidebar counts update live; the Details window reopens with fresh counts.
 - [ ] **Bulk:** select several songs (shift / ⌘-click) → right-click → "Add N songs to playlist"
       / "Remove N songs from playlist" → the batch is applied in one go.
+- [ ] **Create playlist:** select songs → right-click → "New playlist from … song(s)…" → name it
+      → a new playlist is created on music.youtube.com and appears in the app's sidebar with the
+      right count. Also try the sidebar "Create Playlist from Selected" (merges selected playlists).
 - [ ] **Not-owned playlist:** an edit on a playlist you don't own says "you can only edit
       playlists you own."
 - [ ] **Stale session:** with expired/logged-out headers, an edit **prompts to refresh headers**

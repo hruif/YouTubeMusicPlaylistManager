@@ -15,34 +15,44 @@ class QueueService:
         self._youtube_account = youtube_account
         self._chunk_size = chunk_size
 
-    def create_temp_playlist(self, client, video_ids, source_playlists, set_status):
-        """Create a private temporary playlist from video_ids (already deduped, preferred seed
-        first). Returns (title, temp_playlist_id, skipped_video_ids). Raises on failure."""
+    def create_playlist_with_videos(self, client, title, description, video_ids, set_status):
+        """Create a private playlist seeded with one playable song, then add the rest in
+        adaptive chunks. Returns (playlist_id, skipped_video_ids). Raises on total failure.
+        Shared by the temporary-queue flow and permanent playlist creation."""
         if not video_ids:
             raise RuntimeError(
-                "No cached YouTube songs were found in the selected playlists. "
-                "Update the selected playlists, then try again."
+                "No cached YouTube songs were found in the selection. "
+                "Update the playlists, then try again."
             )
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H.%M")
-        title = f"Playlist Manager Queue {timestamp}"
-        description = "Temporary private playlist created by YouTube Music Playlist Manager."
-
-        temp_playlist_id, remaining_video_ids, seeded_count, seed_error = self._create_seeded(
+        playlist_id, remaining_video_ids, seeded_count, seed_error = self._create_seeded(
             client, title, description, video_ids, set_status
         )
 
         try:
             added_count, skipped_video_ids = self._add_video_ids(
-                client, temp_playlist_id, remaining_video_ids, set_status
+                client, playlist_id, remaining_video_ids, set_status
             )
         except Exception:
-            self.best_effort_delete(client, temp_playlist_id)
+            self.best_effort_delete(client, playlist_id)
             raise
 
         if seeded_count + added_count == 0:
-            self.best_effort_delete(client, temp_playlist_id)
+            self.best_effort_delete(client, playlist_id)
             raise RuntimeError(self._no_songs_added_error_message(seed_error, skipped_video_ids))
+
+        return playlist_id, skipped_video_ids
+
+    def create_temp_playlist(self, client, video_ids, source_playlists, set_status):
+        """Create a private temporary playlist from video_ids (already deduped, preferred seed
+        first). Returns (title, temp_playlist_id, skipped_video_ids). Raises on failure."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H.%M")
+        title = f"Playlist Manager Queue {timestamp}"
+        description = "Temporary private playlist created by YouTube Music Playlist Manager."
+
+        temp_playlist_id, skipped_video_ids = self.create_playlist_with_videos(
+            client, title, description, video_ids, set_status
+        )
 
         self._youtube_account.remember_temporary_playlist(
             temp_playlist_id,

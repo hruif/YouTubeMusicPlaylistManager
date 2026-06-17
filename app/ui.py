@@ -196,8 +196,11 @@ class PlaylistManagerUI:
         play_youtube_music_button = ttk.Button(button_frame, text="Play in YouTube Music", command=self.play_selection_in_youtube_music)
         play_youtube_music_button.grid(row=5, column=0, sticky=(tk.W, tk.E), pady=2)
 
+        create_playlist_button = ttk.Button(button_frame, text="Create Playlist from Selected", command=self.create_playlist_from_selected_playlists)
+        create_playlist_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=2)
+
         settings_button = ttk.Button(button_frame, text="Settings", command=self.show_settings_display)
-        settings_button.grid(row=6, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
+        settings_button.grid(row=7, column=0, sticky=(tk.W, tk.E), pady=(12, 2))
 
         self.playlist_selector_container = ttk.LabelFrame(self.sidebar_frame, text="Playlists", padding=(6, 4))
         self.playlist_selector_container.grid(row=5, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -1654,6 +1657,125 @@ class PlaylistManagerUI:
             playlist_key=playlist_key,
         )
 
+    def create_playlist_from_tracks(self, tracks, on_done=None):
+        """Create a new permanent YouTube Music playlist from the given songs, then import it
+        into the saved playlists. Account-touching, YouTube only."""
+        items = []  # (video_id, track), deduped, YouTube only
+        seen = set()
+        for track in tracks:
+            video_id = (track or {}).get('videoId') or (track or {}).get('id')
+            if not video_id or video_id in seen or (track or {}).get('source', 'youtube') != 'youtube':
+                continue
+            seen.add(video_id)
+            items.append((video_id, track))
+
+        if not items:
+            messagebox.showinfo("Create Playlist", "Select at least one YouTube Music song.")
+            return
+
+        name = simpledialog.askstring(
+            "Create Playlist",
+            f"Name for the new playlist ({len(items)} song{'' if len(items) == 1 else 's'}):",
+            initialvalue="New Playlist",
+            parent=self.root,
+        )
+        if not name or not name.strip():
+            return
+        name = name.strip()
+
+        client = self._account_write_client_or_prompt()
+        if client is None:
+            return
+
+        video_ids = [video_id for video_id, _ in items]
+
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title("Creating Playlist")
+        progress_window.geometry("440x140")
+        progress_window.resizable(False, False)
+        self._configure_window_icon(progress_window)
+        progress_window.columnconfigure(0, weight=1)
+        progress_window.rowconfigure(0, weight=1)
+        main_frame = ttk.Frame(progress_window, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+        status_var = tk.StringVar(value=f'Creating "{name}"…')
+        ttk.Label(main_frame, textvariable=status_var, wraplength=380).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 12))
+        progress_bar = ttk.Progressbar(main_frame, mode="indeterminate", length=320)
+        progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        progress_bar.start(12)
+
+        def worker():
+            try:
+                playlist_id, skipped = self.queue_service.create_playlist_with_videos(
+                    client, name, "Created by YouTube Music Playlist Manager.", video_ids,
+                    lambda text: self.root.after(0, lambda: status_var.set(text)),
+                )
+            except Exception as e:
+                self.root.after(0, lambda err=e: finish(None, None, err))
+                return
+            self.root.after(0, lambda: finish(playlist_id, skipped, None))
+
+        def finish(playlist_id, skipped, error):
+            progress_bar.stop()
+            progress_window.destroy()
+            if error is not None:
+                if self._is_browser_auth_refresh_error(error):
+                    self._prompt_browser_auth_refresh(error)
+                else:
+                    messagebox.showerror("Create Playlist", str(error))
+                return
+            skipped_ids = {item.get('video_id') for item in (skipped or [])}
+            added = [(video_id, track) for video_id, track in items if video_id not in skipped_ids]
+            key = playlist_store.playlist_storage_key('youtube', playlist_id)
+            self.saved_playlists[key] = self._build_playlist_entry(
+                'youtube', playlist_id, name,
+                [video_id for video_id, _ in added],
+                [track for _, track in added],
+            )
+            self.save_playlists()
+            self.refresh_playlist_selectors()
+            if on_done:
+                on_done()
+            note = ""
+            if skipped_ids:
+                note = f"\n\n{len(skipped_ids)} song{'' if len(skipped_ids) == 1 else 's'} couldn't be added."
+            messagebox.showinfo(
+                "Create Playlist",
+                f'Created "{name}" with {len(added)} song{"" if len(added) == 1 else "s"}.' + note,
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def create_playlist_from_selected_playlists(self):
+        """Create a new permanent playlist from the combined songs of the selected playlists."""
+        if not self.saved_playlists:
+            messagebox.showwarning("No Playlists", "Add at least one playlist first.")
+            return
+        selected = self._selected_sidebar_playlist_keys()
+        if not selected:
+            messagebox.showwarning("No Selection", "Select at least one playlist first.")
+            return
+
+        youtube_playlists, _skipped = playlist_store.select_youtube_playlist_sources(self.saved_playlists, selected)
+        if not youtube_playlists:
+            messagebox.showinfo(
+                "Create Playlist",
+                "Only YouTube Music playlists can be used to create a playlist. Spotify playlists were skipped.",
+            )
+            return
+
+        tracks = []
+        seen = set()
+        for source in youtube_playlists:
+            pl_data = self.saved_playlists.get(source['key'], {})
+            for track in pl_data.get('tracks', []):
+                video_id = (track or {}).get('videoId') or (track or {}).get('id')
+                if video_id and video_id not in seen:
+                    seen.add(video_id)
+                    tracks.append(track)
+        self.create_playlist_from_tracks(tracks)
+
     def _show_song_context_menu(self, event, tree, entry_by_item):
         row_id = tree.identify_row(event.y)
         if not row_id:
@@ -1710,6 +1832,12 @@ class PlaylistManagerUI:
         menu.add_cascade(label="Remove from playlist", menu=remove_menu,
                          state=tk.NORMAL if appearances else tk.DISABLED)
 
+        menu.add_command(
+            label="New playlist from this song…",
+            command=lambda: self.create_playlist_from_tracks([track]),
+            state=tk.NORMAL if video_id else tk.DISABLED,
+        )
+
         menu.add_separator()
         menu.add_command(label="Set custom name…", command=lambda: self.prompt_set_custom_name(entry))
         menu.add_command(label="Song details", command=lambda: self.show_song_details_window(entry))
@@ -1746,6 +1874,12 @@ class PlaylistManagerUI:
             remove_menu.add_command(label="(not in a YouTube playlist)", state=tk.DISABLED)
         menu.add_cascade(label=f"Remove {count} song{plural} from playlist", menu=remove_menu,
                          state=tk.NORMAL if remove_targets else tk.DISABLED)
+
+        menu.add_command(
+            label=f"New playlist from {count} song{plural}…",
+            command=lambda: self.create_playlist_from_tracks(tracks),
+            state=tk.NORMAL if count else tk.DISABLED,
+        )
 
         skipped = len(entries) - count
         if skipped:

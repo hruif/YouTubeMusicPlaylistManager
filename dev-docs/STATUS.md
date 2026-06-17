@@ -42,6 +42,13 @@ for architecture/layout.
   - **Live count refresh.** After any edit, just the affected playlist's sidebar "(N songs)"
     label is updated in place (`_update_playlist_count_labels`) — no list rebuild, so no flicker
     or scroll reset; the Saved Playlists list / Details refresh too.
+- **Create a real playlist.** Make a new **permanent** YouTube Music playlist (PRIVATE) from a
+  selection of **songs** (right-click → "New playlist from … song(s)…") or from the combined songs
+  of **selected playlists** (sidebar "Create Playlist from Selected"). Prompts for a name, creates
+  it via the shared `QueueService.create_playlist_with_videos` (seed + adaptive-chunk add,
+  extracted from the temp-queue path), then **imports it into your saved playlists** so it shows up
+  immediately. Reports how many songs were added (and any that couldn't be). Covered by
+  `tests/test_queue_service.py`.
 - **Remove repeated songs (within one playlist).** Per-playlist action (Saved Playlists
   right-click + that playlist's Details, YouTube only) that deletes the *extra* copies of any
   song listed more than once **in that single playlist**, keeping the first. Confirms first,
@@ -133,8 +140,6 @@ for architecture/layout.
 - [ ] **Proactive stale-header detection.** Use `playlist_editor.session_is_authenticated` on
   launch (or before showing edit actions) to detect an expired/logged-out session and prompt to
   refresh headers *before* the user hits a failure, rather than only on the failing request.
-- [ ] **Create / save a real playlist** from a selection (permanent, via `create_playlist` +
-  `add_playlist_items`; YouTube allows duplicate playlist names, so that's not a blocker).
 - [ ] **Broken / unavailable tracks report** — list still-listed-but-unplayable songs across
   selected playlists (the app already computes `queueStatus`). Complements the removed-songs
   archive, which covers songs *dropped* from a playlist.
