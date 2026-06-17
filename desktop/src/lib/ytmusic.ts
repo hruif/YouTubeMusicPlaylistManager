@@ -61,16 +61,62 @@ export async function getAccountInfo(): Promise<string> {
   return name ?? JSON.stringify(info).slice(0, 400);
 }
 
-/** List the account's library playlists (target candidates for the write test). */
+/**
+ * List the account's YouTube Music library playlists — names, the full list, and private ones.
+ * Uses the YT Music library API (FEmusic_library_landing) filtered to "Playlists", with pagination
+ * (the generic yt.getLibrary() used before returned only a partial, unnamed YouTube library).
+ * Parser shapes vary, so extraction is defensive (treated as `any`).
+ */
 export async function getLibraryPlaylists(): Promise<Array<{ id: string; title: string }>> {
-  const library = await requireClient().getLibrary();
-  const playlists = (library as unknown as {
-    playlists?: Array<{ id?: string; content_id?: string; title?: { text?: string } | string }>;
-  }).playlists ?? [];
-  return playlists.map((p) => ({
-    id: p.id ?? p.content_id ?? "",
-    title: typeof p.title === "string" ? p.title : (p.title?.text ?? "(untitled)"),
-  }));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let library: any = await requireClient().music.getLibrary();
+
+  const filter: string | undefined = (library.filters as string[] | undefined)?.find((f) =>
+    /playlist/i.test(f),
+  );
+  if (filter) {
+    try {
+      library = await library.applyFilter(filter);
+    } catch {
+      /* fall back to the unfiltered landing page */
+    }
+  }
+
+  const out: Array<{ id: string; title: string }> = [];
+  const seen = new Set<string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const take = (nodes: any[] | undefined): void => {
+    for (const node of nodes ?? []) {
+      const t = node?.title;
+      const title = typeof t === "string" ? t : t?.text;
+      const raw = node?.endpoint?.payload?.browseId ?? node?.id;
+      if (!raw) continue;
+      const id = String(raw).replace(/^VL/, "");
+      if (!id.startsWith("PL")) continue; // user/library playlists
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, title: title ?? "(untitled)" });
+    }
+  };
+
+  // Initial page: contents is an array of sections (Grid/MusicShelf).
+  for (const section of (library.contents as unknown[] | undefined) ?? []) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const s = section as any;
+    take(s?.items ?? s?.contents);
+  }
+
+  // Pagination: each continuation carries one section in `.contents`.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cont: any = library;
+  let guard = 0;
+  while (cont?.has_continuation && guard++ < 25) {
+    cont = await cont.getContinuation();
+    const c = cont?.contents;
+    take(c?.items ?? c?.contents);
+  }
+
+  return out;
 }
 
 // A music.youtube.com playlist URL has `list=VLPLxxxx` or `list=PLxxxx`; addVideos wants the bare
