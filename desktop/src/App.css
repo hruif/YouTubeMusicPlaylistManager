@@ -21,6 +21,7 @@
   --btn-bg: #ffffff;
   --btn-hover: #eef0f3;
   --stale: #e0a82e;
+  --sel: rgba(45, 108, 223, 0.16);
 
   color: var(--text);
   background-color: var(--app-bg);
@@ -40,6 +41,7 @@
     --btn-bg: #303035;
     --btn-hover: #3a3a40;
     --stale: #e0b14a;
+    --sel: rgba(91, 141, 239, 0.26);
   }
 }
 
@@ -274,6 +276,9 @@ input:focus {
 }
 .song-row:hover {
   background: var(--hover);
+}
+.song-row.selected {
+  background: var(--sel);
 }
 .cell {
   overflow: hidden;

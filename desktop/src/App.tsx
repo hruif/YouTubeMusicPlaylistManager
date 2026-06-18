@@ -86,6 +86,8 @@ function App() {
   const [detail, setDetail] = useState<CombinedSong | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
+  const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
+  const lastSongIndex = useRef<number | null>(null);
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -278,6 +280,28 @@ function App() {
   }
   const arrow = (key: SortKey) => (sortKey === key ? (sortAsc ? " ▲" : " ▼") : "");
 
+  // Song selection: plain click = select one; Cmd/Ctrl+click = toggle; Shift+click = range.
+  function onSongClick(e: React.MouseEvent, index: number) {
+    const id = visibleSongs[index].videoId;
+    if (e.shiftKey && lastSongIndex.current !== null) {
+      const [a, b] = [lastSongIndex.current, index].sort((x, y) => x - y);
+      const range = new Set<string>();
+      for (let i = a; i <= b; i++) range.add(visibleSongs[i].videoId);
+      setSelectedSongs(range);
+    } else if (e.metaKey || e.ctrlKey) {
+      setSelectedSongs((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      lastSongIndex.current = index;
+    } else {
+      setSelectedSongs(new Set([id]));
+      lastSongIndex.current = index;
+    }
+  }
+
   const uncachedSelected = selectedPlaylists.filter((p) => !cache.tracksByPlaylist[p.id]).length;
   const manageList = cache.playlists.filter((p) =>
     p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
@@ -378,7 +402,7 @@ function App() {
                 <input type="checkbox" checked={dupOnly} onChange={(e) => setDupOnly(e.currentTarget.checked)} />
                 in &gt;1 playlist
               </label>
-              <span className="count">{visibleSongs.length} songs</span>
+              <span className="count">{visibleSongs.length} songs{selectedSongs.size ? ` · ${selectedSongs.size} selected` : ""}</span>
             </div>
 
             <div className="song-head">
@@ -400,15 +424,20 @@ function App() {
                     return (
                       <div
                         key={s.videoId}
-                        className={`song-row${i % 2 ? " zebra" : ""}`}
+                        className={`song-row${i % 2 ? " zebra" : ""}${selectedSongs.has(s.videoId) ? " selected" : ""}`}
                         style={{ top: i * ROW_H }}
-                        onClick={() => setDetail(s)}
-                        onContextMenu={(e) =>
+                        onClick={(e) => onSongClick(e, i)}
+                        onDoubleClick={() => setDetail(s)}
+                        onContextMenu={(e) => {
+                          if (!selectedSongs.has(s.videoId)) {
+                            setSelectedSongs(new Set([s.videoId]));
+                            lastSongIndex.current = i;
+                          }
                           openMenu(e, [
                             { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
                             { label: "Details", onClick: () => setDetail(s) },
-                          ])
-                        }
+                          ]);
+                        }}
                       >
                         <div className="cell title-cell">
                           {s.thumb ? <img className="thumb" src={s.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
