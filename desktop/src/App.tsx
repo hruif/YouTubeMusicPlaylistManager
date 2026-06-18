@@ -90,6 +90,7 @@ function App() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
   const lastSongIndex = useRef<number | null>(null);
+  const lastClick = useRef<{ id: string; t: number } | null>(null);
   const [addPicker, setAddPicker] = useState(false);
   const [addQuery, setAddQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -265,13 +266,14 @@ function App() {
     () => songs.filter((s) => selectedSongs.has(s.videoId)),
     [songs, selectedSongs],
   );
-  const editablePlaylists = useMemo(
-    () =>
-      cache.playlists.filter(
-        (p) => editable.has(p.id) && p.title.toLowerCase().includes(addQuery.trim().toLowerCase()),
-      ),
-    [cache.playlists, editable, addQuery],
-  );
+  // Targets for "Add to playlist": all playlists (ownership can't be reliably detected up front),
+  // editable-detected ones sorted first. The add attempt itself reports if YouTube rejects it.
+  const addTargets = useMemo(() => {
+    const q = addQuery.trim().toLowerCase();
+    return cache.playlists
+      .filter((p) => p.title.toLowerCase().includes(q))
+      .sort((a, b) => Number(editable.has(b.id)) - Number(editable.has(a.id)));
+  }, [cache.playlists, editable, addQuery]);
 
   // Add the selected songs to a playlist you own — optimistic, reverting on error.
   async function addSelectedTo(target: Playlist) {
@@ -361,8 +363,18 @@ function App() {
   const arrow = (key: SortKey) => (sortKey === key ? (sortAsc ? " ▲" : " ▼") : "");
 
   // Song selection: plain click = select one; Cmd/Ctrl+click = toggle; Shift+click = range.
+  // Double-click (same row, fast) opens details — detected manually so a click after closing a
+  // modal can't be mis-counted as a double-click on a different row.
   function onSongClick(e: React.MouseEvent, index: number) {
-    const id = visibleSongs[index].videoId;
+    const song = visibleSongs[index];
+    const id = song.videoId;
+    const prev = lastClick.current;
+    if (prev && prev.id === id && e.timeStamp - prev.t < 350) {
+      lastClick.current = null;
+      setDetail(song);
+      return;
+    }
+    lastClick.current = { id, t: e.timeStamp };
     if (e.shiftKey && lastSongIndex.current !== null) {
       const [a, b] = [lastSongIndex.current, index].sort((x, y) => x - y);
       const range = new Set<string>();
@@ -507,7 +519,6 @@ function App() {
                         className={`song-row${i % 2 ? " zebra" : ""}${selectedSongs.has(s.videoId) ? " selected" : ""}`}
                         style={{ top: i * ROW_H }}
                         onClick={(e) => onSongClick(e, i)}
-                        onDoubleClick={() => setDetail(s)}
                         onContextMenu={(e) => {
                           let count = selectedSongs.size;
                           if (!selectedSongs.has(s.videoId)) {
@@ -597,25 +608,21 @@ function App() {
 
       {addPicker && (
         <Overlay title={`Add ${selectedTracks.length} song(s) to…`} onClose={() => setAddPicker(false)}>
-          {editable.size === 0 ? (
-            <p style={{ color: "var(--muted)", fontSize: 13 }}>
-              No editable playlists detected yet. Select your own playlists and “Update” them — YouTube
-              only exposes which playlists you can edit after fetching them.
-            </p>
-          ) : (
-            <>
-              <input placeholder="Filter your playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
-              <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-                {editablePlaylists.map((p) => (
-                  <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
-                    <span className="pl-title">{p.title}</span>
-                    {cache.tracksByPlaylist[p.id] && <span className="pl-meta">{cache.tracksByPlaylist[p.id].length}</span>}
-                  </div>
-                ))}
-                {editablePlaylists.length === 0 && <p className="empty">No matches.</p>}
+          <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>
+            Pick a playlist you own. ✓ marks ones detected as editable; others are still allowed and
+            will report an error if YouTube rejects the edit.
+          </p>
+          <input placeholder="Filter playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
+          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+            {addTargets.map((p) => (
+              <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
+                {editable.has(p.id) && <span style={{ color: "var(--accent)" }}>✓</span>}
+                <span className="pl-title">{p.title}</span>
+                {cache.tracksByPlaylist[p.id] && <span className="pl-meta">{cache.tracksByPlaylist[p.id].length}</span>}
               </div>
-            </>
-          )}
+            ))}
+            {addTargets.length === 0 && <p className="empty">No matches.</p>}
+          </div>
         </Overlay>
       )}
 

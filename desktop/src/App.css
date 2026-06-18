@@ -229,6 +229,13 @@ input:focus {
   white-space: nowrap;
 }
 
+.song-row,
+.pl-row,
+.sidebar-head,
+.song-head {
+  user-select: none;
+}
+
 .song-head {
   display: grid;
   grid-template-columns: 45% 33% 22%;
@@ -238,7 +245,6 @@ input:focus {
   border: 1px solid var(--border);
   border-radius: 9px 9px 0 0;
   background: var(--panel-bg);
-  user-select: none;
 }
 .song-head .col {
   cursor: pointer;
