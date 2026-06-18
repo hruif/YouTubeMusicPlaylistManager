@@ -189,14 +189,27 @@ for architecture/layout.
     stripped by WKWebView; `Origin` must be set or the SAPISIDHASH is ignored → `yt_li=0`;
     `SAPISID`/`__Secure-3PAPISID` aliasing) documented in `dev-docs/FUTURE_DIRECTIONS.md`. (Final
     manual confirm that a write lands on music.youtube.com still pending.)
-  - **Phase 1 — read-only parity (largely done).** YT Music library API (names, full list, private
-    playlists); cache-driven (library cached as JSON in the app data dir — instant browsing, network
-    only on explicit "Update", concurrent + resilient fetch, pooled HTTP client); combined sortable
-    song view with per-song details; song search; hide unwanted playlists via a "Manage playlists"
-    panel. Deferred: optional background auto-update.
-  - **Phase 2 — next:** edits (add/remove/create/delete/remove-repeats) + ownership + optimistic UI.
-  - Remaining risks: Spotify has no JS `spotapi` equivalent (re-port); the embedded-login premise
-    depends on continuing to evade Google's block (Chrome extension is the immune fallback).
+  - **Phase 1 — DONE.** YT Music library API (names, full list, private playlists); cache-driven
+    (library cached as JSON in the app data dir — instant browsing, network only on explicit
+    "Update", concurrent + resilient fetch, pooled HTTP client); virtualized combined sortable song
+    view with thumbnails + per-song details; song search (⌘F) + ">1 playlist" filter; multi-select;
+    hide playlists ("Manage playlists" + hover-×); staleness indicators + "Update stale"; persisted
+    selection/sort; custom right-click menus; light/dark design pass. Deferred: background auto-update.
+  - **Phase 2 — DONE.** Edits via right-click + confirmations, optimistic with revert: add/remove
+    songs (target pickers), create-from-selection, remove-repeats, delete playlist (hardened:
+    type-to-confirm + local archive + "Recently deleted" recreate). Ownership is best-effort (YouTube
+    no longer exposes it reliably), so edits attempt + report rejection. 404-prune of
+    externally-deleted playlists on update. Error popups for all failures.
+  - **Phase 3 — DONE.** Spotify import + transfer, no user setup: full spotapi port in TS
+    (`src/lib/spotify.ts` — TOTP token via community secret list, web-player bundle hash, client
+    token, paginated GraphQL pathfinder; all via the Rust proxy). Conservative matcher
+    (`searchYouTubeMusicSongs` + `bestYoutubeMatch`, ported from `spotify_matcher`); transfer creates
+    a playlist from confident matches and persists the unmatched (`cache.unmatched`, viewable via
+    right-click). Treated as fragile/non-fatal with clear errors.
+  - **Phase 4 — next:** remaining local features (custom names, removed-songs archive, CSV export,
+    unavailable-track finder, update checker) + packaging/notarization; then cut over from Python.
+  - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
+    Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   The Python app keeps shipping until parity.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
