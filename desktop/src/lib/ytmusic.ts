@@ -238,3 +238,8 @@ export async function createPlaylist(title: string, videoIds: string[]): Promise
   const res = await requireClient().playlist.create(title, videoIds);
   return res.playlist_id;
 }
+
+/** Delete a playlist you own. */
+export async function deletePlaylist(playlistId: string): Promise<void> {
+  await requireClient().playlist.delete(normalizePlaylistId(playlistId));
+}

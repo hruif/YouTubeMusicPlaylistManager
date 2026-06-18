@@ -8,7 +8,9 @@ import {
   fetchTracksForPlaylists,
   combineFromCache,
   addVideos,
+  removeVideos,
   createPlaylist,
+  deletePlaylist,
   type Playlist,
   type CombinedSong,
 } from "./lib/ytmusic";
@@ -95,6 +97,8 @@ function App() {
   const [addQuery, setAddQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [removePicker, setRemovePicker] = useState(false);
+  const [confirm, setConfirm] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -335,6 +339,119 @@ function App() {
     }
   }
 
+  function confirmAction(title: string, body: string, onConfirm: () => void) {
+    setConfirm({ title, body, onConfirm });
+  }
+
+  // Removal targets: the loaded (selected) playlists that contain ≥1 of the selected songs.
+  const removeTargets = useMemo(() => {
+    const sel = selectedSongs;
+    return selectedPlaylists.filter((p) =>
+      (cache.tracksByPlaylist[p.id] ?? []).some((t) => sel.has(t.videoId)),
+    );
+  }, [selectedPlaylists, selectedSongs, cache.tracksByPlaylist]);
+
+  // Remove the selected songs from a playlist — confirm, optimistic, revert on error.
+  function removeSelectedFrom(target: Playlist) {
+    setRemovePicker(false);
+    const existing = cache.tracksByPlaylist[target.id] ?? [];
+    const ids = [...new Set(existing.filter((t) => selectedSongs.has(t.videoId)).map((t) => t.videoId))];
+    if (ids.length === 0) return;
+    confirmAction(
+      `Remove ${ids.length} song(s) from “${target.title}”?`,
+      "This removes them from the playlist on your YouTube Music account.",
+      async () => {
+        const remaining = existing.filter((t) => !selectedSongs.has(t.videoId));
+        persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: remaining } });
+        setBusy(true);
+        setStatus(`Removing ${ids.length} from ${target.title}…`);
+        try {
+          await removeVideos(target.id, ids);
+          setStatus(`Removed ${ids.length} from ${target.title}`);
+        } catch (err) {
+          persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
+          setStatus(`Remove failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
+  }
+
+  // Delete a playlist (non-optimistic — don't drop local data unless YouTube confirms).
+  function deletePlaylistAction(p: Playlist) {
+    confirmAction(
+      `Delete “${p.title}”?`,
+      "This permanently deletes the playlist from your YouTube Music account. This can't be undone.",
+      async () => {
+        setBusy(true);
+        setStatus(`Deleting ${p.title}…`);
+        try {
+          await deletePlaylist(p.id);
+          const tracksByPlaylist = { ...cache.tracksByPlaylist };
+          delete tracksByPlaylist[p.id];
+          const updatedAt = { ...cache.updatedAt };
+          delete updatedAt[p.id];
+          persist({
+            ...cache,
+            playlists: cache.playlists.filter((x) => x.id !== p.id),
+            tracksByPlaylist,
+            updatedAt,
+            hidden: cache.hidden.filter((id) => id !== p.id),
+            editable: cache.editable.filter((id) => id !== p.id),
+          });
+          setSelected((prev) => {
+            const s = new Set(prev);
+            s.delete(p.id);
+            return s;
+          });
+          setStatus(`Deleted ${p.title}`);
+        } catch (err) {
+          setStatus(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
+  }
+
+  // Remove repeated songs (same video appearing more than once) within one playlist, keeping one.
+  function removeRepeats(p: Playlist) {
+    const tracks = cache.tracksByPlaylist[p.id];
+    if (!tracks) {
+      setStatus(`Update “${p.title}” first to find repeats`);
+      return;
+    }
+    const counts = new Map<string, number>();
+    for (const t of tracks) counts.set(t.videoId, (counts.get(t.videoId) ?? 0) + 1);
+    const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([id]) => id);
+    if (repeated.length === 0) {
+      setStatus(`No repeats in “${p.title}”`);
+      return;
+    }
+    confirmAction(
+      `Remove ${repeated.length} repeated song(s) in “${p.title}”?`,
+      "Keeps one copy of each. Note: YouTube doesn't expose per-copy ids, so de-duplicated songs are re-added once and move to the end of the playlist.",
+      async () => {
+        const seen = new Set<string>();
+        const deduped = tracks.filter((t) => (seen.has(t.videoId) ? false : (seen.add(t.videoId), true)));
+        persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [p.id]: deduped } });
+        setBusy(true);
+        setStatus(`Removing repeats in ${p.title}…`);
+        try {
+          await removeVideos(p.id, repeated); // removes ALL occurrences of each repeated id
+          await addVideos(p.id, repeated); // add one of each back
+          setStatus(`Removed repeats in ${p.title} (${repeated.length})`);
+        } catch (err) {
+          persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [p.id]: tracks } });
+          setStatus(`Remove repeats failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
+  }
+
   const visibleSongs = useMemo(() => {
     const q = query.trim().toLowerCase();
     let filtered = songs;
@@ -461,8 +578,10 @@ function App() {
                     className="pl-row"
                     onContextMenu={(e) =>
                       openMenu(e, [
+                        { label: "Remove repeats", onClick: () => removeRepeats(p) },
                         { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
                         { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
+                        { label: "Delete playlist…", onClick: () => deletePlaylistAction(p) },
                       ])
                     }
                   >
@@ -528,6 +647,7 @@ function App() {
                           }
                           openMenu(e, [
                             { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
+                            { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
                             { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
                             { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
                             { label: "Details", onClick: () => setDetail(s) },
@@ -622,6 +742,44 @@ function App() {
               </div>
             ))}
             {addTargets.length === 0 && <p className="empty">No matches.</p>}
+          </div>
+        </Overlay>
+      )}
+
+      {removePicker && (
+        <Overlay title={`Remove ${selectedTracks.length} song(s) from…`} onClose={() => setRemovePicker(false)}>
+          {removeTargets.length === 0 ? (
+            <p className="empty">The selected songs aren’t in any of the loaded (selected) playlists.</p>
+          ) : (
+            <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+              {removeTargets.map((p) => (
+                <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => removeSelectedFrom(p)}>
+                  <span className="pl-title">{p.title}</span>
+                  <span className="pl-meta">
+                    {(cache.tracksByPlaylist[p.id] ?? []).filter((t) => selectedSongs.has(t.videoId)).length} selected
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Overlay>
+      )}
+
+      {confirm && (
+        <Overlay title={confirm.title} onClose={() => setConfirm(null)}>
+          <p style={{ fontSize: 13 }}>{confirm.body}</p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={() => setConfirm(null)}>Cancel</button>
+            <button
+              className="primary"
+              onClick={() => {
+                const fn = confirm.onConfirm;
+                setConfirm(null);
+                fn();
+              }}
+            >
+              Confirm
+            </button>
           </div>
         </Overlay>
       )}
