@@ -239,9 +239,20 @@ export async function createPlaylist(title: string, videoIds: string[]): Promise
   return res.playlist_id;
 }
 
-/** Delete a playlist you own. Throws if YouTube reports failure (it may not throw on its own). */
+/**
+ * Delete a playlist you own. youtubei.js's `playlist.delete` builds a NavigationEndpoint it can't
+ * resolve a URL for ("Expected an api_url"), so call the InnerTube /playlist/delete endpoint
+ * directly. Throws if YouTube reports failure (it doesn't always throw on its own).
+ */
 export async function deletePlaylist(playlistId: string): Promise<void> {
-  const res = await requireClient().playlist.delete(normalizePlaylistId(playlistId));
+  const execute = requireClient().actions.execute as unknown as (
+    endpoint: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ success: boolean; status_code: number }>;
+  const res = await execute("/playlist/delete", {
+    playlistId: normalizePlaylistId(playlistId),
+    parse: false,
+  });
   const ok = res?.success !== false && (res?.status_code === undefined || res.status_code < 400);
   if (!ok) {
     throw new Error(`YouTube rejected the delete (success=${res?.success}, status=${res?.status_code})`);

@@ -102,6 +102,14 @@ function App() {
   const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null);
   const [deleteText, setDeleteText] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Report a failure: status line + a popup so it's obvious something went wrong.
+  function fail(message: string) {
+    setStatus(message);
+    setError(message);
+  }
+  const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -159,7 +167,7 @@ function App() {
       persist({ ...current, playlists });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
-      setStatus(`Failed to refresh playlists: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Failed to refresh playlists: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -257,7 +265,7 @@ function App() {
       const n = Object.keys(tracksByPlaylist).length;
       setStatus(failures.length ? `Updated ${n}; ${failures.length} failed (retry)` : `Updated ${n} playlist(s)`);
     } catch (err) {
-      setStatus(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Update failed: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -305,7 +313,7 @@ function App() {
       setStatus(`Added ${toAdd.length} to ${target.title}`);
     } catch (err) {
       persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
-      setStatus(`Add failed: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Add failed: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -336,7 +344,7 @@ function App() {
         await refreshPlaylists(cache);
       }
     } catch (err) {
-      setStatus(`Create failed: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Create failed: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -373,7 +381,7 @@ function App() {
           setStatus(`Removed ${ids.length} from ${target.title}`);
         } catch (err) {
           persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
-          setStatus(`Remove failed: ${err instanceof Error ? err.message : String(err)}`);
+          fail(`Remove failed: ${errText(err)}`);
         } finally {
           setBusy(false);
         }
@@ -412,7 +420,7 @@ function App() {
       });
       setStatus(`Deleted ${p.title} (archived ${tracks.length} songs for recovery)`);
     } catch (err) {
-      setStatus(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Delete failed: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -439,7 +447,7 @@ function App() {
         await refreshPlaylists(cache);
       }
     } catch (err) {
-      setStatus(`Recreate failed: ${err instanceof Error ? err.message : String(err)}`);
+      fail(`Recreate failed: ${errText(err)}`);
     } finally {
       setBusy(false);
     }
@@ -474,7 +482,7 @@ function App() {
           setStatus(`Removed repeats in ${p.title} (${repeated.length})`);
         } catch (err) {
           persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [p.id]: tracks } });
-          setStatus(`Remove repeats failed: ${err instanceof Error ? err.message : String(err)}`);
+          fail(`Remove repeats failed: ${errText(err)}`);
         } finally {
           setBusy(false);
         }
@@ -901,6 +909,15 @@ function App() {
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button onClick={() => setCreateOpen(false)}>Cancel</button>
             <button className="primary" disabled={!newName.trim()} onClick={createFromSelection}>Create</button>
+          </div>
+        </Overlay>
+      )}
+
+      {error && (
+        <Overlay title="⚠️ Something went wrong" onClose={() => setError(null)}>
+          <p className="warn" style={{ fontSize: 13, wordBreak: "break-word" }}>{error}</p>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="primary" onClick={() => setError(null)}>OK</button>
           </div>
         </Overlay>
       )}
