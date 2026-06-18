@@ -943,10 +943,7 @@ function App() {
         <div className="welcome">
           <img className="welcome-icon" src="/icon.png" alt="" onError={(e) => (e.currentTarget.style.display = "none")} />
           <h2>YouTube Music Manager</h2>
-          <p className="welcome-sub">
-            Manage your YouTube Music playlists — combine, search, edit, find duplicates, and import
-            from Spotify. Sign in once; the session stays put (no header copying).
-          </p>
+          <p className="welcome-sub">Manage your YouTube Music playlists, and import from Spotify.</p>
           <button className="primary big" disabled={busy} onClick={doSignIn}>
             {busy ? "Signing in…" : "Sign in to YouTube Music"}
           </button>
