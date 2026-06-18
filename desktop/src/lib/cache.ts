@@ -17,6 +17,7 @@ export type LibraryCache = {
   editable: string[]; // playlist ids you own (detected on update)
   deleted: DeletedPlaylist[]; // archive of deleted playlists (for recreation)
   unmatched: Record<string, { title: string; artist: string }[]>; // Spotify tracks not matched, by new playlist id
+  customNames: Record<string, string>; // local searchable aliases, by videoId
 };
 
 export const EMPTY_CACHE: LibraryCache = {
@@ -27,6 +28,7 @@ export const EMPTY_CACHE: LibraryCache = {
   editable: [],
   deleted: [],
   unmatched: {},
+  customNames: {},
 };
 
 export async function loadCache(): Promise<LibraryCache> {
@@ -42,6 +44,7 @@ export async function loadCache(): Promise<LibraryCache> {
       editable: parsed.editable ?? [],
       deleted: parsed.deleted ?? [],
       unmatched: parsed.unmatched ?? {},
+      customNames: parsed.customNames ?? {},
     };
   } catch {
     return { ...EMPTY_CACHE };

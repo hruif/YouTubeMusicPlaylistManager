@@ -91,6 +91,7 @@ function App() {
   const [showManage, setShowManage] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [detail, setDetail] = useState<CombinedSong | null>(null);
+  const [customDraft, setCustomDraft] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
@@ -215,6 +216,18 @@ function App() {
   function persist(next: LibraryCache) {
     setCache(next);
     void saveCache(next);
+  }
+
+  function openDetails(s: CombinedSong) {
+    setDetail(s);
+    setCustomDraft(cache.customNames[s.videoId] ?? "");
+  }
+  function commitCustomName(videoId: string, value: string) {
+    const v = value.trim();
+    const next = { ...cache.customNames };
+    if (v) next[videoId] = v;
+    else delete next[videoId];
+    persist({ ...cache, customNames: next });
   }
 
   const openSong = (videoId: string) => void openUrl(`https://music.youtube.com/watch?v=${videoId}`);
@@ -632,7 +645,13 @@ function App() {
   const visibleSongs = useMemo(() => {
     const q = query.trim().toLowerCase();
     let filtered = songs;
-    if (q) filtered = filtered.filter((s) => s.title.toLowerCase().includes(q) || s.artist.toLowerCase().includes(q));
+    if (q)
+      filtered = filtered.filter(
+        (s) =>
+          s.title.toLowerCase().includes(q) ||
+          s.artist.toLowerCase().includes(q) ||
+          (cache.customNames[s.videoId]?.toLowerCase().includes(q) ?? false),
+      );
     if (dupOnly) filtered = filtered.filter((s) => s.playlists.length > 1);
     const copy = [...filtered];
     copy.sort((a, b) => {
@@ -643,7 +662,7 @@ function App() {
       return sortAsc ? cmp : -cmp;
     });
     return copy;
-  }, [songs, query, dupOnly, sortKey, sortAsc]);
+  }, [songs, query, dupOnly, sortKey, sortAsc, cache.customNames]);
 
   const v = useVirtual(visibleSongs.length);
 
@@ -665,7 +684,7 @@ function App() {
     const prev = lastClick.current;
     if (prev && prev.id === id && e.timeStamp - prev.t < 350) {
       lastClick.current = null;
-      setDetail(song);
+      openDetails(song);
       return;
     }
     lastClick.current = { id, t: e.timeStamp };
@@ -833,14 +852,17 @@ function App() {
                             { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
                             { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
                             { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
+                            { label: "Set custom name…", onClick: () => openDetails(s) },
                             { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
-                            { label: "Details", onClick: () => setDetail(s) },
+                            { label: "Details", onClick: () => openDetails(s) },
                           ]);
                         }}
                       >
                         <div className="cell title-cell">
                           {s.thumb ? <img className="thumb" src={s.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
-                          <span className="ttext">{s.title}</span>
+                          <span className="ttext" title={cache.customNames[s.videoId] ? s.title : undefined}>
+                            {cache.customNames[s.videoId] || s.title}
+                          </span>
                         </div>
                         <div className="cell muted">{s.artist}</div>
                         <div className="cell muted" title={s.playlists.join(", ")}>
@@ -881,6 +903,15 @@ function App() {
       {detail && (
         <Overlay title={detail.title} onClose={() => setDetail(null)}>
           <p style={{ margin: "4px 0" }}><strong>Artist:</strong> {detail.artist || "—"}</p>
+          <p style={{ margin: "8px 0 4px" }}><strong>Custom name</strong> (local, searchable):</p>
+          <input
+            style={{ width: "100%" }}
+            placeholder="Your own name for this song…"
+            value={customDraft}
+            onChange={(e) => setCustomDraft(e.currentTarget.value)}
+            onBlur={() => commitCustomName(detail.videoId, customDraft)}
+            onKeyDown={(e) => e.key === "Enter" && commitCustomName(detail.videoId, customDraft)}
+          />
           <p style={{ margin: "4px 0", display: "flex", gap: 8, alignItems: "center" }}>
             <button className="small" onClick={() => openUrl(`https://music.youtube.com/watch?v=${detail.videoId}`)}>
               Open in YouTube Music
