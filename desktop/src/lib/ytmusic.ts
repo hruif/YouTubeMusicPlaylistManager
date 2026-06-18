@@ -175,9 +175,15 @@ export async function fetchTracksForPlaylists(
   playlists: Playlist[],
   concurrency = 4,
   onDone?: (done: number, total: number, playlist: Playlist, ok: boolean) => void,
-): Promise<{ tracksByPlaylist: Record<string, Track[]>; editableIds: string[]; failures: Playlist[] }> {
+): Promise<{
+  tracksByPlaylist: Record<string, Track[]>;
+  editableIds: string[];
+  notFoundIds: string[];
+  failures: Playlist[];
+}> {
   const tracksByPlaylist: Record<string, Track[]> = {};
   const editableIds: string[] = [];
+  const notFoundIds: string[] = []; // playlists YouTube reports as gone (HTTP 404)
   const failures: Playlist[] = [];
   let next = 0;
   let done = 0;
@@ -189,8 +195,11 @@ export async function fetchTracksForPlaylists(
         tracksByPlaylist[playlist.id] = tracks;
         if (editable) editableIds.push(playlist.id);
         onDone?.(++done, playlists.length, playlist, true);
-      } catch {
-        failures.push(playlist);
+      } catch (err) {
+        // Only treat an explicit 404 as "gone" — never an empty result or a transient error.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/status code 404/i.test(msg)) notFoundIds.push(playlist.id);
+        else failures.push(playlist);
         onDone?.(++done, playlists.length, playlist, false);
       }
     }
@@ -198,7 +207,7 @@ export async function fetchTracksForPlaylists(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, playlists.length) }, () => worker()),
   );
-  return { tracksByPlaylist, editableIds, failures };
+  return { tracksByPlaylist, editableIds, notFoundIds, failures };
 }
 
 /**

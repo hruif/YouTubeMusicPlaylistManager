@@ -250,20 +250,58 @@ function App() {
     setBusy(true);
     setStatus(`Updating 0/${list.length}…`);
     try {
-      const { tracksByPlaylist, editableIds, failures } = await fetchTracksForPlaylists(list, 4, (done, total) =>
-        setStatus(`Updating ${done}/${total}…`),
+      const { tracksByPlaylist, editableIds, notFoundIds, failures } = await fetchTracksForPlaylists(
+        list,
+        4,
+        (done, total) => setStatus(`Updating ${done}/${total}…`),
       );
       const now = Date.now();
       const updatedAt = { ...cache.updatedAt };
       for (const id of Object.keys(tracksByPlaylist)) updatedAt[id] = now;
-      persist({
+      let next: LibraryCache = {
         ...cache,
         tracksByPlaylist: { ...cache.tracksByPlaylist, ...tracksByPlaylist },
         updatedAt,
         editable: [...new Set([...cache.editable, ...editableIds])],
-      });
+      };
+
+      // 404-prune: drop playlists YouTube reports as gone (deleted elsewhere), archiving their
+      // cached songs so nothing is silently lost.
+      if (notFoundIds.length) {
+        const gone = new Set(notFoundIds);
+        const tracks = { ...next.tracksByPlaylist };
+        const upd = { ...next.updatedAt };
+        const archived: LibraryCache["deleted"] = [];
+        for (const id of notFoundIds) {
+          const pl = cache.playlists.find((p) => p.id === id);
+          const t = cache.tracksByPlaylist[id] ?? [];
+          if (pl && t.length) archived.push({ id, title: pl.title, tracks: t, deletedAt: now });
+          delete tracks[id];
+          delete upd[id];
+        }
+        next = {
+          ...next,
+          playlists: next.playlists.filter((p) => !gone.has(p.id)),
+          tracksByPlaylist: tracks,
+          updatedAt: upd,
+          hidden: next.hidden.filter((id) => !gone.has(id)),
+          editable: next.editable.filter((id) => !gone.has(id)),
+          deleted: [...archived, ...next.deleted].slice(0, 30),
+        };
+        setSelected((prev) => {
+          const s = new Set(prev);
+          for (const id of notFoundIds) s.delete(id);
+          return s;
+        });
+      }
+
+      persist(next);
       const n = Object.keys(tracksByPlaylist).length;
-      setStatus(failures.length ? `Updated ${n}; ${failures.length} failed (retry)` : `Updated ${n} playlist(s)`);
+      const extras = [
+        notFoundIds.length ? `removed ${notFoundIds.length} deleted` : "",
+        failures.length ? `${failures.length} failed (retry)` : "",
+      ].filter(Boolean);
+      setStatus(`Updated ${n} playlist(s)${extras.length ? ` · ${extras.join(" · ")}` : ""}`);
     } catch (err) {
       fail(`Update failed: ${errText(err)}`);
     } finally {
