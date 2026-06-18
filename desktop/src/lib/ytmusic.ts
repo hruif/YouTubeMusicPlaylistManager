@@ -127,7 +127,7 @@ function normalizePlaylistId(playlistId: string): string {
 }
 
 export type Playlist = { id: string; title: string };
-export type Track = { videoId: string; title: string; artist: string };
+export type Track = { videoId: string; title: string; artist: string; thumb?: string };
 export type CombinedSong = Track & { playlists: string[] };
 
 /** Fetch all tracks of a YT Music playlist (paginated). */
@@ -146,7 +146,10 @@ export async function getPlaylistTracks(playlistId: string): Promise<Track[]> {
         (item?.artists ?? []).map((a: any) => a?.name).filter(Boolean).join(", ") ||
         (typeof item?.subtitle === "string" ? item.subtitle : item?.subtitle?.text) ||
         "";
-      out.push({ videoId, title, artist });
+      // Smallest thumbnail URL (public CDN image; just the URL string is stored).
+      const thumbs = item?.thumbnail?.contents ?? item?.thumbnails ?? [];
+      const thumb: string | undefined = thumbs[0]?.url;
+      out.push({ videoId, title, artist, thumb });
     }
   };
   take(playlist.items);

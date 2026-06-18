@@ -284,6 +284,65 @@ input:focus {
 .cell.muted {
   color: var(--muted);
 }
+.title-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.title-cell .ttext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: 0 0 auto;
+  background: var(--hover);
+}
+
+/* hover-hide button on playlist rows */
+.pl-hide {
+  visibility: hidden;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.pl-row:hover .pl-hide {
+  visibility: visible;
+}
+.pl-hide:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* context menu */
+.ctx-menu {
+  position: fixed;
+  z-index: 30;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  padding: 4px 0;
+  min-width: 180px;
+}
+.ctx-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ctx-item:hover {
+  background: var(--accent);
+  color: #fff;
+}
 .empty {
   padding: 18px;
   color: var(--muted);

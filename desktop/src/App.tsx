@@ -82,11 +82,33 @@ function App() {
   const [manageQuery, setManageQuery] = useState("");
   const [detail, setDetail] = useState<CombinedSong | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
 
   function persist(next: LibraryCache) {
     setCache(next);
     void saveCache(next);
   }
+
+  const openSong = (videoId: string) => void openUrl(`https://music.youtube.com/watch?v=${videoId}`);
+  const openPlaylist = (id: string) => void openUrl(`https://music.youtube.com/playlist?list=${id}`);
+  function openMenu(e: React.MouseEvent, items: { label: string; onClick: () => void }[]) {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 190), y: e.clientY, items });
+  }
+
+  // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own;
+  // any left-click dismisses an open context menu.
+  useEffect(() => {
+    const onCtx = (e: MouseEvent) => e.preventDefault();
+    const onClick = () => setMenu(null);
+    window.addEventListener("contextmenu", onCtx);
+    window.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("contextmenu", onCtx);
+      window.removeEventListener("click", onClick);
+    };
+  }, []);
 
   // Persist UI state on change.
   useEffect(() => {
@@ -307,20 +329,30 @@ function App() {
           <section className="sidebar">
             <div className="sidebar-head">
               <strong>Playlists ({visiblePlaylists.length})</strong>
-              <button className="small" onClick={() => setSelected(new Set(visiblePlaylists.map((p) => p.id)))}>all</button>
-              <button className="small" onClick={() => setSelected(new Set())}>none</button>
+              <button className="small" onClick={() => setSelected(new Set(visiblePlaylists.map((p) => p.id)))}>Select all</button>
+              <button className="small" onClick={() => setSelected(new Set())}>Clear</button>
             </div>
             <div className="panel list">
               {visiblePlaylists.map((p) => {
                 const tracks = cache.tracksByPlaylist[p.id];
                 const stale = isStale(p.id);
                 return (
-                  <label key={p.id} className="pl-row">
+                  <div
+                    key={p.id}
+                    className="pl-row"
+                    onContextMenu={(e) =>
+                      openMenu(e, [
+                        { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
+                        { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
+                      ])
+                    }
+                  >
                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} />
-                    <span className="pl-title">{p.title}</span>
+                    <span className="pl-title" onClick={() => toggleSelected(p.id)}>{p.title}</span>
                     {stale && <span className={`dot ${tracks ? "stale" : "none"}`} title={tracks ? `Updated ${relativeAge(cache.updatedAt[p.id])}` : "Not cached"} />}
                     {tracks && <span className="pl-meta">{tracks.length}</span>}
-                  </label>
+                    <button className="pl-hide" title="Hide from sidebar" onClick={() => setPlaylistHidden(p.id, true)}>×</button>
+                  </div>
                 );
               })}
               {visiblePlaylists.length === 0 && <p className="empty">All playlists hidden — use “Manage playlists”.</p>}
@@ -368,8 +400,17 @@ function App() {
                         className={`song-row${i % 2 ? " zebra" : ""}`}
                         style={{ top: i * ROW_H }}
                         onClick={() => setDetail(s)}
+                        onContextMenu={(e) =>
+                          openMenu(e, [
+                            { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
+                            { label: "Details", onClick: () => setDetail(s) },
+                          ])
+                        }
                       >
-                        <div className="cell">{s.title}</div>
+                        <div className="cell title-cell">
+                          {s.thumb ? <img className="thumb" src={s.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
+                          <span className="ttext">{s.title}</span>
+                        </div>
                         <div className="cell muted">{s.artist}</div>
                         <div className="cell muted" title={s.playlists.join(", ")}>
                           {s.playlists.length === 1 ? s.playlists[0] : `${s.playlists.length} playlists`}
@@ -436,6 +477,23 @@ function App() {
             })}
           </ul>
         </Overlay>
+      )}
+
+      {menu && (
+        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+          {menu.items.map((it) => (
+            <div
+              key={it.label}
+              className="ctx-item"
+              onClick={() => {
+                it.onClick();
+                setMenu(null);
+              }}
+            >
+              {it.label}
+            </div>
+          ))}
+        </div>
       )}
     </main>
   );
