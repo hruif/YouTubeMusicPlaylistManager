@@ -149,8 +149,16 @@ export async function tauriFetch(
     input: { method, url, headers, body_base64: body_base64 ?? null },
   });
 
+  // Drop Set-Cookie: youtubei.js doesn't use it, and our proxy may join multiple Set-Cookie values
+  // with newlines, which the Response/Headers constructor rejects as an invalid header value.
+  const responseHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(response.headers)) {
+    if (key.toLowerCase() === "set-cookie") continue;
+    responseHeaders[key] = value;
+  }
+
   return new Response(fromBase64(response.body_base64), {
     status: response.status,
-    headers: response.headers,
+    headers: responseHeaders,
   });
 }
