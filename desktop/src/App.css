@@ -229,11 +229,16 @@ input:focus {
   white-space: nowrap;
 }
 
-.song-row,
-.pl-row,
-.sidebar-head,
-.song-head {
+/* No accidental text selection in the chrome (WKWebView needs the -webkit- prefix);
+   re-enable it inside inputs and modals so the video id etc. can still be copied. */
+.app {
+  -webkit-user-select: none;
   user-select: none;
+}
+input,
+.modal {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .song-head {

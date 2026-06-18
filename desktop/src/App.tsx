@@ -266,14 +266,14 @@ function App() {
     () => songs.filter((s) => selectedSongs.has(s.videoId)),
     [songs, selectedSongs],
   );
-  // Targets for "Add to playlist": all playlists (ownership can't be reliably detected up front),
-  // editable-detected ones sorted first. The add attempt itself reports if YouTube rejects it.
+  // Targets for "Add to playlist": the shown (non-hidden) playlists; ownership can't be reliably
+  // detected up front, so editable-detected ones sort first and the add attempt reports rejection.
   const addTargets = useMemo(() => {
     const q = addQuery.trim().toLowerCase();
-    return cache.playlists
+    return visiblePlaylists
       .filter((p) => p.title.toLowerCase().includes(q))
       .sort((a, b) => Number(editable.has(b.id)) - Number(editable.has(a.id)));
-  }, [cache.playlists, editable, addQuery]);
+  }, [visiblePlaylists, editable, addQuery]);
 
   // Add the selected songs to a playlist you own — optimistic, reverting on error.
   async function addSelectedTo(target: Playlist) {
