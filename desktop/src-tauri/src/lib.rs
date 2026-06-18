@@ -293,6 +293,20 @@ fn write_cache(app: tauri::AppHandle, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
+/// Show a native Save dialog and write `contents` to the chosen path. Returns false if cancelled.
+#[tauri::command]
+fn export_text_file(app: tauri::AppHandle, default_name: String, contents: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    match app.dialog().file().set_file_name(&default_name).blocking_save_file() {
+        Some(path) => {
+            let pb = path.into_path().map_err(|e| e.to_string())?;
+            std::fs::write(pb, contents).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let http_client = reqwest::Client::builder()
@@ -302,6 +316,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(SessionState::default())
         .manage(HttpClient(http_client))
         .invoke_handler(tauri::generate_handler![
@@ -311,7 +326,8 @@ pub fn run() {
             session_status,
             proxy_http_request,
             read_cache,
-            write_cache
+            write_cache,
+            export_text_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

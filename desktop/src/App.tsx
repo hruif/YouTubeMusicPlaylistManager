@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   signIn,
@@ -115,6 +116,7 @@ function App() {
   const [spotifyName, setSpotifyName] = useState("");
   const [transferResult, setTransferResult] = useState<{ name: string; matched: number; unmatched: SpotifyTrack[] } | null>(null);
   const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
+  const [showRemoved, setShowRemoved] = useState<string | null>(null);
 
   // Report a failure: status line + a popup so it's obvious something went wrong.
   function fail(message: string) {
@@ -372,11 +374,35 @@ function App() {
       const now = Date.now();
       const updatedAt = { ...cache.updatedAt };
       for (const id of Object.keys(tracksByPlaylist)) updatedAt[id] = now;
+
+      // Archive songs that vanished from a playlist (present before, absent in the fresh fetch).
+      // Guard: skip on first fetch (no prior) or an empty fetch (likely a hiccup), so we never wipe.
+      const removedSongs = { ...cache.removedSongs };
+      let removedCount = 0;
+      for (const id of Object.keys(tracksByPlaylist)) {
+        const fresh = tracksByPlaylist[id];
+        const old = cache.tracksByPlaylist[id];
+        if (!old || fresh.length === 0) continue;
+        const freshIds = new Set(fresh.map((t) => t.videoId));
+        const gone = old.filter((o) => !freshIds.has(o.videoId));
+        if (gone.length === 0) continue;
+        const existing = removedSongs[id] ?? [];
+        const seen = new Set(existing.map((r) => `${r.title}|${r.artist}`));
+        const additions = gone
+          .filter((g) => !seen.has(`${g.title}|${g.artist}`))
+          .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
+        if (additions.length) {
+          removedSongs[id] = [...additions, ...existing].slice(0, 500);
+          removedCount += additions.length;
+        }
+      }
+
       let next: LibraryCache = {
         ...cache,
         tracksByPlaylist: { ...cache.tracksByPlaylist, ...tracksByPlaylist },
         updatedAt,
         editable: [...new Set([...cache.editable, ...editableIds])],
+        removedSongs,
       };
 
       // 404-prune: drop playlists YouTube reports as gone (deleted elsewhere), archiving their
@@ -413,6 +439,7 @@ function App() {
       const n = Object.keys(tracksByPlaylist).length;
       const extras = [
         notFoundIds.length ? `removed ${notFoundIds.length} deleted` : "",
+        removedCount ? `archived ${removedCount} removed song(s)` : "",
         failures.length ? `${failures.length} failed (retry)` : "",
       ].filter(Boolean);
       setStatus(`Updated ${n} playlist(s)${extras.length ? ` · ${extras.join(" · ")}` : ""}`);
@@ -605,6 +632,29 @@ function App() {
     }
   }
 
+  // Export a playlist's cached tracks to a CSV (native save dialog).
+  async function exportPlaylist(p: Playlist) {
+    const tracks = cache.tracksByPlaylist[p.id];
+    if (!tracks || tracks.length === 0) {
+      setStatus(`Update “${p.title}” first to export it`);
+      return;
+    }
+    const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const rows = [
+      "Title,Artist,Video ID",
+      ...tracks.map((t) => [t.title, t.artist, t.videoId].map((x) => esc(x || "")).join(",")),
+    ];
+    try {
+      const saved = await invoke<boolean>("export_text_file", {
+        defaultName: `${p.title}.csv`,
+        contents: rows.join("\n"),
+      });
+      setStatus(saved ? `Exported “${p.title}” (${tracks.length} songs)` : "Export cancelled");
+    } catch (err) {
+      fail(`Export failed: ${errText(err)}`);
+    }
+  }
+
   // Remove repeated songs (same video appearing more than once) within one playlist, keeping one.
   function removeRepeats(p: Playlist) {
     const tracks = cache.tracksByPlaylist[p.id];
@@ -779,6 +829,10 @@ function App() {
                     onContextMenu={(e) =>
                       openMenu(e, [
                         { label: "Remove repeats", onClick: () => removeRepeats(p) },
+                        { label: "Export to CSV…", onClick: () => exportPlaylist(p) },
+                        ...(cache.removedSongs[p.id]?.length
+                          ? [{ label: `Removed songs (${cache.removedSongs[p.id].length})`, onClick: () => setShowRemoved(p.id) }]
+                          : []),
                         ...(cache.unmatched[p.id]?.length
                           ? [{ label: `Unmatched from Spotify (${cache.unmatched[p.id].length})`, onClick: () => setShowUnmatched(p.id) }]
                           : []),
@@ -1159,6 +1213,24 @@ function App() {
           ) : (
             <p style={{ color: "var(--muted)" }}>Everything matched. 🎉</p>
           )}
+        </Overlay>
+      )}
+
+      {showRemoved && (
+        <Overlay title="Removed songs (archived on update)" onClose={() => setShowRemoved(null)}>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
+            Songs that disappeared from this playlist (deleted/taken down). The link is gone, but the
+            title/artist are kept so you can find a replacement.
+          </p>
+          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+            {(cache.removedSongs[showRemoved] ?? []).map((t, i) => (
+              <div key={i} className="pl-row">
+                <span className="pl-title">{t.title}</span>
+                <span className="pl-meta">{t.artist} · {relativeAge(t.removedAt)}</span>
+                <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
+              </div>
+            ))}
+          </div>
         </Overlay>
       )}
 
