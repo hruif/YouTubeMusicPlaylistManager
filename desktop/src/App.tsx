@@ -970,14 +970,17 @@ function App() {
         <Overlay title={detail.title} onClose={() => setDetail(null)}>
           <p style={{ margin: "4px 0" }}><strong>Artist:</strong> {detail.artist || "—"}</p>
           <p style={{ margin: "8px 0 4px" }}><strong>Custom name</strong> (local, searchable):</p>
-          <input
-            style={{ width: "100%" }}
-            placeholder="Your own name for this song…"
-            value={customDraft}
-            onChange={(e) => setCustomDraft(e.currentTarget.value)}
-            onBlur={() => commitCustomName(detail.videoId, customDraft)}
-            onKeyDown={(e) => e.key === "Enter" && commitCustomName(detail.videoId, customDraft)}
-          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder="Your own name for this song…"
+              value={customDraft}
+              onChange={(e) => setCustomDraft(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && commitCustomName(detail.videoId, customDraft)}
+            />
+            <button className="primary" onClick={() => commitCustomName(detail.videoId, customDraft)}>Save</button>
+            {customDraft && <button onClick={() => { setCustomDraft(""); commitCustomName(detail.videoId, ""); }}>Clear</button>}
+          </div>
           <p style={{ margin: "4px 0", display: "flex", gap: 8, alignItems: "center" }}>
             <button className="small" onClick={() => openUrl(`https://music.youtube.com/watch?v=${detail.videoId}`)}>
               Open in YouTube Music

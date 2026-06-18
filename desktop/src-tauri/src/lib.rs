@@ -294,8 +294,10 @@ fn write_cache(app: tauri::AppHandle, contents: String) -> Result<(), String> {
 }
 
 /// Show a native Save dialog and write `contents` to the chosen path. Returns false if cancelled.
+/// Must be `async` so it runs off the main thread — `blocking_save_file` blocks its thread while the
+/// dialog needs the main thread to run, so a sync (main-thread) command would deadlock the app.
 #[tauri::command]
-fn export_text_file(app: tauri::AppHandle, default_name: String, contents: String) -> Result<bool, String> {
+async fn export_text_file(app: tauri::AppHandle, default_name: String, contents: String) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
     match app.dialog().file().set_file_name(&default_name).blocking_save_file() {
         Some(path) => {
