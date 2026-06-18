@@ -130,10 +130,16 @@ export type Playlist = { id: string; title: string };
 export type Track = { videoId: string; title: string; artist: string; thumb?: string };
 export type CombinedSong = Track & { playlists: string[] };
 
-/** Fetch all tracks of a YT Music playlist (paginated). */
-export async function getPlaylistTracks(playlistId: string): Promise<Track[]> {
+/**
+ * Fetch all tracks of a YT Music playlist (paginated), plus whether it's editable (owned) — YT
+ * Music returns an editable header only for playlists you own.
+ */
+export async function getPlaylistTracks(
+  playlistId: string,
+): Promise<{ tracks: Track[]; editable: boolean }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let playlist: any = await requireClient().music.getPlaylist(playlistId);
+  const editable = playlist?.header?.type === "MusicEditablePlaylistDetailHeader";
   const out: Track[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const take = (items: any[] | undefined): void => {
@@ -158,7 +164,7 @@ export async function getPlaylistTracks(playlistId: string): Promise<Track[]> {
     playlist = await playlist.getContinuation();
     take(playlist.items);
   }
-  return out;
+  return { tracks: out, editable };
 }
 
 /**
@@ -169,8 +175,9 @@ export async function fetchTracksForPlaylists(
   playlists: Playlist[],
   concurrency = 4,
   onDone?: (done: number, total: number, playlist: Playlist, ok: boolean) => void,
-): Promise<{ tracksByPlaylist: Record<string, Track[]>; failures: Playlist[] }> {
+): Promise<{ tracksByPlaylist: Record<string, Track[]>; editableIds: string[]; failures: Playlist[] }> {
   const tracksByPlaylist: Record<string, Track[]> = {};
+  const editableIds: string[] = [];
   const failures: Playlist[] = [];
   let next = 0;
   let done = 0;
@@ -178,7 +185,9 @@ export async function fetchTracksForPlaylists(
     while (next < playlists.length) {
       const playlist = playlists[next++];
       try {
-        tracksByPlaylist[playlist.id] = await getPlaylistTracks(playlist.id);
+        const { tracks, editable } = await getPlaylistTracks(playlist.id);
+        tracksByPlaylist[playlist.id] = tracks;
+        if (editable) editableIds.push(playlist.id);
         onDone?.(++done, playlists.length, playlist, true);
       } catch {
         failures.push(playlist);
@@ -189,7 +198,7 @@ export async function fetchTracksForPlaylists(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, playlists.length) }, () => worker()),
   );
-  return { tracksByPlaylist, failures };
+  return { tracksByPlaylist, editableIds, failures };
 }
 
 /**
@@ -214,12 +223,18 @@ export function combineFromCache(
   return [...byVideo.values()];
 }
 
-/** Write test — add a video to a playlist you own. */
-export async function addVideo(playlistId: string, videoId: string): Promise<void> {
-  await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), [videoId.trim()]);
+/** Add videos to a playlist you own. */
+export async function addVideos(playlistId: string, videoIds: string[]): Promise<void> {
+  await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), videoIds);
 }
 
-/** Cleanup for the write test. */
-export async function removeVideo(playlistId: string, videoId: string): Promise<void> {
-  await requireClient().playlist.removeVideos(normalizePlaylistId(playlistId), [videoId.trim()]);
+/** Remove videos from a playlist you own. */
+export async function removeVideos(playlistId: string, videoIds: string[]): Promise<void> {
+  await requireClient().playlist.removeVideos(normalizePlaylistId(playlistId), videoIds);
+}
+
+/** Create a new playlist from the given videos; returns the new playlist id (if reported). */
+export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {
+  const res = await requireClient().playlist.create(title, videoIds);
+  return res.playlist_id;
 }

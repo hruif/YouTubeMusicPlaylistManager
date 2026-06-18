@@ -7,6 +7,8 @@ import {
   getLibraryPlaylists,
   fetchTracksForPlaylists,
   combineFromCache,
+  addVideos,
+  createPlaylist,
   type Playlist,
   type CombinedSong,
 } from "./lib/ytmusic";
@@ -88,6 +90,10 @@ function App() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
   const lastSongIndex = useRef<number | null>(null);
+  const [addPicker, setAddPicker] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -228,7 +234,7 @@ function App() {
     setBusy(true);
     setStatus(`Updating 0/${list.length}…`);
     try {
-      const { tracksByPlaylist, failures } = await fetchTracksForPlaylists(list, 4, (done, total) =>
+      const { tracksByPlaylist, editableIds, failures } = await fetchTracksForPlaylists(list, 4, (done, total) =>
         setStatus(`Updating ${done}/${total}…`),
       );
       const now = Date.now();
@@ -238,6 +244,7 @@ function App() {
         ...cache,
         tracksByPlaylist: { ...cache.tracksByPlaylist, ...tracksByPlaylist },
         updatedAt,
+        editable: [...new Set([...cache.editable, ...editableIds])],
       });
       const n = Object.keys(tracksByPlaylist).length;
       setStatus(failures.length ? `Updated ${n}; ${failures.length} failed (retry)` : `Updated ${n} playlist(s)`);
@@ -252,6 +259,79 @@ function App() {
     () => combineFromCache(selectedPlaylists, cache.tracksByPlaylist),
     [selectedPlaylists, cache.tracksByPlaylist],
   );
+
+  const editable = useMemo(() => new Set(cache.editable), [cache.editable]);
+  const selectedTracks = useMemo(
+    () => songs.filter((s) => selectedSongs.has(s.videoId)),
+    [songs, selectedSongs],
+  );
+  const editablePlaylists = useMemo(
+    () =>
+      cache.playlists.filter(
+        (p) => editable.has(p.id) && p.title.toLowerCase().includes(addQuery.trim().toLowerCase()),
+      ),
+    [cache.playlists, editable, addQuery],
+  );
+
+  // Add the selected songs to a playlist you own — optimistic, reverting on error.
+  async function addSelectedTo(target: Playlist) {
+    setAddPicker(false);
+    const existing = cache.tracksByPlaylist[target.id] ?? [];
+    const have = new Set(existing.map((t) => t.videoId));
+    const toAdd = selectedTracks
+      .filter((t) => !have.has(t.videoId))
+      .map(({ videoId, title, artist, thumb }) => ({ videoId, title, artist, thumb }));
+    if (toAdd.length === 0) {
+      setStatus(`All selected songs are already in ${target.title}`);
+      return;
+    }
+    persist({
+      ...cache,
+      tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: [...existing, ...toAdd] },
+    });
+    setBusy(true);
+    setStatus(`Adding ${toAdd.length} to ${target.title}…`);
+    try {
+      await addVideos(target.id, toAdd.map((t) => t.videoId));
+      setStatus(`Added ${toAdd.length} to ${target.title}`);
+    } catch (err) {
+      persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
+      setStatus(`Add failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Create a new playlist from the selected songs.
+  async function createFromSelection() {
+    const name = newName.trim();
+    if (!name) return;
+    const tracks = selectedTracks.map(({ videoId, title, artist, thumb }) => ({ videoId, title, artist, thumb }));
+    setCreateOpen(false);
+    setNewName("");
+    setBusy(true);
+    setStatus(`Creating “${name}”…`);
+    try {
+      const newId = await createPlaylist(name, tracks.map((t) => t.videoId));
+      if (newId) {
+        persist({
+          ...cache,
+          playlists: [{ id: newId, title: name }, ...cache.playlists],
+          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: tracks },
+          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cache.editable, newId])],
+        });
+        setStatus(`Created “${name}” with ${tracks.length} songs`);
+      } else {
+        setStatus(`Created “${name}” — refreshing list…`);
+        await refreshPlaylists(cache);
+      }
+    } catch (err) {
+      setStatus(`Create failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const visibleSongs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -429,11 +509,15 @@ function App() {
                         onClick={(e) => onSongClick(e, i)}
                         onDoubleClick={() => setDetail(s)}
                         onContextMenu={(e) => {
+                          let count = selectedSongs.size;
                           if (!selectedSongs.has(s.videoId)) {
                             setSelectedSongs(new Set([s.videoId]));
                             lastSongIndex.current = i;
+                            count = 1;
                           }
                           openMenu(e, [
+                            { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
+                            { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
                             { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
                             { label: "Details", onClick: () => setDetail(s) },
                           ]);
@@ -508,6 +592,47 @@ function App() {
               );
             })}
           </ul>
+        </Overlay>
+      )}
+
+      {addPicker && (
+        <Overlay title={`Add ${selectedTracks.length} song(s) to…`} onClose={() => setAddPicker(false)}>
+          {editable.size === 0 ? (
+            <p style={{ color: "var(--muted)", fontSize: 13 }}>
+              No editable playlists detected yet. Select your own playlists and “Update” them — YouTube
+              only exposes which playlists you can edit after fetching them.
+            </p>
+          ) : (
+            <>
+              <input placeholder="Filter your playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
+              <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+                {editablePlaylists.map((p) => (
+                  <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
+                    <span className="pl-title">{p.title}</span>
+                    {cache.tracksByPlaylist[p.id] && <span className="pl-meta">{cache.tracksByPlaylist[p.id].length}</span>}
+                  </div>
+                ))}
+                {editablePlaylists.length === 0 && <p className="empty">No matches.</p>}
+              </div>
+            </>
+          )}
+        </Overlay>
+      )}
+
+      {createOpen && (
+        <Overlay title={`New playlist from ${selectedTracks.length} song(s)`} onClose={() => setCreateOpen(false)}>
+          <input
+            autoFocus
+            placeholder="Playlist name"
+            value={newName}
+            onChange={(e) => setNewName(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === "Enter" && createFromSelection()}
+            style={{ width: "100%", marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button className="primary" disabled={!newName.trim()} onClick={createFromSelection}>Create</button>
+          </div>
         </Overlay>
       )}
 

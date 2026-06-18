@@ -10,6 +10,7 @@ export type LibraryCache = {
   tracksByPlaylist: Record<string, Track[]>;
   updatedAt: Record<string, number>; // playlist id -> last-fetched epoch ms
   hidden: string[]; // playlist ids hidden from the main sidebar
+  editable: string[]; // playlist ids you own (detected on update)
 };
 
 export const EMPTY_CACHE: LibraryCache = {
@@ -17,6 +18,7 @@ export const EMPTY_CACHE: LibraryCache = {
   tracksByPlaylist: {},
   updatedAt: {},
   hidden: [],
+  editable: [],
 };
 
 export async function loadCache(): Promise<LibraryCache> {
@@ -29,6 +31,7 @@ export async function loadCache(): Promise<LibraryCache> {
       tracksByPlaylist: parsed.tracksByPlaylist ?? {},
       updatedAt: parsed.updatedAt ?? {},
       hidden: parsed.hidden ?? [],
+      editable: parsed.editable ?? [],
     };
   } catch {
     return { ...EMPTY_CACHE };
