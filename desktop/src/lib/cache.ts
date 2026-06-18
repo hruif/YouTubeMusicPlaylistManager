@@ -16,6 +16,7 @@ export type LibraryCache = {
   hidden: string[]; // playlist ids hidden from the main sidebar
   editable: string[]; // playlist ids you own (detected on update)
   deleted: DeletedPlaylist[]; // archive of deleted playlists (for recreation)
+  unmatched: Record<string, { title: string; artist: string }[]>; // Spotify tracks not matched, by new playlist id
 };
 
 export const EMPTY_CACHE: LibraryCache = {
@@ -25,6 +26,7 @@ export const EMPTY_CACHE: LibraryCache = {
   hidden: [],
   editable: [],
   deleted: [],
+  unmatched: {},
 };
 
 export async function loadCache(): Promise<LibraryCache> {
@@ -39,6 +41,7 @@ export async function loadCache(): Promise<LibraryCache> {
       hidden: parsed.hidden ?? [],
       editable: parsed.editable ?? [],
       deleted: parsed.deleted ?? [],
+      unmatched: parsed.unmatched ?? {},
     };
   } catch {
     return { ...EMPTY_CACHE };

@@ -11,6 +11,8 @@ import {
   removeVideos,
   createPlaylist,
   deletePlaylist,
+  searchYouTubeMusicSongs,
+  bestYoutubeMatch,
   type Playlist,
   type CombinedSong,
 } from "./lib/ytmusic";
@@ -109,6 +111,9 @@ function App() {
   const [spotifyResult, setSpotifyResult] = useState<{ title: string; tracks: SpotifyTrack[] } | null>(null);
   const [spotifyLoading, setSpotifyLoading] = useState(false);
   const [spotifyProgress, setSpotifyProgress] = useState("");
+  const [spotifyName, setSpotifyName] = useState("");
+  const [transferResult, setTransferResult] = useState<{ name: string; matched: number; unmatched: SpotifyTrack[] } | null>(null);
+  const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
 
   // Report a failure: status line + a popup so it's obvious something went wrong.
   function fail(message: string) {
@@ -126,12 +131,84 @@ function App() {
         setSpotifyProgress(`Loaded ${loaded}/${total || "?"}…`),
       );
       setSpotifyResult(r);
+      setSpotifyName(r.title);
       setSpotifyProgress(`${r.tracks.length} tracks`);
     } catch (err) {
       setSpotifyProgress("");
       fail(`Spotify import failed: ${errText(err)}`);
     } finally {
       setSpotifyLoading(false);
+    }
+  }
+
+  const ytSearchUrl = (q: string) => `https://music.youtube.com/search?q=${encodeURIComponent(q)}`;
+
+  // Transfer a read Spotify playlist to a new YouTube Music playlist: match each track conservatively,
+  // create from confident matches, persist the unmatched ones for manual follow-up.
+  async function transferSpotify() {
+    if (!spotifyResult) return;
+    const name = spotifyName.trim() || spotifyResult.title;
+    const tracks = spotifyResult.tracks;
+    setSpotifyOpen(false);
+    setBusy(true);
+    setStatus(`Matching 0/${tracks.length} on YouTube Music…`);
+    try {
+      const matches: ({ videoId: string; title: string; artist: string } | null)[] = new Array(tracks.length).fill(null);
+      let cursor = 0;
+      let done = 0;
+      const worker = async (): Promise<void> => {
+        while (cursor < tracks.length) {
+          const i = cursor++;
+          const t = tracks[i];
+          try {
+            const candidates = await searchYouTubeMusicSongs(`${t.title} ${t.artist}`.trim());
+            const m = bestYoutubeMatch(candidates, t.title, t.artist);
+            if (m) matches[i] = { videoId: m.videoId, title: t.title, artist: t.artist };
+          } catch {
+            /* leave unmatched */
+          }
+          done += 1;
+          setStatus(`Matching ${done}/${tracks.length} on YouTube Music…`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, tracks.length) }, () => worker()));
+
+      const matchedIds: string[] = [];
+      const matchedTracks: { videoId: string; title: string; artist: string }[] = [];
+      const unmatched: SpotifyTrack[] = [];
+      for (let i = 0; i < tracks.length; i += 1) {
+        const m = matches[i];
+        if (m) {
+          matchedIds.push(m.videoId);
+          matchedTracks.push(m);
+        } else {
+          unmatched.push(tracks[i]);
+        }
+      }
+      if (matchedIds.length === 0) {
+        fail("No songs could be confidently matched on YouTube Music.");
+        return;
+      }
+      setStatus(`Creating “${name}” with ${matchedIds.length} songs…`);
+      const newId = await createPlaylist(name, matchedIds);
+      if (newId) {
+        persist({
+          ...cache,
+          playlists: [{ id: newId, title: name }, ...cache.playlists],
+          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: matchedTracks },
+          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cache.editable, newId])],
+          unmatched: unmatched.length ? { ...cache.unmatched, [newId]: unmatched } : cache.unmatched,
+        });
+      } else {
+        await refreshPlaylists(cache);
+      }
+      setTransferResult({ name, matched: matchedIds.length, unmatched });
+      setStatus(`Transferred “${name}”: ${matchedIds.length} added, ${unmatched.length} unmatched`);
+    } catch (err) {
+      fail(`Transfer failed: ${errText(err)}`);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -683,6 +760,9 @@ function App() {
                     onContextMenu={(e) =>
                       openMenu(e, [
                         { label: "Remove repeats", onClick: () => removeRepeats(p) },
+                        ...(cache.unmatched[p.id]?.length
+                          ? [{ label: `Unmatched from Spotify (${cache.unmatched[p.id].length})`, onClick: () => setShowUnmatched(p.id) }]
+                          : []),
                         { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
                         { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
                         { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
@@ -1008,11 +1088,60 @@ function App() {
                   </div>
                 ))}
               </div>
-              <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 8 }}>
-                Next step: transfer these to a new YouTube Music playlist (match + create).
+              <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+                <input style={{ flex: 1 }} placeholder="New YouTube playlist name" value={spotifyName} onChange={(e) => setSpotifyName(e.currentTarget.value)} />
+                <button className="primary" disabled={busy || !spotifyName.trim()} onClick={transferSpotify}>
+                  Transfer to YouTube Music
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                Only confident title+artist matches are added; the rest are listed afterwards to find manually.
               </p>
             </>
           )}
+        </Overlay>
+      )}
+
+      {transferResult && (
+        <Overlay title="Transfer complete" onClose={() => setTransferResult(null)}>
+          <p>
+            <strong>{transferResult.name}</strong>: {transferResult.matched} song(s) added to YouTube Music.
+          </p>
+          {transferResult.unmatched.length > 0 ? (
+            <>
+              <p style={{ marginTop: 8, fontSize: 13 }}>
+                {transferResult.unmatched.length} couldn’t be confidently matched — search them manually:
+              </p>
+              <div className="panel" style={{ maxHeight: "40vh", overflow: "auto" }}>
+                {transferResult.unmatched.map((t, i) => (
+                  <div key={i} className="pl-row">
+                    <span className="pl-title">{t.title}</span>
+                    <span className="pl-meta">{t.artist}</span>
+                    <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+                This list is saved — right-click the new playlist → “Unmatched from Spotify” to see it again.
+              </p>
+            </>
+          ) : (
+            <p style={{ color: "var(--muted)" }}>Everything matched. 🎉</p>
+          )}
+        </Overlay>
+      )}
+
+      {showUnmatched && (
+        <Overlay title="Unmatched from Spotify" onClose={() => setShowUnmatched(null)}>
+          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+            {(cache.unmatched[showUnmatched] ?? []).map((t, i) => (
+              <div key={i} className="pl-row">
+                <span className="pl-title">{t.title}</span>
+                <span className="pl-meta">{t.artist}</span>
+                <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
+              </div>
+            ))}
+          </div>
         </Overlay>
       )}
 

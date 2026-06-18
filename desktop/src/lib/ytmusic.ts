@@ -248,6 +248,64 @@ export async function createPlaylist(title: string, videoIds: string[]): Promise
   return res.playlist_id;
 }
 
+export type MatchCandidate = { videoId: string; title: string; artist: string };
+
+/** Search YouTube Music for songs matching a query; returns relevance-ranked candidates. */
+export async function searchYouTubeMusicSongs(query: string): Promise<MatchCandidate[]> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const res: any = await requireClient().music.search(query, { type: "song" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const items: any[] = res?.songs?.contents ?? res?.contents?.find?.((c: any) => c?.contents)?.contents ?? [];
+  const out: MatchCandidate[] = [];
+  for (const item of items) {
+    const videoId: string | undefined = item?.id;
+    const title = typeof item?.title === "string" ? item.title : item?.title?.text;
+    if (!videoId || !title) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const artist =
+      (item?.artists ?? []).map((a: any) => a?.name).filter(Boolean).join(", ") ||
+      (typeof item?.subtitle === "string" ? item.subtitle : item?.subtitle?.text) ||
+      "";
+    out.push({ videoId, title, artist });
+  }
+  return out;
+}
+
+// Conservative Spotify->YouTube matcher (ported from the Python app's spotify_matcher).
+function normalizeSearchText(text: string): string {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function tokenSet(text: string): Set<string> {
+  return new Set(normalizeSearchText(text).split(" ").filter(Boolean));
+}
+function isConfidentMatch(tTitle: string, tArtist: string, cTitle: string, cArtist: string): boolean {
+  const tT = tokenSet(tTitle);
+  const cT = tokenSet(cTitle);
+  if (!tT.size || !cT.size) return false;
+  const subset = (a: Set<string>, b: Set<string>) => [...a].every((x) => b.has(x));
+  if (!(subset(tT, cT) || subset(cT, tT))) return false; // one title's words ⊆ the other's
+  const tA = tokenSet(tArtist);
+  if (!tA.size) return true; // no source artist → title match is enough
+  const cA = tokenSet(cArtist);
+  return [...tA].some((x) => cA.has(x)); // ≥1 artist word overlaps
+}
+
+/** First confident match among relevance-ranked candidates, or null. */
+export function bestYoutubeMatch(
+  candidates: MatchCandidate[],
+  title: string,
+  artist: string,
+): MatchCandidate | null {
+  for (const c of candidates) {
+    if (isConfidentMatch(title, artist, c.title, c.artist)) return c;
+  }
+  return null;
+}
+
 /**
  * Delete a playlist you own. youtubei.js's `playlist.delete` builds a NavigationEndpoint it can't
  * resolve a URL for ("Expected an api_url"), so call the InnerTube /playlist/delete endpoint
