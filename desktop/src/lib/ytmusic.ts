@@ -245,11 +245,11 @@ export async function createPlaylist(title: string, videoIds: string[]): Promise
  * directly. Throws if YouTube reports failure (it doesn't always throw on its own).
  */
 export async function deletePlaylist(playlistId: string): Promise<void> {
-  const execute = requireClient().actions.execute as unknown as (
-    endpoint: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ success: boolean; status_code: number }>;
-  const res = await execute("/playlist/delete", {
+  // Call as a method on `actions` (not a detached fn) so its `this` binding is kept.
+  const actions = requireClient().actions as unknown as {
+    execute(endpoint: string, args: Record<string, unknown>): Promise<{ success: boolean; status_code: number }>;
+  };
+  const res = await actions.execute("/playlist/delete", {
     playlistId: normalizePlaylistId(playlistId),
     parse: false,
   });
