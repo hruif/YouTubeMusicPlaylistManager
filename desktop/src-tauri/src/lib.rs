@@ -244,7 +244,18 @@ async fn proxy_http_request(
             continue;
         }
         if let Ok(s) = value.to_str() {
-            headers.insert(key.as_str().to_string(), s.to_string());
+            // A response can carry several Set-Cookie headers; join them so none are lost.
+            if lower == "set-cookie" {
+                headers
+                    .entry("set-cookie".to_string())
+                    .and_modify(|v: &mut String| {
+                        v.push('\n');
+                        v.push_str(s);
+                    })
+                    .or_insert_with(|| s.to_string());
+            } else {
+                headers.insert(key.as_str().to_string(), s.to_string());
+            }
         }
     }
     let body = response.bytes().await.map_err(|e| e.to_string())?;

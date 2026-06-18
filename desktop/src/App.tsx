@@ -15,6 +15,7 @@ import {
   type CombinedSong,
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
+import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
 import "./App.css";
 
 // Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
@@ -103,6 +104,11 @@ function App() {
   const [deleteText, setDeleteText] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const [spotifyUrl, setSpotifyUrl] = useState("");
+  const [spotifyResult, setSpotifyResult] = useState<{ title: string; tracks: SpotifyTrack[] } | null>(null);
+  const [spotifyLoading, setSpotifyLoading] = useState(false);
+  const [spotifyProgress, setSpotifyProgress] = useState("");
 
   // Report a failure: status line + a popup so it's obvious something went wrong.
   function fail(message: string) {
@@ -110,6 +116,24 @@ function App() {
     setError(message);
   }
   const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  async function readSpotify() {
+    setSpotifyResult(null);
+    setSpotifyLoading(true);
+    setSpotifyProgress("Connecting to Spotify…");
+    try {
+      const r = await fetchSpotifyPlaylist(spotifyUrl, (loaded, total) =>
+        setSpotifyProgress(`Loaded ${loaded}/${total || "?"}…`),
+      );
+      setSpotifyResult(r);
+      setSpotifyProgress(`${r.tracks.length} tracks`);
+    } catch (err) {
+      setSpotifyProgress("");
+      fail(`Spotify import failed: ${errText(err)}`);
+    } finally {
+      setSpotifyLoading(false);
+    }
+  }
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -602,6 +626,7 @@ function App() {
           {signedIn && cache.deleted.length > 0 && (
             <button disabled={busy} onClick={() => setShowDeleted(true)}>Recently deleted ({cache.deleted.length})</button>
           )}
+          {signedIn && <button disabled={busy} onClick={() => { setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}>Import Spotify</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
           {signedIn && <button disabled={busy} onClick={() => refreshPlaylists(cache)}>Refresh list</button>}
           {signedIn ? (
@@ -948,6 +973,46 @@ function App() {
             <button onClick={() => setCreateOpen(false)}>Cancel</button>
             <button className="primary" disabled={!newName.trim()} onClick={createFromSelection}>Create</button>
           </div>
+        </Overlay>
+      )}
+
+      {spotifyOpen && (
+        <Overlay title="Import a Spotify playlist" onClose={() => setSpotifyOpen(false)}>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
+            Paste a public Spotify playlist link. (Unofficial Spotify access — it can occasionally
+            break when Spotify changes their site; just try again or report it.)
+          </p>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder="https://open.spotify.com/playlist/…"
+              value={spotifyUrl}
+              onChange={(e) => setSpotifyUrl(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && !spotifyLoading && readSpotify()}
+            />
+            <button className="primary" disabled={spotifyLoading || !spotifyUrl.trim()} onClick={readSpotify}>
+              Read
+            </button>
+          </div>
+          {spotifyProgress && <p style={{ fontSize: 13 }}>{spotifyProgress}</p>}
+          {spotifyResult && (
+            <>
+              <p style={{ margin: "6px 0" }}>
+                <strong>{spotifyResult.title}</strong> — {spotifyResult.tracks.length} tracks
+              </p>
+              <div className="panel" style={{ maxHeight: "40vh", overflow: "auto" }}>
+                {spotifyResult.tracks.map((t, i) => (
+                  <div key={i} className="pl-row">
+                    <span className="pl-title">{t.title}</span>
+                    <span className="pl-meta">{t.artist}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 8 }}>
+                Next step: transfer these to a new YouTube Music playlist (match + create).
+              </p>
+            </>
+          )}
         </Overlay>
       )}
 
