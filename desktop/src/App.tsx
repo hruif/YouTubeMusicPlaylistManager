@@ -239,6 +239,20 @@ function App() {
     persist({ ...cache, customNames: next });
   }
 
+  async function doSignIn() {
+    setBusy(true);
+    setStatus("Signing in…");
+    try {
+      await signIn();
+      setSignedIn(true);
+      setBusy(false);
+      if (cache.playlists.length === 0) await refreshPlaylists(cache);
+    } catch (err) {
+      fail(`Sign-in failed: ${errText(err)}`);
+      setBusy(false);
+    }
+  }
+
   const openSong = (videoId: string) => void openUrl(`https://music.youtube.com/watch?v=${videoId}`);
   const openPlaylist = (id: string) => void openUrl(`https://music.youtube.com/playlist?list=${id}`);
   function openMenu(e: React.MouseEvent, items: { label: string; onClick: () => void }[]) {
@@ -783,7 +797,7 @@ function App() {
           {signedIn && <button disabled={busy} onClick={() => { setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}>Import Spotify</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
           {signedIn && <button disabled={busy} onClick={() => refreshPlaylists(cache)}>Refresh list</button>}
-          {signedIn ? (
+          {signedIn && (
             <button
               disabled={busy}
               onClick={async () => {
@@ -794,25 +808,6 @@ function App() {
               }}
             >
               Sign out
-            </button>
-          ) : (
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await signIn();
-                  setSignedIn(true);
-                  setBusy(false);
-                  if (cache.playlists.length === 0) await refreshPlaylists(cache);
-                } catch (err) {
-                  setStatus(`Sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
-                  setBusy(false);
-                }
-              }}
-            >
-              Sign in
             </button>
           )}
         </span>
@@ -941,6 +936,21 @@ function App() {
               )}
             </div>
           </section>
+        </div>
+      )}
+
+      {!signedIn && (
+        <div className="welcome">
+          <img className="welcome-icon" src="/icon.png" alt="" onError={(e) => (e.currentTarget.style.display = "none")} />
+          <h2>YouTube Music Manager</h2>
+          <p className="welcome-sub">
+            Manage your YouTube Music playlists — combine, search, edit, find duplicates, and import
+            from Spotify. Sign in once; the session stays put (no header copying).
+          </p>
+          <button className="primary big" disabled={busy} onClick={doSignIn}>
+            {busy ? "Signing in…" : "Sign in to YouTube Music"}
+          </button>
+          <p className="status" style={{ minHeight: 18 }}>{status}</p>
         </div>
       )}
 

@@ -122,13 +122,28 @@ async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<SignInResult, St
 async fn try_silent_sign_in(app: tauri::AppHandle) -> Result<Option<SignInResult>, String> {
     open_login_window(&app, false)?;
 
-    // Give the persisted session a few seconds to load + redirect.
+    // Give the persisted session a few seconds to load + redirect to music.youtube.com.
+    let mut on_login_page = 0u32;
     for _ in 1..=15u32 {
         if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
             if let Some(result) = captured_session(&window)? {
                 *app.state::<SessionState>().0.lock().unwrap() = Some(result.cookie.clone());
                 let _ = window.close();
                 return Ok(Some(result));
+            }
+            // Not signed in: Google parks us on accounts.google.com instead of redirecting to
+            // music.youtube.com. Bail early once we've clearly settled there (don't wait the full 15s).
+            let on_login = window
+                .url()
+                .ok()
+                .and_then(|u| u.host_str().map(|h| h.ends_with("accounts.google.com")))
+                .unwrap_or(false);
+            if on_login {
+                on_login_page += 1;
+                if on_login_page >= 3 {
+                    let _ = window.close();
+                    return Ok(None);
+                }
             }
         }
         thread::sleep(Duration::from_secs(1));
