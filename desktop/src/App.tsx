@@ -29,16 +29,22 @@ const ROW_H = 30;
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
 // --- small persisted UI state (selection/sort/filter) in localStorage (tiny, frequent writes) ---
-type UiState = { selected: string[]; sortKey: SortKey; sortAsc: boolean; dupOnly: boolean };
+type UiState = { selected: string[]; sortKey: SortKey; sortAsc: boolean; dupOnly: boolean; unavailableOnly: boolean };
 const UI_KEY = "ytm.ui";
 function loadUi(): UiState {
-  const base: UiState = { selected: [], sortKey: "title", sortAsc: true, dupOnly: false };
+  const base: UiState = { selected: [], sortKey: "title", sortAsc: true, dupOnly: false, unavailableOnly: false };
   try {
     const raw = localStorage.getItem(UI_KEY);
     return raw ? { ...base, ...(JSON.parse(raw) as Partial<UiState>) } : base;
   } catch {
     return base;
   }
+}
+
+// Best-effort: YouTube replaces a gone video's title with a placeholder. Catches deleted/private
+// videos; misses region-locked ones that keep their title (youtubei.js exposes no playability flag).
+function isUnavailableTitle(title: string): boolean {
+  return /\[(deleted|private|unavailable|restricted)\b/i.test(title);
 }
 
 function relativeAge(ms?: number): string {
@@ -88,6 +94,7 @@ function App() {
   const [sortKey, setSortKey] = useState<SortKey>(ui0.sortKey);
   const [sortAsc, setSortAsc] = useState(ui0.sortAsc);
   const [dupOnly, setDupOnly] = useState(ui0.dupOnly);
+  const [unavailableOnly, setUnavailableOnly] = useState(ui0.unavailableOnly);
   const [query, setQuery] = useState("");
   const [showManage, setShowManage] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
@@ -256,11 +263,11 @@ function App() {
   // Persist UI state on change.
   useEffect(() => {
     try {
-      localStorage.setItem(UI_KEY, JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly }));
+      localStorage.setItem(UI_KEY, JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly }));
     } catch {
       /* ignore */
     }
-  }, [selected, sortKey, sortAsc, dupOnly]);
+  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly]);
 
   // Cmd/Ctrl+F focuses the song search.
   useEffect(() => {
@@ -703,6 +710,7 @@ function App() {
           (cache.customNames[s.videoId]?.toLowerCase().includes(q) ?? false),
       );
     if (dupOnly) filtered = filtered.filter((s) => s.playlists.length > 1);
+    if (unavailableOnly) filtered = filtered.filter((s) => isUnavailableTitle(s.title));
     const copy = [...filtered];
     copy.sort((a, b) => {
       let cmp = 0;
@@ -712,7 +720,7 @@ function App() {
       return sortAsc ? cmp : -cmp;
     });
     return copy;
-  }, [songs, query, dupOnly, sortKey, sortAsc, cache.customNames]);
+  }, [songs, query, dupOnly, unavailableOnly, sortKey, sortAsc, cache.customNames]);
 
   const v = useVirtual(visibleSongs.length);
 
@@ -869,6 +877,10 @@ function App() {
               <label className="toggle">
                 <input type="checkbox" checked={dupOnly} onChange={(e) => setDupOnly(e.currentTarget.checked)} />
                 in &gt;1 playlist
+              </label>
+              <label className="toggle" title="Songs with a deleted/private/unavailable placeholder title (best-effort)">
+                <input type="checkbox" checked={unavailableOnly} onChange={(e) => setUnavailableOnly(e.currentTarget.checked)} />
+                unavailable
               </label>
               <span className="count">{visibleSongs.length} songs{selectedSongs.size ? ` · ${selectedSongs.size} selected` : ""}</span>
             </div>
