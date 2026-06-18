@@ -99,6 +99,9 @@ function App() {
   const [newName, setNewName] = useState("");
   const [removePicker, setRemovePicker] = useState(false);
   const [confirm, setConfirm] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null);
+  const [deleteText, setDeleteText] = useState("");
+  const [showDeleted, setShowDeleted] = useState(false);
 
   function persist(next: LibraryCache) {
     setCache(next);
@@ -378,41 +381,68 @@ function App() {
     );
   }
 
-  // Delete a playlist (non-optimistic — don't drop local data unless YouTube confirms).
-  function deletePlaylistAction(p: Playlist) {
-    confirmAction(
-      `Delete “${p.title}”?`,
-      "This permanently deletes the playlist from your YouTube Music account. This can't be undone.",
-      async () => {
-        setBusy(true);
-        setStatus(`Deleting ${p.title}…`);
-        try {
-          await deletePlaylist(p.id);
-          const tracksByPlaylist = { ...cache.tracksByPlaylist };
-          delete tracksByPlaylist[p.id];
-          const updatedAt = { ...cache.updatedAt };
-          delete updatedAt[p.id];
-          persist({
-            ...cache,
-            playlists: cache.playlists.filter((x) => x.id !== p.id),
-            tracksByPlaylist,
-            updatedAt,
-            hidden: cache.hidden.filter((id) => id !== p.id),
-            editable: cache.editable.filter((id) => id !== p.id),
-          });
-          setSelected((prev) => {
-            const s = new Set(prev);
-            s.delete(p.id);
-            return s;
-          });
-          setStatus(`Deleted ${p.title}`);
-        } catch (err) {
-          setStatus(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
-        } finally {
-          setBusy(false);
-        }
-      },
-    );
+  // Delete a playlist (non-optimistic — don't drop local data unless YouTube confirms). Archives
+  // the song list locally first so it can be recreated. Invoked from the hardened delete modal.
+  async function doDelete(p: Playlist) {
+    setDeleteTarget(null);
+    setDeleteText("");
+    setBusy(true);
+    setStatus(`Deleting ${p.title}…`);
+    try {
+      await deletePlaylist(p.id);
+      const tracks = cache.tracksByPlaylist[p.id] ?? [];
+      const tracksByPlaylist = { ...cache.tracksByPlaylist };
+      delete tracksByPlaylist[p.id];
+      const updatedAt = { ...cache.updatedAt };
+      delete updatedAt[p.id];
+      const archived = { id: p.id, title: p.title, tracks, deletedAt: Date.now() };
+      persist({
+        ...cache,
+        playlists: cache.playlists.filter((x) => x.id !== p.id),
+        tracksByPlaylist,
+        updatedAt,
+        hidden: cache.hidden.filter((id) => id !== p.id),
+        editable: cache.editable.filter((id) => id !== p.id),
+        deleted: [archived, ...cache.deleted].slice(0, 30),
+      });
+      setSelected((prev) => {
+        const s = new Set(prev);
+        s.delete(p.id);
+        return s;
+      });
+      setStatus(`Deleted ${p.title} (archived ${tracks.length} songs for recovery)`);
+    } catch (err) {
+      setStatus(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Recreate a deleted playlist from the local archive.
+  async function recreateDeleted(d: { title: string; tracks: { videoId: string; title: string; artist: string; thumb?: string }[] }) {
+    setShowDeleted(false);
+    setBusy(true);
+    setStatus(`Recreating “${d.title}”…`);
+    try {
+      const newId = await createPlaylist(d.title, d.tracks.map((t) => t.videoId));
+      if (newId) {
+        persist({
+          ...cache,
+          playlists: [{ id: newId, title: d.title }, ...cache.playlists],
+          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: d.tracks },
+          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cache.editable, newId])],
+        });
+        setStatus(`Recreated “${d.title}” with ${d.tracks.length} songs`);
+      } else {
+        setStatus(`Recreated “${d.title}” — refreshing list…`);
+        await refreshPlaylists(cache);
+      }
+    } catch (err) {
+      setStatus(`Recreate failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   // Remove repeated songs (same video appearing more than once) within one playlist, keeping one.
@@ -523,6 +553,9 @@ function App() {
         <span className="status">{status}</span>
         <span className="grow" />
         <span className="actions">
+          {signedIn && cache.deleted.length > 0 && (
+            <button disabled={busy} onClick={() => setShowDeleted(true)}>Recently deleted ({cache.deleted.length})</button>
+          )}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
           {signedIn && <button disabled={busy} onClick={() => refreshPlaylists(cache)}>Refresh list</button>}
           {signedIn ? (
@@ -581,7 +614,7 @@ function App() {
                         { label: "Remove repeats", onClick: () => removeRepeats(p) },
                         { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
                         { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
-                        { label: "Delete playlist…", onClick: () => deletePlaylistAction(p) },
+                        { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
                       ])
                     }
                   >
@@ -781,6 +814,77 @@ function App() {
               Confirm
             </button>
           </div>
+        </Overlay>
+      )}
+
+      {deleteTarget && (
+        <Overlay
+          title={`⚠️ Delete “${deleteTarget.title}”?`}
+          onClose={() => {
+            setDeleteTarget(null);
+            setDeleteText("");
+          }}
+        >
+          <p className="warn" style={{ fontSize: 13 }}>
+            This permanently deletes the playlist from your YouTube Music account — it can’t be undone there.
+          </p>
+          <p style={{ fontSize: 13 }}>
+            {cache.tracksByPlaylist[deleteTarget.id]
+              ? `Contains ${cache.tracksByPlaylist[deleteTarget.id].length} songs — its song list will be archived locally so you can recreate it from “Recently deleted.”`
+              : "It isn’t cached locally, so its song list can’t be archived — Update it first if you want recovery."}
+          </p>
+          <p style={{ fontSize: 13, margin: "10px 0 4px" }}>
+            Type the playlist name <strong>{deleteTarget.title}</strong> to confirm:
+          </p>
+          <input
+            autoFocus
+            value={deleteText}
+            placeholder={deleteTarget.title}
+            onChange={(e) => setDeleteText(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setDeleteTarget(null);
+                setDeleteText("");
+              }
+            }}
+            style={{ width: "100%", marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="primary" onClick={() => { setDeleteTarget(null); setDeleteText(""); }}>Cancel</button>
+            <button className="danger" disabled={deleteText.trim() !== deleteTarget.title.trim()} onClick={() => doDelete(deleteTarget)}>
+              Delete
+            </button>
+          </div>
+        </Overlay>
+      )}
+
+      {showDeleted && (
+        <Overlay title="Recently deleted playlists" onClose={() => setShowDeleted(false)}>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
+            Local archive of song lists. “Recreate” makes a new playlist with the same songs.
+          </p>
+          {cache.deleted.length === 0 ? (
+            <p className="empty">Nothing archived.</p>
+          ) : (
+            <div className="panel" style={{ maxHeight: "55vh", overflow: "auto" }}>
+              {cache.deleted.map((d) => (
+                <div key={`${d.id}-${d.deletedAt}`} className="pl-row">
+                  <span className="pl-title">{d.title}</span>
+                  <span className="pl-meta">{d.tracks.length} songs · {relativeAge(d.deletedAt)}</span>
+                  <button className="small" onClick={() => recreateDeleted(d)}>Recreate</button>
+                  <button
+                    className="small"
+                    onClick={() =>
+                      persist({ ...cache, deleted: cache.deleted.filter((x) => !(x.id === d.id && x.deletedAt === d.deletedAt)) })
+                    }
+                  >
+                    Forget
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </Overlay>
       )}
 

@@ -5,12 +5,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Playlist, Track } from "./ytmusic";
 
+// A locally-archived deleted playlist, so an accidental delete doesn't lose the song list — it
+// can be recreated. (YouTube's delete is permanent and has no undo.)
+export type DeletedPlaylist = { id: string; title: string; tracks: Track[]; deletedAt: number };
+
 export type LibraryCache = {
   playlists: Playlist[];
   tracksByPlaylist: Record<string, Track[]>;
   updatedAt: Record<string, number>; // playlist id -> last-fetched epoch ms
   hidden: string[]; // playlist ids hidden from the main sidebar
   editable: string[]; // playlist ids you own (detected on update)
+  deleted: DeletedPlaylist[]; // archive of deleted playlists (for recreation)
 };
 
 export const EMPTY_CACHE: LibraryCache = {
@@ -19,6 +24,7 @@ export const EMPTY_CACHE: LibraryCache = {
   updatedAt: {},
   hidden: [],
   editable: [],
+  deleted: [],
 };
 
 export async function loadCache(): Promise<LibraryCache> {
@@ -32,6 +38,7 @@ export async function loadCache(): Promise<LibraryCache> {
       updatedAt: parsed.updatedAt ?? {},
       hidden: parsed.hidden ?? [],
       editable: parsed.editable ?? [],
+      deleted: parsed.deleted ?? [],
     };
   } catch {
     return { ...EMPTY_CACHE };

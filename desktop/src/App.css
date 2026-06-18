@@ -84,6 +84,19 @@ button.primary {
 button.primary:hover:not(:disabled) {
   filter: brightness(1.07);
 }
+button.danger {
+  color: #d33232;
+  border-color: rgba(211, 50, 50, 0.55);
+  background: transparent;
+}
+button.danger:hover:not(:disabled) {
+  background: rgba(211, 50, 50, 0.12);
+  border-color: #d33232;
+}
+.warn {
+  color: #d33232;
+  font-weight: 600;
+}
 
 input {
   font: inherit;
