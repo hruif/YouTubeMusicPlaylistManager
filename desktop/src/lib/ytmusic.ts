@@ -239,7 +239,11 @@ export async function createPlaylist(title: string, videoIds: string[]): Promise
   return res.playlist_id;
 }
 
-/** Delete a playlist you own. */
+/** Delete a playlist you own. Throws if YouTube reports failure (it may not throw on its own). */
 export async function deletePlaylist(playlistId: string): Promise<void> {
-  await requireClient().playlist.delete(normalizePlaylistId(playlistId));
+  const res = await requireClient().playlist.delete(normalizePlaylistId(playlistId));
+  const ok = res?.success !== false && (res?.status_code === undefined || res.status_code < 400);
+  if (!ok) {
+    throw new Error(`YouTube rejected the delete (success=${res?.success}, status=${res?.status_code})`);
+  }
 }
