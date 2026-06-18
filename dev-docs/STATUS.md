@@ -206,8 +206,14 @@ for architecture/layout.
     (`searchYouTubeMusicSongs` + `bestYoutubeMatch`, ported from `spotify_matcher`); transfer creates
     a playlist from confident matches and persists the unmatched (`cache.unmatched`, viewable via
     right-click). Treated as fragile/non-fatal with clear errors.
-  - **Phase 4 — next:** remaining local features (custom names, removed-songs archive, CSV export,
-    unavailable-track finder, update checker) + packaging/notarization; then cut over from Python.
+  - **Phase 4 — DONE (local features + packaging).** Custom song names (local searchable aliases);
+    CSV export (native save dialog); removed-songs archive on update; best-effort unavailable filter
+    (placeholder-title detection — youtubei.js exposes no playability flag). Production build works:
+    `npm run tauri build` → ~12 MB `.app`/`.dmg` (vs ~148 MB Python), ad-hoc signed (notarization
+    needs a paid Apple Developer ID, as with the Python app; `desktop/BUILD.md`). Deferred: in-app
+    update checker (until the app has its own release line); icon still the Tauri default.
+  - **Remaining before cutover:** real app icon, manual end-to-end pass, decide release/versioning
+    + whether to notarize, then point the download page at the Tauri build.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   The Python app keeps shipping until parity.
