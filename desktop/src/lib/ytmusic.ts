@@ -136,10 +136,12 @@ export type CombinedSong = Track & { playlists: string[] };
  */
 export async function getPlaylistTracks(
   playlistId: string,
-): Promise<{ tracks: Track[]; editable: boolean }> {
+): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let playlist: any = await requireClient().music.getPlaylist(playlistId);
   const editable = playlist?.header?.type === "MusicEditablePlaylistDetailHeader";
+  const h = playlist?.header?.title;
+  const title: string = (typeof h === "string" ? h : h?.text) ?? "";
   const out: Track[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const take = (items: any[] | undefined): void => {
@@ -164,7 +166,16 @@ export async function getPlaylistTracks(
     playlist = await playlist.getContinuation();
     take(playlist.items);
   }
-  return { tracks: out, editable };
+  return { tracks: out, editable, title };
+}
+
+// Parse a YouTube / YouTube Music playlist id from a URL or raw id (strips the VL browse prefix).
+export function parseYouTubePlaylistId(input: string): string | null {
+  const m = input.match(/[?&]list=([A-Za-z0-9_-]+)/) || input.match(/playlist\/([A-Za-z0-9_-]+)/);
+  const raw = m ? m[1] : input.trim();
+  if (!raw) return null;
+  const id = raw.replace(/^VL/, "");
+  return /^[A-Za-z0-9_-]{10,}$/.test(id) ? id : null;
 }
 
 /**

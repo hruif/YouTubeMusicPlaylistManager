@@ -378,6 +378,14 @@ input,
   font-size: 13px;
 }
 
+.setting {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 0;
+  font-size: 13px;
+}
+
 /* Update-available banner */
 .update-bar {
   flex: 0 0 auto;
