@@ -221,13 +221,18 @@ for architecture/layout.
     matcher/cache logic; **in-app update checker** (checks for newer `desktop-v*` releases → banner).
     Latest release: **`desktop-v0.2.0`**.
   - **On `main`, unreleased (will roll into the next `desktop-v*`):** single-instance lock; App.tsx
-    split into modules + memoized rows; **"Play in YouTube Music" queue** (build a private temp
-    playlist from selected songs/playlists and open it to play, with a "Queues" manager); disabled
-    WebView autocorrect on inputs.
-  - **Remaining / possible gaps vs the Python app:** temp-playlist exit-cleanup prompt + startup
-    reminder (only a manual manager so far); adding an arbitrary *public* YouTube playlist by URL
-    (the desktop app shows *your* library only); a settings screen (settings are implicit).
-    Notarization stays deferred (needs a paid Apple Developer ID); full cutover when ready.
+    split into modules + memoized rows; **"Play in YouTube Music" queue** (private temp playlist from
+    selected songs/playlists, opened to play) + a "Queues" manager with **startup reminder + quit-time
+    cleanup prompt** (or auto-delete via a setting); **add any public playlist by URL**; a **Settings
+    screen** (show-real-titles, auto-delete queues, check-updates); disabled WebView autocorrect.
+    Parity with the Python app's core is now essentially complete.
+  - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
+    `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
+    it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the
+    youtube-dl-takedown basis), moving the app from "low-risk playlist utility" to "yt-dlp-class
+    streaming client" — too much takedown risk for a publicly-distributed app. Playback stays via the
+    "Play in YouTube Music" queue (opens the official site).
+  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID); full cutover when ready.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   The Python app keeps shipping until parity.
