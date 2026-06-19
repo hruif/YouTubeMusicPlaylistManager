@@ -220,8 +220,14 @@ for architecture/layout.
     pagination, shift-select, and transfer dedupe/retry fixes; Vitest tests + `desktop-ci` for the
     matcher/cache logic; **in-app update checker** (checks for newer `desktop-v*` releases → banner).
     Latest release: **`desktop-v0.2.0`**.
-  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID, as with the Python app);
-    eventual full cutover from the Python app when ready.
+  - **On `main`, unreleased (will roll into the next `desktop-v*`):** single-instance lock; App.tsx
+    split into modules + memoized rows; **"Play in YouTube Music" queue** (build a private temp
+    playlist from selected songs/playlists and open it to play, with a "Queues" manager); disabled
+    WebView autocorrect on inputs.
+  - **Remaining / possible gaps vs the Python app:** temp-playlist exit-cleanup prompt + startup
+    reminder (only a manual manager so far); adding an arbitrary *public* YouTube playlist by URL
+    (the desktop app shows *your* library only); a settings screen (settings are implicit).
+    Notarization stays deferred (needs a paid Apple Developer ID); full cutover when ready.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   The Python app keeps shipping until parity.
