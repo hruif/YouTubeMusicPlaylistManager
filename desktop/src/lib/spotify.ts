@@ -240,9 +240,11 @@ export async function fetchSpotifyPlaylist(
 
   let offset = LIMIT;
   while (offset < total) {
+    const before = tracks.length;
     const page = await pathfinderPage(s, id, offset, LIMIT);
     collect(page?.data?.playlistV2?.content);
     onProgress?.(tracks.length, total);
+    if (tracks.length === before) break; // page added nothing — stop (totalCount can overcount)
     offset += LIMIT;
   }
   return { title, tracks };

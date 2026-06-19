@@ -11,7 +11,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use std::thread;
 use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -106,7 +105,7 @@ async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<SignInResult, St
             let _ = window.close();
             return Ok(result);
         }
-        thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
@@ -146,7 +145,7 @@ async fn try_silent_sign_in(app: tauri::AppHandle) -> Result<Option<SignInResult
                 }
             }
         }
-        thread::sleep(Duration::from_secs(1));
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
@@ -245,7 +244,7 @@ async fn proxy_http_request(
             Err(e) => {
                 last_err = e.to_string();
                 if attempt < 2 {
-                    thread::sleep(Duration::from_millis(300));
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                 }
             }
         }
@@ -304,8 +303,12 @@ fn read_cache(app: tauri::AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn write_cache(app: tauri::AppHandle, contents: String) -> Result<(), String> {
+    // Atomic write: temp file + rename, so an interleaved/crashing write can't truncate the cache
+    // (a corrupt cache would silently reset the whole local library + the deletion-recovery archive).
     let path = cache_path(&app)?;
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
 /// Show a native Save dialog and write `contents` to the chosen path. Returns false if cancelled.

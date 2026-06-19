@@ -164,14 +164,24 @@ function App() {
     setStatus(`Matching 0/${tracks.length} on YouTube Music…`);
     try {
       const matches: ({ videoId: string; title: string; artist: string } | null)[] = new Array(tracks.length).fill(null);
+      const searchCache = new Map<string, Awaited<ReturnType<typeof searchYouTubeMusicSongs>>>();
       let cursor = 0;
       let done = 0;
       const worker = async (): Promise<void> => {
         while (cursor < tracks.length) {
           const i = cursor++;
           const t = tracks[i];
+          const q = `${t.title} ${t.artist}`.trim();
           try {
-            const candidates = await searchYouTubeMusicSongs(`${t.title} ${t.artist}`.trim());
+            let candidates = searchCache.get(q);
+            if (!candidates) {
+              try {
+                candidates = await searchYouTubeMusicSongs(q);
+              } catch {
+                candidates = await searchYouTubeMusicSongs(q); // one retry on a transient failure
+              }
+              searchCache.set(q, candidates);
+            }
             const m = bestYoutubeMatch(candidates, t.title, t.artist);
             if (m) matches[i] = { videoId: m.videoId, title: t.title, artist: t.artist };
           } catch {
@@ -181,7 +191,7 @@ function App() {
           setStatus(`Matching ${done}/${tracks.length} on YouTube Music…`);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(4, tracks.length) }, () => worker()));
+      await Promise.all(Array.from({ length: Math.min(6, tracks.length) }, () => worker()));
 
       const matchedIds: string[] = [];
       const matchedTracks: { videoId: string; title: string; artist: string }[] = [];
@@ -203,15 +213,15 @@ function App() {
       const newId = await createPlaylist(name, matchedIds);
       if (newId) {
         persist({
-          ...cache,
-          playlists: [{ id: newId, title: name }, ...cache.playlists],
-          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: matchedTracks },
-          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
-          editable: [...new Set([...cache.editable, newId])],
-          unmatched: unmatched.length ? { ...cache.unmatched, [newId]: unmatched } : cache.unmatched,
+          ...cacheRef.current,
+          playlists: [{ id: newId, title: name }, ...cacheRef.current.playlists],
+          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: matchedTracks },
+          updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cacheRef.current.editable, newId])],
+          unmatched: unmatched.length ? { ...cacheRef.current.unmatched, [newId]: unmatched } : cacheRef.current.unmatched,
         });
       } else {
-        await refreshPlaylists(cache);
+        await refreshPlaylists();
       }
       setTransferResult({ name, matched: matchedIds.length, unmatched });
       setStatus(`Transferred “${name}”: ${matchedIds.length} added, ${unmatched.length} unmatched`);
@@ -222,9 +232,20 @@ function App() {
     }
   }
 
+  // cacheRef always holds the latest cache, so async handlers can base a write on current state
+  // (not a stale render snapshot) — otherwise a write after an await clobbers concurrent changes.
+  const cacheRef = useRef(cache);
+  useEffect(() => {
+    cacheRef.current = cache;
+  }, [cache]);
+  // Debounced, atomic save (coalesces bursts; the Rust side writes temp+rename).
+  useEffect(() => {
+    const id = setTimeout(() => void saveCache(cache), 400);
+    return () => clearTimeout(id);
+  }, [cache]);
   function persist(next: LibraryCache) {
+    cacheRef.current = next;
     setCache(next);
-    void saveCache(next);
   }
 
   function openDetails(s: CombinedSong) {
@@ -236,7 +257,7 @@ function App() {
     const next = { ...cache.customNames };
     if (v) next[videoId] = v;
     else delete next[videoId];
-    persist({ ...cache, customNames: next });
+    persist({ ...cacheRef.current, customNames: next });
   }
 
   async function doSignIn() {
@@ -246,7 +267,7 @@ function App() {
       await signIn();
       setSignedIn(true);
       setBusy(false);
-      if (cache.playlists.length === 0) await refreshPlaylists(cache);
+      if (cache.playlists.length === 0) await refreshPlaylists();
     } catch (err) {
       fail(`Sign-in failed: ${errText(err)}`);
       setBusy(false);
@@ -283,6 +304,12 @@ function App() {
     }
   }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly]);
 
+  // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
+  // (sort/filter/search) so a range isn't computed across two different orderings.
+  useEffect(() => {
+    lastSongIndex.current = null;
+  }, [sortKey, sortAsc, query, dupOnly, unavailableOnly]);
+
   // Cmd/Ctrl+F focuses the song search.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -296,12 +323,12 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  async function refreshPlaylists(current: LibraryCache) {
+  async function refreshPlaylists() {
     setBusy(true);
     setStatus("Refreshing playlist list…");
     try {
       const playlists = await getLibraryPlaylists();
-      persist({ ...current, playlists });
+      persist({ ...cacheRef.current, playlists });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
       fail(`Failed to refresh playlists: ${errText(err)}`);
@@ -323,7 +350,7 @@ function App() {
         if (names) {
           setSignedIn(true);
           setStatus(`${cached.playlists.length} playlists (cached)`);
-          if (cached.playlists.length === 0) await refreshPlaylists(cached);
+          if (cached.playlists.length === 0) await refreshPlaylists();
         } else {
           setStatus("Not signed in");
         }
@@ -363,7 +390,7 @@ function App() {
     const next = new Set(cache.hidden);
     if (hide) next.add(id);
     else next.delete(id);
-    persist({ ...cache, hidden: [...next] });
+    persist({ ...cacheRef.current, hidden: [...next] });
     if (hide)
       setSelected((prev) => {
         const s = new Set(prev);
@@ -393,16 +420,16 @@ function App() {
         (done, total) => setStatus(`Updating ${done}/${total}…`),
       );
       const now = Date.now();
-      const updatedAt = { ...cache.updatedAt };
+      const updatedAt = { ...cacheRef.current.updatedAt };
       for (const id of Object.keys(tracksByPlaylist)) updatedAt[id] = now;
 
       // Archive songs that vanished from a playlist (present before, absent in the fresh fetch).
       // Guard: skip on first fetch (no prior) or an empty fetch (likely a hiccup), so we never wipe.
-      const removedSongs = { ...cache.removedSongs };
+      const removedSongs = { ...cacheRef.current.removedSongs };
       let removedCount = 0;
       for (const id of Object.keys(tracksByPlaylist)) {
         const fresh = tracksByPlaylist[id];
-        const old = cache.tracksByPlaylist[id];
+        const old = cacheRef.current.tracksByPlaylist[id];
         if (!old || fresh.length === 0) continue;
         const freshIds = new Set(fresh.map((t) => t.videoId));
         const gone = old.filter((o) => !freshIds.has(o.videoId));
@@ -419,10 +446,10 @@ function App() {
       }
 
       let next: LibraryCache = {
-        ...cache,
-        tracksByPlaylist: { ...cache.tracksByPlaylist, ...tracksByPlaylist },
+        ...cacheRef.current,
+        tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, ...tracksByPlaylist },
         updatedAt,
-        editable: [...new Set([...cache.editable, ...editableIds])],
+        editable: [...new Set([...cacheRef.current.editable, ...editableIds])],
         removedSongs,
       };
 
@@ -434,8 +461,8 @@ function App() {
         const upd = { ...next.updatedAt };
         const archived: LibraryCache["deleted"] = [];
         for (const id of notFoundIds) {
-          const pl = cache.playlists.find((p) => p.id === id);
-          const t = cache.tracksByPlaylist[id] ?? [];
+          const pl = cacheRef.current.playlists.find((p) => p.id === id);
+          const t = cacheRef.current.tracksByPlaylist[id] ?? [];
           if (pl && t.length) archived.push({ id, title: pl.title, tracks: t, deletedAt: now });
           delete tracks[id];
           delete upd[id];
@@ -503,8 +530,8 @@ function App() {
       return;
     }
     persist({
-      ...cache,
-      tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: [...existing, ...toAdd] },
+      ...cacheRef.current,
+      tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: [...existing, ...toAdd] },
     });
     setBusy(true);
     setStatus(`Adding ${toAdd.length} to ${target.title}…`);
@@ -512,7 +539,7 @@ function App() {
       await addVideos(target.id, toAdd.map((t) => t.videoId));
       setStatus(`Added ${toAdd.length} to ${target.title}`);
     } catch (err) {
-      persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
+      persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
       fail(`Add failed: ${errText(err)}`);
     } finally {
       setBusy(false);
@@ -532,16 +559,16 @@ function App() {
       const newId = await createPlaylist(name, tracks.map((t) => t.videoId));
       if (newId) {
         persist({
-          ...cache,
-          playlists: [{ id: newId, title: name }, ...cache.playlists],
-          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: tracks },
-          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
-          editable: [...new Set([...cache.editable, newId])],
+          ...cacheRef.current,
+          playlists: [{ id: newId, title: name }, ...cacheRef.current.playlists],
+          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: tracks },
+          updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cacheRef.current.editable, newId])],
         });
         setStatus(`Created “${name}” with ${tracks.length} songs`);
       } else {
         setStatus(`Created “${name}” — refreshing list…`);
-        await refreshPlaylists(cache);
+        await refreshPlaylists();
       }
     } catch (err) {
       fail(`Create failed: ${errText(err)}`);
@@ -573,14 +600,14 @@ function App() {
       "This removes them from the playlist on your YouTube Music account.",
       async () => {
         const remaining = existing.filter((t) => !selectedSongs.has(t.videoId));
-        persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: remaining } });
+        persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining } });
         setBusy(true);
         setStatus(`Removing ${ids.length} from ${target.title}…`);
         try {
           await removeVideos(target.id, ids);
           setStatus(`Removed ${ids.length} from ${target.title}`);
         } catch (err) {
-          persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [target.id]: existing } });
+          persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
           fail(`Remove failed: ${errText(err)}`);
         } finally {
           setBusy(false);
@@ -605,13 +632,13 @@ function App() {
       delete updatedAt[p.id];
       const archived = { id: p.id, title: p.title, tracks, deletedAt: Date.now() };
       persist({
-        ...cache,
-        playlists: cache.playlists.filter((x) => x.id !== p.id),
+        ...cacheRef.current,
+        playlists: cacheRef.current.playlists.filter((x) => x.id !== p.id),
         tracksByPlaylist,
         updatedAt,
-        hidden: cache.hidden.filter((id) => id !== p.id),
-        editable: cache.editable.filter((id) => id !== p.id),
-        deleted: [archived, ...cache.deleted].slice(0, 30),
+        hidden: cacheRef.current.hidden.filter((id) => id !== p.id),
+        editable: cacheRef.current.editable.filter((id) => id !== p.id),
+        deleted: [archived, ...cacheRef.current.deleted].slice(0, 30),
       });
       setSelected((prev) => {
         const s = new Set(prev);
@@ -635,16 +662,16 @@ function App() {
       const newId = await createPlaylist(d.title, d.tracks.map((t) => t.videoId));
       if (newId) {
         persist({
-          ...cache,
-          playlists: [{ id: newId, title: d.title }, ...cache.playlists],
-          tracksByPlaylist: { ...cache.tracksByPlaylist, [newId]: d.tracks },
-          updatedAt: { ...cache.updatedAt, [newId]: Date.now() },
-          editable: [...new Set([...cache.editable, newId])],
+          ...cacheRef.current,
+          playlists: [{ id: newId, title: d.title }, ...cacheRef.current.playlists],
+          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: d.tracks },
+          updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
+          editable: [...new Set([...cacheRef.current.editable, newId])],
         });
         setStatus(`Recreated “${d.title}” with ${d.tracks.length} songs`);
       } else {
         setStatus(`Recreated “${d.title}” — refreshing list…`);
-        await refreshPlaylists(cache);
+        await refreshPlaylists();
       }
     } catch (err) {
       fail(`Recreate failed: ${errText(err)}`);
@@ -696,16 +723,29 @@ function App() {
       async () => {
         const seen = new Set<string>();
         const deduped = tracks.filter((t) => (seen.has(t.videoId) ? false : (seen.add(t.videoId), true)));
-        persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [p.id]: deduped } });
+        persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: deduped } });
         setBusy(true);
         setStatus(`Removing repeats in ${p.title}…`);
+        let removed = false;
         try {
           await removeVideos(p.id, repeated); // removes ALL occurrences of each repeated id
+          removed = true;
           await addVideos(p.id, repeated); // add one of each back
           setStatus(`Removed repeats in ${p.title} (${repeated.length})`);
         } catch (err) {
-          persist({ ...cache, tracksByPlaylist: { ...cache.tracksByPlaylist, [p.id]: tracks } });
-          fail(`Remove repeats failed: ${errText(err)}`);
+          if (removed) {
+            // All copies were removed on YouTube but re-adding one failed → those songs are now
+            // GONE on the account; reflect that (don't revert to showing repeats) and tell the user.
+            const repSet = new Set(repeated);
+            persist({
+              ...cacheRef.current,
+              tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks.filter((t) => !repSet.has(t.videoId)) },
+            });
+            fail(`Removed repeats in “${p.title}”, but re-adding one copy failed — those ${repeated.length} song(s) are now gone; re-add them. ${errText(err)}`);
+          } else {
+            persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks } });
+            fail(`Remove repeats failed: ${errText(err)}`);
+          }
         } finally {
           setBusy(false);
         }
@@ -796,7 +836,7 @@ function App() {
           )}
           {signedIn && <button disabled={busy} onClick={() => { setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}>Import Spotify</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
-          {signedIn && <button disabled={busy} onClick={() => refreshPlaylists(cache)}>Refresh list</button>}
+          {signedIn && <button disabled={busy} onClick={() => refreshPlaylists()}>Refresh list</button>}
           {signedIn && (
             <button
               disabled={busy}
@@ -1134,7 +1174,7 @@ function App() {
                   <button
                     className="small"
                     onClick={() =>
-                      persist({ ...cache, deleted: cache.deleted.filter((x) => !(x.id === d.id && x.deletedAt === d.deletedAt)) })
+                      persist({ ...cacheRef.current, deleted: cacheRef.current.deleted.filter((x) => !(x.id === d.id && x.deletedAt === d.deletedAt)) })
                     }
                   >
                     Forget
