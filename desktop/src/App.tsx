@@ -19,6 +19,7 @@ import {
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
+import { checkForUpdate } from "./lib/update";
 import "./App.css";
 
 // Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
@@ -124,6 +125,12 @@ function App() {
   const [transferResult, setTransferResult] = useState<{ name: string; matched: number; unmatched: SpotifyTrack[] } | null>(null);
   const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
   const [showRemoved, setShowRemoved] = useState<string | null>(null);
+  const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
+
+  // Check for a newer release once on startup (best-effort).
+  useEffect(() => {
+    void checkForUpdate().then(setUpdate);
+  }, []);
 
   // Report a failure: status line + a popup so it's obvious something went wrong.
   function fail(message: string) {
@@ -826,6 +833,13 @@ function App() {
 
   return (
     <main className="app">
+      {update && (
+        <div className="update-bar">
+          <span>A newer version ({update.version}) is available.</span>
+          <button className="small" onClick={() => openUrl(update.url)}>Download</button>
+          <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
+        </div>
+      )}
       <header className="toolbar">
         <h1>YouTube Music Manager</h1>
         <span className="status">{status}</span>
