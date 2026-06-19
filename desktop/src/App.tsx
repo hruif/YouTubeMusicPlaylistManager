@@ -84,6 +84,7 @@ function App() {
   const [transferResult, setTransferResult] = useState<{ name: string; matched: number; unmatched: SpotifyTrack[] } | null>(null);
   const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
   const [showRemoved, setShowRemoved] = useState<string | null>(null);
+  const [showTemp, setShowTemp] = useState(false);
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
 
   // Check for a newer release once on startup (best-effort).
@@ -227,6 +228,44 @@ function App() {
     if (v) next[videoId] = v;
     else delete next[videoId];
     persist({ ...cacheRef.current, customNames: next });
+  }
+
+  // "Play in YouTube Music": YouTube Music has no streaming API, so we recreate the workaround —
+  // build a private temporary playlist from the songs and open it on music.youtube.com to play.
+  // The temp playlist is tracked so it can be cleaned up later (Queues panel).
+  async function playInYouTube(videoIds: string[], title: string) {
+    if (videoIds.length === 0) return;
+    setBusy(true);
+    setStatus(`Building queue “${title}”…`);
+    try {
+      const newId = await createPlaylist(title, videoIds);
+      if (newId) {
+        persist({
+          ...cacheRef.current,
+          tempPlaylists: [{ id: newId, title, createdAt: Date.now() }, ...cacheRef.current.tempPlaylists].slice(0, 50),
+        });
+        await openPlaylist(newId);
+        setStatus(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
+      } else {
+        setStatus("Created the queue, but couldn't get its id to open it.");
+      }
+    } catch (err) {
+      fail(`Couldn't build the queue: ${errText(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function deleteTemp(id: string) {
+    setBusy(true);
+    setStatus("Deleting queue…");
+    deletePlaylist(id)
+      .then(() => {
+        persist({ ...cacheRef.current, tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => t.id !== id) });
+        setStatus("Deleted queue");
+      })
+      .catch((err) => fail(`Couldn't delete the queue: ${errText(err)}`))
+      .finally(() => setBusy(false));
   }
 
   async function doSignIn() {
@@ -795,13 +834,14 @@ function App() {
   const onSongContextMenu = useCallback(
     (e: React.MouseEvent, index: number) => {
       const s = visibleSongs[index];
-      let count = selectedSongs.size;
+      const ids = selectedSongs.has(s.videoId) ? [...selectedSongs] : [s.videoId];
+      const count = ids.length;
       if (!selectedSongs.has(s.videoId)) {
         setSelectedSongs(new Set([s.videoId]));
         lastSongIndex.current = index;
-        count = 1;
       }
       openMenu(e, [
+        { label: `Play ${count} in YouTube Music`, onClick: () => playInYouTube(ids, `▶ Queue — ${count} song${count > 1 ? "s" : ""}`) },
         { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
         { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
         { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
@@ -835,6 +875,9 @@ function App() {
         <span className="actions">
           {signedIn && cache.deleted.length > 0 && (
             <button disabled={busy} onClick={() => setShowDeleted(true)}>Recently deleted ({cache.deleted.length})</button>
+          )}
+          {signedIn && cache.tempPlaylists.length > 0 && (
+            <button disabled={busy} onClick={() => setShowTemp(true)}>Queues ({cache.tempPlaylists.length})</button>
           )}
           {signedIn && <button disabled={busy} onClick={() => { setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}>Import Spotify</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
@@ -905,11 +948,23 @@ function App() {
                 Update stale ({stalePlaylists.length})
               </button>
             )}
+            <button
+              disabled={busy || songs.length === 0}
+              title="Make a temporary playlist from these songs and open it on music.youtube.com to play"
+              onClick={() =>
+                playInYouTube(
+                  songs.map((s) => s.videoId),
+                  `▶ ${selectedPlaylists.map((p) => p.title).join(", ").slice(0, 80) || "Queue"}`,
+                )
+              }
+            >
+              ▶ Play {songs.length} in YouTube Music
+            </button>
           </section>
 
           <section className="songpane">
             <div className="searchbar">
-              <input ref={searchRef} className="search" placeholder="Search songs…  (⌘F)" value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
+              <input spellCheck={false} autoCorrect="off" autoCapitalize="off" ref={searchRef} className="search" placeholder="Search songs…  (⌘F)" value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
               {query && <button className="small" onClick={() => setQuery("")}>clear</button>}
               <label className="toggle">
                 <input type="checkbox" checked={dupOnly} onChange={(e) => setDupOnly(e.currentTarget.checked)} />
@@ -975,7 +1030,7 @@ function App() {
           <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0 }}>
             Unchecked playlists are hidden from the main sidebar (still cached). {hidden.size} hidden.
           </p>
-          <input
+          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             placeholder="Filter…"
             value={manageQuery}
             onChange={(e) => setManageQuery(e.currentTarget.value)}
@@ -997,7 +1052,7 @@ function App() {
           <p style={{ margin: "4px 0" }}><strong>Artist:</strong> {detail.artist || "—"}</p>
           <p style={{ margin: "8px 0 4px" }}><strong>Custom name</strong> (local, searchable):</p>
           <div style={{ display: "flex", gap: 8 }}>
-            <input
+            <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
               style={{ flex: 1 }}
               placeholder="Your own name for this song…"
               value={customDraft}
@@ -1042,7 +1097,7 @@ function App() {
             Pick a playlist you own. ✓ marks ones detected as editable; others are still allowed and
             will report an error if YouTube rejects the edit.
           </p>
-          <input placeholder="Filter playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
+          <input spellCheck={false} autoCorrect="off" autoCapitalize="off" placeholder="Filter playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
           <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
             {addTargets.map((p) => (
               <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
@@ -1113,7 +1168,7 @@ function App() {
           <p style={{ fontSize: 13, margin: "10px 0 4px" }}>
             Type the playlist name <strong>{deleteTarget.title}</strong> to confirm:
           </p>
-          <input
+          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             autoFocus
             value={deleteText}
             placeholder={deleteTarget.title}
@@ -1167,7 +1222,7 @@ function App() {
 
       {createOpen && (
         <Overlay title={`New playlist from ${selectedTracks.length} song(s)`} onClose={() => setCreateOpen(false)}>
-          <input
+          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             autoFocus
             placeholder="Playlist name"
             value={newName}
@@ -1189,7 +1244,7 @@ function App() {
             break when Spotify changes their site; just try again or report it.)
           </p>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <input
+            <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
               style={{ flex: 1 }}
               placeholder="https://open.spotify.com/playlist/…"
               value={spotifyUrl}
@@ -1215,7 +1270,7 @@ function App() {
                 ))}
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
-                <input style={{ flex: 1 }} placeholder="New YouTube playlist name" value={spotifyName} onChange={(e) => setSpotifyName(e.currentTarget.value)} />
+                <input spellCheck={false} autoCorrect="off" autoCapitalize="off" style={{ flex: 1 }} placeholder="New YouTube playlist name" value={spotifyName} onChange={(e) => setSpotifyName(e.currentTarget.value)} />
                 <button className="primary" disabled={busy || !spotifyName.trim()} onClick={transferSpotify}>
                   Transfer to YouTube Music
                 </button>
@@ -1286,6 +1341,61 @@ function App() {
               </div>
             ))}
           </div>
+        </Overlay>
+      )}
+
+      {showTemp && (
+        <Overlay title="Temporary playlists (queues)" onClose={() => setShowTemp(false)}>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
+            Private playlists created by “Play in YouTube Music”. They live on your account until you
+            delete them here.
+          </p>
+          {cache.tempPlaylists.length === 0 ? (
+            <p className="empty">No queues.</p>
+          ) : (
+            <>
+              <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
+                {cache.tempPlaylists.map((t) => (
+                  <div key={t.id} className="pl-row">
+                    <span className="pl-title">{t.title}</span>
+                    <span className="pl-meta">{relativeAge(t.createdAt)}</span>
+                    <button className="small" onClick={() => openPlaylist(t.id)}>open</button>
+                    <button className="small" disabled={busy} onClick={() => deleteTemp(t.id)}>delete</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button
+                  className="danger"
+                  disabled={busy}
+                  onClick={() =>
+                    confirmAction(
+                      `Delete all ${cache.tempPlaylists.length} queues?`,
+                      "Permanently deletes every temporary playlist from your YouTube Music account.",
+                      async () => {
+                        setBusy(true);
+                        const ids = cacheRef.current.tempPlaylists.map((t) => t.id);
+                        let remaining = [...cacheRef.current.tempPlaylists];
+                        for (const id of ids) {
+                          try {
+                            await deletePlaylist(id);
+                            remaining = remaining.filter((t) => t.id !== id);
+                            persist({ ...cacheRef.current, tempPlaylists: remaining });
+                          } catch {
+                            /* keep it in the list to retry */
+                          }
+                        }
+                        setBusy(false);
+                        setStatus(`Deleted ${ids.length - remaining.length} queue(s)`);
+                      },
+                    )
+                  }
+                >
+                  Delete all
+                </button>
+              </div>
+            </>
+          )}
         </Overlay>
       )}
 

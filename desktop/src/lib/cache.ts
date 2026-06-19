@@ -19,6 +19,7 @@ export type LibraryCache = {
   unmatched: Record<string, { title: string; artist: string }[]>; // Spotify tracks not matched, by new playlist id
   customNames: Record<string, string>; // local searchable aliases, by videoId
   removedSongs: Record<string, { title: string; artist: string; removedAt: number }[]>; // archived on update, by playlist id
+  tempPlaylists: { id: string; title: string; createdAt: number }[]; // "play in YouTube Music" queues, for cleanup
 };
 
 export const EMPTY_CACHE: LibraryCache = {
@@ -31,6 +32,7 @@ export const EMPTY_CACHE: LibraryCache = {
   unmatched: {},
   customNames: {},
   removedSongs: {},
+  tempPlaylists: [],
 };
 
 export async function loadCache(): Promise<LibraryCache> {
@@ -48,6 +50,7 @@ export async function loadCache(): Promise<LibraryCache> {
       unmatched: parsed.unmatched ?? {},
       customNames: parsed.customNames ?? {},
       removedSongs: parsed.removedSongs ?? {},
+      tempPlaylists: parsed.tempPlaylists ?? [],
     };
   } catch {
     return { ...EMPTY_CACHE };
