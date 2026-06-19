@@ -335,6 +335,15 @@ pub fn run() {
         .expect("failed to build HTTP client");
 
     tauri::Builder::default()
+        // Single-instance must be the FIRST plugin. A second launch focuses the existing window
+        // instead of opening a second copy that would race on the same cache + login profile.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionState::default())

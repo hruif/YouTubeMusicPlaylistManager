@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -20,14 +20,16 @@ import {
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
 import { checkForUpdate } from "./lib/update";
+import { ROW_H, STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
+import { useVirtual } from "./hooks/useVirtual";
+import { Overlay } from "./components/Overlay";
+import { SongRow } from "./components/SongRow";
 import "./App.css";
 
 // Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
 // selection/sort, search (Cmd+F), hide playlists, details with external links.
 
 type SortKey = "title" | "artist" | "count";
-const ROW_H = 30;
-const STALE_MS = 7 * 24 * 3600 * 1000;
 
 // --- small persisted UI state (selection/sort/filter) in localStorage (tiny, frequent writes) ---
 type UiState = { selected: string[]; sortKey: SortKey; sortAsc: boolean; dupOnly: boolean; unavailableOnly: boolean };
@@ -40,49 +42,6 @@ function loadUi(): UiState {
   } catch {
     return base;
   }
-}
-
-// Best-effort: YouTube replaces a gone video's title with a placeholder. Catches deleted/private
-// videos; misses region-locked ones that keep their title (youtubei.js exposes no playability flag).
-function isUnavailableTitle(title: string): boolean {
-  return /\[(deleted|private|unavailable|restricted)\b/i.test(title);
-}
-
-function relativeAge(ms?: number): string {
-  if (!ms) return "never";
-  const mins = Math.floor((Date.now() - ms) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-// Virtualization: render only the rows in view. Uses a callback ref so the scroll/resize
-// listeners attach when the container actually mounts (it's gated behind sign-in, so a plain
-// useEffect([]) at mount would find no element and never wire up — leaving only the first page).
-function useVirtual(count: number) {
-  const [el, setEl] = useState<HTMLDivElement | null>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [height, setHeight] = useState(0);
-  useEffect(() => {
-    if (!el) return;
-    const onScroll = () => setScrollTop(el.scrollTop);
-    el.addEventListener("scroll", onScroll, { passive: true });
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight));
-    ro.observe(el);
-    setHeight(el.clientHeight);
-    setScrollTop(el.scrollTop);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      ro.disconnect();
-    };
-  }, [el]);
-  const overscan = 10;
-  const h = height || 600;
-  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - overscan);
-  const end = Math.min(count, Math.ceil((scrollTop + h) / ROW_H) + overscan);
-  return { ref: setEl, start, end };
 }
 
 function App() {
@@ -257,8 +216,11 @@ function App() {
 
   function openDetails(s: CombinedSong) {
     setDetail(s);
-    setCustomDraft(cache.customNames[s.videoId] ?? "");
+    setCustomDraft(cacheRef.current.customNames[s.videoId] ?? "");
   }
+  // Stable indirection so the memoized-row callbacks don't depend on openDetails' identity.
+  const openDetailsRef = useRef(openDetails);
+  openDetailsRef.current = openDetails;
   function commitCustomName(videoId: string, value: string) {
     const v = value.trim();
     const next = { ...cache.customNames };
@@ -797,34 +759,60 @@ function App() {
   // Song selection: plain click = select one; Cmd/Ctrl+click = toggle; Shift+click = range.
   // Double-click (same row, fast) opens details — detected manually so a click after closing a
   // modal can't be mis-counted as a double-click on a different row.
-  function onSongClick(e: React.MouseEvent, index: number) {
-    const song = visibleSongs[index];
-    const id = song.videoId;
-    const prev = lastClick.current;
-    if (prev && prev.id === id && e.timeStamp - prev.t < 350) {
-      lastClick.current = null;
-      openDetails(song);
-      return;
-    }
-    lastClick.current = { id, t: e.timeStamp };
-    if (e.shiftKey && lastSongIndex.current !== null) {
-      const [a, b] = [lastSongIndex.current, index].sort((x, y) => x - y);
-      const range = new Set<string>();
-      for (let i = a; i <= b; i++) range.add(visibleSongs[i].videoId);
-      setSelectedSongs(range);
-    } else if (e.metaKey || e.ctrlKey) {
-      setSelectedSongs((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-      lastSongIndex.current = index;
-    } else {
-      setSelectedSongs(new Set([id]));
-      lastSongIndex.current = index;
-    }
-  }
+  // Stable (useCallback) so the memoized SongRow only re-renders when visibleSongs/selection change.
+  const onSongClick = useCallback(
+    (e: React.MouseEvent, index: number) => {
+      const song = visibleSongs[index];
+      const id = song.videoId;
+      const prev = lastClick.current;
+      if (prev && prev.id === id && e.timeStamp - prev.t < 350) {
+        lastClick.current = null;
+        openDetailsRef.current(song);
+        return;
+      }
+      lastClick.current = { id, t: e.timeStamp };
+      if (e.shiftKey && lastSongIndex.current !== null) {
+        const [a, b] = [lastSongIndex.current, index].sort((x, y) => x - y);
+        const range = new Set<string>();
+        for (let i = a; i <= b; i++) range.add(visibleSongs[i].videoId);
+        setSelectedSongs(range);
+      } else if (e.metaKey || e.ctrlKey) {
+        setSelectedSongs((p) => {
+          const next = new Set(p);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+        lastSongIndex.current = index;
+      } else {
+        setSelectedSongs(new Set([id]));
+        lastSongIndex.current = index;
+      }
+    },
+    [visibleSongs],
+  );
+
+  const onSongContextMenu = useCallback(
+    (e: React.MouseEvent, index: number) => {
+      const s = visibleSongs[index];
+      let count = selectedSongs.size;
+      if (!selectedSongs.has(s.videoId)) {
+        setSelectedSongs(new Set([s.videoId]));
+        lastSongIndex.current = index;
+        count = 1;
+      }
+      openMenu(e, [
+        { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
+        { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
+        { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
+        { label: "Set custom name…", onClick: () => openDetailsRef.current(s) },
+        { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
+        { label: "Details", onClick: () => openDetailsRef.current(s) },
+      ]);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visibleSongs, selectedSongs],
+  );
 
   const uncachedSelected = selectedPlaylists.filter((p) => !cache.tracksByPlaylist[p.id]).length;
   const manageList = cache.playlists.filter((p) =>
@@ -951,39 +939,16 @@ function App() {
                   {visibleSongs.slice(v.start, v.end).map((s, idx) => {
                     const i = v.start + idx;
                     return (
-                      <div
+                      <SongRow
                         key={s.videoId}
-                        className={`song-row${i % 2 ? " zebra" : ""}${selectedSongs.has(s.videoId) ? " selected" : ""}`}
-                        style={{ top: i * ROW_H }}
-                        onClick={(e) => onSongClick(e, i)}
-                        onContextMenu={(e) => {
-                          let count = selectedSongs.size;
-                          if (!selectedSongs.has(s.videoId)) {
-                            setSelectedSongs(new Set([s.videoId]));
-                            lastSongIndex.current = i;
-                            count = 1;
-                          }
-                          openMenu(e, [
-                            { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
-                            { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
-                            { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
-                            { label: "Set custom name…", onClick: () => openDetails(s) },
-                            { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
-                            { label: "Details", onClick: () => openDetails(s) },
-                          ]);
-                        }}
-                      >
-                        <div className="cell title-cell">
-                          {s.thumb ? <img className="thumb" src={s.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
-                          <span className="ttext" title={cache.customNames[s.videoId] ? s.title : undefined}>
-                            {cache.customNames[s.videoId] || s.title}
-                          </span>
-                        </div>
-                        <div className="cell muted">{s.artist}</div>
-                        <div className="cell muted" title={s.playlists.join(", ")}>
-                          {s.playlists.length === 1 ? s.playlists[0] : `${s.playlists.length} playlists`}
-                        </div>
-                      </div>
+                        song={s}
+                        index={i}
+                        zebra={i % 2 === 1}
+                        selected={selectedSongs.has(s.videoId)}
+                        customName={cache.customNames[s.videoId]}
+                        onClick={onSongClick}
+                        onContextMenu={onSongContextMenu}
+                      />
                     );
                   })}
                 </div>
@@ -1350,20 +1315,6 @@ function App() {
         </div>
       )}
     </main>
-  );
-}
-
-function Overlay({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>{title}</h2>
-          <button onClick={onClose}>Close</button>
-        </div>
-        {children}
-      </div>
-    </div>
   );
 }
 
