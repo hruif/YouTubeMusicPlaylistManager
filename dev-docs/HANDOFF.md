@@ -13,6 +13,10 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
   feature to release or cutting a build.
 
 ## Project layout (quick)
+- **Two coexisting apps:** the original **Python/Tkinter** app at the root (described below), and a
+  newer **Tauri (Rust + React/TS)** rewrite in [`desktop/`](../desktop/), shipped as a beta
+  (`desktop-v0.1.0`). For the desktop app see `desktop/README.md`, `desktop/BUILD.md`, and the
+  "Tauri rewrite" entry in `STATUS.md`. The rest of this handoff is about the **Python** app.
 - `main.py` (entry point) is the only code file at the root; all application code is under `app/`
   — `app/ui.py` (controller), `app/app_*` (core/config), `app/views/`, `app/services/`.
 - Tests live in `tests/` (`pytest -q`). In-repo dev docs live in `dev-docs/`; `docs/` is the

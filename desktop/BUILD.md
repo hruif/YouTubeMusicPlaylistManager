@@ -16,6 +16,9 @@ Artifacts land in `src-tauri/target/release/bundle/`:
 - `macos/YouTube Music Manager.app`
 - `dmg/YouTube Music Manager_<version>_<arch>.dmg`
 
+With `--target universal-apple-darwin` (the ship vehicle — see below), the bundle path is instead
+`src-tauri/target/universal-apple-darwin/release/bundle/…` and the dmg is suffixed `_universal`.
+
 The bundle is **~12 MB** (the Python app was ~148 MB) — Tauri uses the system WebView
 (WKWebView) instead of bundling a browser/runtime.
 

@@ -6,6 +6,13 @@ Only relatively basic functionality currently. You can search through playlists 
 
 Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 
+> **Native rewrite (beta).** A from-scratch native version (Tauri + React) now lives in
+> [`desktop/`](desktop/) and is shipped as a coexisting beta — pre-release
+> [`desktop-v0.1.0`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/desktop-v0.1.0).
+> It signs in **in-app** (no header copying), edits playlists, and imports from Spotify, in a ~12 MB
+> universal app. The Python app below remains the primary download for now. See
+> [`desktop/README.md`](desktop/README.md) and [`desktop/BUILD.md`](desktop/BUILD.md).
+
 ## Features
 
 - **Add YouTube Playlists**: Import any public YouTube Music playlist by URL

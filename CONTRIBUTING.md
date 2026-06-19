@@ -118,6 +118,11 @@ the release bundle, collide (same group).
 
 ## Project layout
 
+> This file documents the **Python** app. A separate **Tauri (Rust + React/TS)** rewrite lives in
+> **`desktop/`** and ships as a coexisting beta — its own docs are `desktop/README.md` and
+> `desktop/BUILD.md`; see the "Tauri rewrite" entry in `dev-docs/STATUS.md`. Build artifacts there
+> (`desktop/node_modules`, `desktop/dist`, `desktop/src-tauri/target`) are gitignored.
+
 - **Root:** only `main.py` (the entry point the `.spec` builds from and `python3 main.py` runs),
   the root docs (`README.md`, `CONTRIBUTING.md`), and config (`pytest.ini`, the `.spec`, etc.).
 - **`app/`** — all application code, as a package:

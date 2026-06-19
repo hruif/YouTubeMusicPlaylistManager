@@ -211,7 +211,7 @@ for architecture/layout.
     (placeholder-title detection — youtubei.js exposes no playability flag). Production build works:
     `npm run tauri build` → ~12 MB `.app`/`.dmg` (vs ~148 MB Python), ad-hoc signed (notarization
     needs a paid Apple Developer ID, as with the Python app; `desktop/BUILD.md`). Deferred: in-app
-    update checker (until the app has its own release line); icon still the Tauri default.
+    update checker (until the app has its own release line).
   - **Shipped as a beta (coexist) — 2026-06-18.** App icon done; built + manually verified end-to-end
     on the release bundle. Published a **universal** (Apple Silicon + Intel, ~10 MB) ad-hoc-signed
     `.dmg` as a GitHub **pre-release** `desktop-v0.1.0`, so the Python app stays "Latest"; the download

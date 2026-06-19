@@ -1,7 +1,10 @@
 # Future Directions — UI Revamp, Auth, and Delivery
 
-_Status: planning only — no rewrite code written yet._
-_Last updated: 2026-06-17._
+_Status: Tauri rewrite chosen and BUILT — shipped as a coexisting beta (`desktop-v0.1.0`, 2026-06-18).
+See `dev-docs/STATUS.md` for what's done; this doc is the original rationale/roadmap (kept for
+background). The "shared core / Chrome-extension-first" musings below were superseded — Tauri was
+built directly; the Chrome extension remains the fallback if Google ever blocks the embedded login._
+_Last updated: 2026-06-18._
 
 Scoping document for where the app could go next. Two motivating goals, three possible delivery
 forms, and a **shared-core architecture** that keeps both directions open without committing to
