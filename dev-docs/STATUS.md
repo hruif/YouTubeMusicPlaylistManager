@@ -212,14 +212,16 @@ for architecture/layout.
     `npm run tauri build` → ~12 MB `.app`/`.dmg` (vs ~148 MB Python), ad-hoc signed (notarization
     needs a paid Apple Developer ID, as with the Python app; `desktop/BUILD.md`). Deferred: in-app
     update checker (until the app has its own release line).
-  - **Shipped as a beta (coexist) — 2026-06-18.** App icon done; built + manually verified end-to-end
-    on the release bundle. Published a **universal** (Apple Silicon + Intel, ~10 MB) ad-hoc-signed
-    `.dmg` as a GitHub **pre-release** `desktop-v0.1.0`, so the Python app stays "Latest"; the download
-    page links it as "Try the beta". `desktop/BUILD.md` covers the universal build
-    (`--target universal-apple-darwin`) + Gatekeeper.
+  - **Shipped as a beta (coexist).** Universal (Apple Silicon + Intel, ~10 MB) ad-hoc-signed `.dmg`,
+    published as a GitHub **pre-release** so the Python app stays "Latest"; the download page links it
+    as "Try the beta". `desktop/BUILD.md` covers the universal build + Gatekeeper.
+  - **Hardening + 0.2.0 (2026-06-18).** Review pass: cache integrity (atomic, debounced, latest-state
+    writes — no clobber/corruption); `tokio` sleeps; remove-repeats partial-failure, Spotify
+    pagination, shift-select, and transfer dedupe/retry fixes; Vitest tests + `desktop-ci` for the
+    matcher/cache logic; **in-app update checker** (checks for newer `desktop-v*` releases → banner).
+    Latest release: **`desktop-v0.2.0`**.
   - **Remaining:** notarization (deferred — needs a paid Apple Developer ID, as with the Python app);
-    in-app update checker (needs the app's own release line, now established); eventual full cutover
-    from the Python app when ready.
+    eventual full cutover from the Python app when ready.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   The Python app keeps shipping until parity.
