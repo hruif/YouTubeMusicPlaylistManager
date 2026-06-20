@@ -131,10 +131,17 @@ input:focus {
   margin: 0;
   font-size: 18px;
   font-weight: 650;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 .status {
   color: var(--muted);
   font-size: 12.5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .grow {
   margin-left: auto;
@@ -142,6 +149,10 @@ input:focus {
 .actions {
   display: flex;
   gap: 8px;
+  flex: 0 0 auto;
+}
+.actions button {
+  white-space: nowrap;
 }
 .layout {
   display: flex;
@@ -176,6 +187,9 @@ input:focus {
 .list {
   flex: 1 1 auto;
   overflow: auto;
+  /* Isolate the playlist list's layout/paint from the rest of the window so resizing doesn't
+     reflow it against everything else. */
+  contain: content;
 }
 .pl-row {
   display: flex;
@@ -277,10 +291,15 @@ input,
   border-top: none;
   border-radius: 0 0 9px 9px;
   background: var(--panel-bg);
+  /* The song list is the heaviest part of the layout (hundreds of absolutely-positioned rows).
+     Containment keeps a window resize from reflowing it against the rest of the page — the main
+     cause of resize lag. */
+  contain: content;
 }
 .song-inner {
   position: relative;
   width: 100%;
+  contain: layout paint;
 }
 .song-row {
   position: absolute;
@@ -294,6 +313,7 @@ input,
   font-size: 13px;
   cursor: pointer;
   border-bottom: 1px solid var(--border-subtle);
+  contain: layout paint;
 }
 .song-row.zebra {
   background: var(--zebra);
@@ -323,6 +343,10 @@ input,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The real title shown after a custom name (when not replacing). */
+.title-cell .real-alt {
+  color: var(--muted);
 }
 .thumb {
   width: 22px;

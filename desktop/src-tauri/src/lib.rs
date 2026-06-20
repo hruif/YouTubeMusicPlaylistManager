@@ -20,6 +20,11 @@ use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 const YOUTUBE_LOGIN_WINDOW: &str = "youtube-music-login";
 const YOUTUBE_LOGIN_URL: &str =
     "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F";
+// Silent sign-in goes straight to music.youtube.com: a persisted session loads it directly (and we
+// capture the cookies), skipping the accounts.google.com→music.youtube.com redirect hop that the
+// interactive ServiceLogin URL incurs. Signed-out users just sit on music.youtube.com with no auth
+// cookie, which we detect to bail early.
+const YOUTUBE_MUSIC_URL: &str = "https://music.youtube.com/";
 // A Safari user-agent so Google's sign-in treats the macOS WKWebView like real Safari (the crux of
 // why an embedded login is accepted here — see the Tauri-vs-Qt decision in FUTURE_DIRECTIONS.md).
 const SAFARI_USER_AGENT: &str =
@@ -76,11 +81,11 @@ fn captured_session(window: &WebviewWindow) -> Result<Option<SignInResult>, Stri
     }
 }
 
-fn open_login_window(app: &tauri::AppHandle, visible: bool) -> Result<WebviewWindow, String> {
+fn open_login_window(app: &tauri::AppHandle, visible: bool, url: &str) -> Result<WebviewWindow, String> {
     if let Some(existing) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
         let _ = existing.close();
     }
-    let login_url = url::Url::parse(YOUTUBE_LOGIN_URL).map_err(|e| e.to_string())?;
+    let login_url = url::Url::parse(url).map_err(|e| e.to_string())?;
     WebviewWindowBuilder::new(app, YOUTUBE_LOGIN_WINDOW, WebviewUrl::External(login_url))
         .title("Sign in to YouTube Music")
         .inner_size(520.0, 760.0)
@@ -93,7 +98,7 @@ fn open_login_window(app: &tauri::AppHandle, visible: bool) -> Result<WebviewWin
 /// Interactive sign-in: open the visible login window and wait (up to ~5 min) for the session.
 #[tauri::command]
 async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<SignInResult, String> {
-    open_login_window(&app, true)?;
+    open_login_window(&app, true, YOUTUBE_LOGIN_URL)?;
 
     for _ in 1..=300u32 {
         let window = match app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
@@ -119,33 +124,37 @@ async fn sign_in_youtube_music(app: tauri::AppHandle) -> Result<SignInResult, St
 /// in (e.g. first run / signed out), in which case the user must use the interactive flow.
 #[tauri::command]
 async fn try_silent_sign_in(app: tauri::AppHandle) -> Result<Option<SignInResult>, String> {
-    open_login_window(&app, false)?;
+    open_login_window(&app, false, YOUTUBE_MUSIC_URL)?;
 
-    // Give the persisted session a few seconds to load + redirect to music.youtube.com.
-    let mut on_login_page = 0u32;
-    for _ in 1..=15u32 {
+    // Poll at a fine 200ms granularity so a signed-in user returns the instant the session is
+    // captured (whole-second polling used to round startup up to the next second). Cap stays ~15s.
+    // Going straight to music.youtube.com (no accounts.google.com redirect) means a signed-out user
+    // just sits on music.youtube.com with no auth cookie — bail once we've clearly *settled* there
+    // (~3s = 15 * 200ms), resetting the counter while the page is still loading (host not yet set).
+    let mut settled = 0u32;
+    for _ in 1..=75u32 {
         if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {
             if let Some(result) = captured_session(&window)? {
                 *app.state::<SessionState>().0.lock().unwrap() = Some(result.cookie.clone());
                 let _ = window.close();
                 return Ok(Some(result));
             }
-            // Not signed in: Google parks us on accounts.google.com instead of redirecting to
-            // music.youtube.com. Bail early once we've clearly settled there (don't wait the full 15s).
-            let on_login = window
+            let on_music = window
                 .url()
                 .ok()
-                .and_then(|u| u.host_str().map(|h| h.ends_with("accounts.google.com")))
+                .map(|u| u.host_str() == Some("music.youtube.com"))
                 .unwrap_or(false);
-            if on_login {
-                on_login_page += 1;
-                if on_login_page >= 3 {
+            if on_music {
+                settled += 1;
+                if settled >= 15 {
                     let _ = window.close();
                     return Ok(None);
                 }
+            } else {
+                settled = 0;
             }
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     if let Some(window) = app.get_webview_window(YOUTUBE_LOGIN_WINDOW) {

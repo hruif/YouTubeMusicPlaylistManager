@@ -22,7 +22,13 @@ async function createClient(cookie: string): Promise<void> {
   client = await Innertube.create({
     cookie: normalizeCookie(cookie),
     fetch: tauriFetch,
+    // Generate the session/visitor data locally instead of fetching it, and skip retrieving the
+    // YouTube player entirely — that's a large JS download + cipher parse used only for streaming,
+    // which this app doesn't do. Both cut network round-trips out of client init (faster startup).
+    // All our operations (library, playlists, search, add/remove) are InnerTube API calls that
+    // don't need the player.
     generate_session_locally: true,
+    retrieve_player: false,
   });
 }
 

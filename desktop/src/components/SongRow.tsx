@@ -8,13 +8,14 @@ type Props = {
   zebra: boolean;
   selected: boolean;
   customName?: string;
+  replaceName: boolean; // true: show only the custom name; false: show custom + the real title
   onClick: (e: React.MouseEvent, index: number) => void;
   onContextMenu: (e: React.MouseEvent, index: number) => void;
 };
 
 // Memoized so unrelated state changes (modals, busy/status, scrolling) don't re-render every visible
 // row — only rows whose own song/selection/customName (or the stable callbacks) change.
-export const SongRow = memo(function SongRow({ song, index, zebra, selected, customName, onClick, onContextMenu }: Props) {
+export const SongRow = memo(function SongRow({ song, index, zebra, selected, customName, replaceName, onClick, onContextMenu }: Props) {
   return (
     <div
       className={`song-row${zebra ? " zebra" : ""}${selected ? " selected" : ""}`}
@@ -24,7 +25,14 @@ export const SongRow = memo(function SongRow({ song, index, zebra, selected, cus
     >
       <div className="cell title-cell">
         {song.thumb ? <img className="thumb" src={song.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
-        <span className="ttext" title={customName ? song.title : undefined}>{customName || song.title}</span>
+        {customName ? (
+          <span className="ttext" title={song.title}>
+            {customName}
+            {!replaceName && <span className="real-alt"> · {song.title}</span>}
+          </span>
+        ) : (
+          <span className="ttext">{song.title}</span>
+        )}
       </div>
       <div className="cell muted">{song.artist}</div>
       <div className="cell muted" title={song.playlists.join(", ")}>

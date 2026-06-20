@@ -41,9 +41,10 @@ type UiState = {
   sortAsc: boolean;
   dupOnly: boolean;
   unavailableOnly: boolean;
-  showRealTitles: boolean;
+  replaceNames: boolean;
   autoDeleteQueues: boolean;
   checkUpdates: boolean;
+  autoRefreshOnLaunch: boolean;
 };
 const UI_KEY = "ytm.ui";
 function loadUi(): UiState {
@@ -53,9 +54,10 @@ function loadUi(): UiState {
     sortAsc: true,
     dupOnly: false,
     unavailableOnly: false,
-    showRealTitles: false,
+    replaceNames: false,
     autoDeleteQueues: false,
     checkUpdates: true,
+    autoRefreshOnLaunch: true,
   };
   try {
     const raw = localStorage.getItem(UI_KEY);
@@ -109,11 +111,15 @@ function App() {
   const [addUrlOpen, setAddUrlOpen] = useState(false);
   const [addUrl, setAddUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [showRealTitles, setShowRealTitles] = useState(ui0.showRealTitles);
+  const [replaceNames, setReplaceNames] = useState(ui0.replaceNames);
   const [autoDeleteQueues, setAutoDeleteQueues] = useState(ui0.autoDeleteQueues);
   const [checkUpdates, setCheckUpdates] = useState(ui0.checkUpdates);
+  const [autoRefreshOnLaunch, setAutoRefreshOnLaunch] = useState(ui0.autoRefreshOnLaunch);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
+  // True until the initial silent sign-in settles, so the welcome screen shows "Signing in…" for a
+  // returning user instead of flashing a "Sign in" prompt that immediately flips to their library.
+  const [booting, setBooting] = useState(true);
 
   // Check for a newer release once on startup (best-effort), unless disabled in Settings.
   useEffect(() => {
@@ -370,12 +376,12 @@ function App() {
     try {
       localStorage.setItem(
         UI_KEY,
-        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, showRealTitles, autoDeleteQueues, checkUpdates }),
+        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch }),
       );
     } catch {
       /* ignore */
     }
-  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, showRealTitles, autoDeleteQueues, checkUpdates]);
+  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
   // (sort/filter/search) so a range isn't computed across two different orderings.
@@ -458,12 +464,16 @@ function App() {
             `${cached.playlists.length} playlists (cached)` +
               (cached.tempPlaylists.length ? ` · ${cached.tempPlaylists.length} leftover queue(s) — see “Queues”` : ""),
           );
-          if (cached.playlists.length === 0) await refreshPlaylists();
+          // Auto-refresh the playlist list on launch (Settings; default on). The list fetch is
+          // cheap (1-3 requests), and an empty cache always refreshes regardless.
+          if (cached.playlists.length === 0 || ui0.autoRefreshOnLaunch) await refreshPlaylists();
         } else {
           setStatus("Not signed in");
         }
       } catch (err) {
         setStatus(`Sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setBooting(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -510,11 +520,6 @@ function App() {
   const selectedPlaylists = useMemo(
     () => cache.playlists.filter((p) => selected.has(p.id)),
     [cache.playlists, selected],
-  );
-  const stalePlaylists = useMemo(
-    () => visiblePlaylists.filter((p) => isStale(p.id)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [visiblePlaylists, cache.updatedAt, cache.tracksByPlaylist],
   );
 
   async function runUpdate(list: Playlist[]) {
@@ -610,6 +615,23 @@ function App() {
     () => combineFromCache(selectedPlaylists, cache.tracksByPlaylist),
     [selectedPlaylists, cache.tracksByPlaylist],
   );
+
+  // Auto-load songs for a selected playlist the first time it's opened (fetch-once-on-demand).
+  // `autoTried` caps each playlist at one automatic attempt per session so a retryable network
+  // failure — which never lands in the cache — can't spin the effect into an infinite refetch loop.
+  // A manual "Refresh selected" is the explicit retry / re-pull for stale or changed data.
+  const autoTried = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!signedIn || busy) return;
+    const missing = selectedPlaylists.filter(
+      (p) => !cache.tracksByPlaylist[p.id] && !autoTried.current.has(p.id),
+    );
+    if (missing.length) {
+      missing.forEach((p) => autoTried.current.add(p.id));
+      void runUpdate(missing);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlaylists, signedIn, busy]);
 
   const editable = useMemo(() => new Set(cache.editable), [cache.editable]);
   const selectedTracks = useMemo(
@@ -792,7 +814,7 @@ function App() {
   async function exportPlaylist(p: Playlist) {
     const tracks = cache.tracksByPlaylist[p.id];
     if (!tracks || tracks.length === 0) {
-      setStatus(`Update “${p.title}” first to export it`);
+      setStatus(`Load songs for “${p.title}” first to export it`);
       return;
     }
     const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -815,7 +837,7 @@ function App() {
   function removeRepeats(p: Playlist) {
     const tracks = cache.tracksByPlaylist[p.id];
     if (!tracks) {
-      setStatus(`Update “${p.title}” first to find repeats`);
+      setStatus(`Load songs for “${p.title}” first to find repeats`);
       return;
     }
     const counts = new Map<string, number>();
@@ -954,7 +976,6 @@ function App() {
     [visibleSongs, selectedSongs],
   );
 
-  const uncachedSelected = selectedPlaylists.filter((p) => !cache.tracksByPlaylist[p.id]).length;
   const manageList = cache.playlists.filter((p) =>
     p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
   );
@@ -979,24 +1000,10 @@ function App() {
           {signedIn && cache.tempPlaylists.length > 0 && (
             <button disabled={busy} onClick={() => setShowTemp(true)}>Queues ({cache.tempPlaylists.length})</button>
           )}
-          {signedIn && <button disabled={busy} onClick={() => { setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}>Import Spotify</button>}
-          {signedIn && <button disabled={busy} onClick={() => { setAddUrl(""); setAddUrlOpen(true); }}>Add by URL</button>}
+          {signedIn && <button disabled={busy} onClick={() => { setAddUrl(""); setAddUrlOpen(true); }}>Add playlist</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
-          {signedIn && <button disabled={busy} onClick={() => refreshPlaylists()}>Refresh list</button>}
+          {signedIn && <button disabled={busy} title="Re-fetch the list of playlists from your account" onClick={() => refreshPlaylists()}>Refresh playlists</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowSettings(true)} title="Settings">⚙</button>}
-          {signedIn && (
-            <button
-              disabled={busy}
-              onClick={async () => {
-                await signOut();
-                setSignedIn(false);
-                setSelected(new Set());
-                setStatus("Signed out");
-              }}
-            >
-              Sign out
-            </button>
-          )}
         </span>
       </header>
 
@@ -1042,14 +1049,13 @@ function App() {
               })}
               {visiblePlaylists.length === 0 && <p className="empty">All playlists hidden — use “Manage playlists”.</p>}
             </div>
-            <button disabled={busy || selectedPlaylists.length === 0} onClick={() => runUpdate(selectedPlaylists)}>
-              Update {selectedPlaylists.length} selected{uncachedSelected ? ` (${uncachedSelected} new)` : ""}
+            <button
+              disabled={busy || selectedPlaylists.length === 0}
+              title="Re-pull the latest songs for the selected playlists (e.g. after editing them elsewhere). Songs load automatically the first time you select a playlist."
+              onClick={() => runUpdate(selectedPlaylists)}
+            >
+              Refresh selected{selectedPlaylists.length ? ` (${selectedPlaylists.length})` : ""}
             </button>
-            {stalePlaylists.length > 0 && (
-              <button disabled={busy} onClick={() => runUpdate(stalePlaylists)}>
-                Update stale ({stalePlaylists.length})
-              </button>
-            )}
             <button
               disabled={busy || songs.length === 0}
               title="Make a temporary playlist from these songs and open it on music.youtube.com to play"
@@ -1088,7 +1094,7 @@ function App() {
               {visibleSongs.length === 0 ? (
                 <p className="empty">
                   {songs.length === 0
-                    ? "Select playlists, then “Update” to fetch their songs (cached after that)."
+                    ? "Select a playlist to load its songs (cached after the first time)."
                     : "No songs match."}
                 </p>
               ) : (
@@ -1102,7 +1108,8 @@ function App() {
                         index={i}
                         zebra={i % 2 === 1}
                         selected={selectedSongs.has(s.videoId)}
-                        customName={showRealTitles ? undefined : cache.customNames[s.videoId]}
+                        customName={cache.customNames[s.videoId]}
+                        replaceName={replaceNames}
                         onClick={onSongClick}
                         onContextMenu={onSongContextMenu}
                       />
@@ -1120,10 +1127,16 @@ function App() {
           <img className="welcome-icon" src="/icon.png" alt="" onError={(e) => (e.currentTarget.style.display = "none")} />
           <h2>YouTube Music Manager</h2>
           <p className="welcome-sub">Manage your YouTube Music playlists, and import from Spotify.</p>
-          <button className="primary big" disabled={busy} onClick={doSignIn}>
-            {busy ? "Signing in…" : "Sign in to YouTube Music"}
-          </button>
-          <p className="status" style={{ minHeight: 18 }}>{status}</p>
+          {booting ? (
+            <p className="status" style={{ minHeight: 18, fontSize: 15 }}>Signing in…</p>
+          ) : (
+            <>
+              <button className="primary big" disabled={busy} onClick={doSignIn}>
+                {busy ? "Signing in…" : "Sign in to YouTube Music"}
+              </button>
+              <p className="status" style={{ minHeight: 18 }}>{status}</p>
+            </>
+          )}
         </div>
       )}
 
@@ -1265,7 +1278,7 @@ function App() {
           <p style={{ fontSize: 13 }}>
             {cache.tracksByPlaylist[deleteTarget.id]
               ? `Contains ${cache.tracksByPlaylist[deleteTarget.id].length} songs — its song list will be archived locally so you can recreate it from “Recently deleted.”`
-              : "It isn’t cached locally, so its song list can’t be archived — Update it first if you want recovery."}
+              : "It isn’t cached locally, so its song list can’t be archived — load its songs first if you want recovery."}
           </p>
           <p style={{ fontSize: 13, margin: "10px 0 4px" }}>
             Type the playlist name <strong>{deleteTarget.title}</strong> to confirm:
@@ -1447,7 +1460,7 @@ function App() {
       )}
 
       {addUrlOpen && (
-        <Overlay title="Add a playlist by URL" onClose={() => setAddUrlOpen(false)}>
+        <Overlay title="Add a playlist" onClose={() => setAddUrlOpen(false)}>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
             Paste any public YouTube / YouTube Music playlist link (or its id). It's added read-only
             unless you own it.
@@ -1465,23 +1478,53 @@ function App() {
             />
             <button className="primary" disabled={busy || !addUrl.trim()} onClick={() => addPublicPlaylist(addUrl)}>Add</button>
           </div>
+          <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 14, paddingTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12.5, color: "var(--muted)", flex: 1 }}>Have a Spotify playlist? Recreate it on YouTube Music.</span>
+            <button
+              disabled={busy}
+              onClick={() => { setAddUrlOpen(false); setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}
+            >
+              Import from Spotify
+            </button>
+          </div>
         </Overlay>
       )}
 
       {showSettings && (
         <Overlay title="Settings" onClose={() => setShowSettings(false)}>
           <label className="setting">
-            <input type="checkbox" checked={showRealTitles} onChange={(e) => setShowRealTitles(e.currentTarget.checked)} />
-            Show real titles in lists (ignore custom names)
+            <input type="checkbox" checked={replaceNames} onChange={(e) => setReplaceNames(e.currentTarget.checked)} />
+            Replace real titles with custom names (otherwise show both)
           </label>
           <label className="setting">
             <input type="checkbox" checked={autoDeleteQueues} onChange={(e) => setAutoDeleteQueues(e.currentTarget.checked)} />
             Delete leftover queues automatically when I quit
           </label>
           <label className="setting">
+            <input type="checkbox" checked={autoRefreshOnLaunch} onChange={(e) => setAutoRefreshOnLaunch(e.currentTarget.checked)} />
+            Refresh the playlist list automatically on launch
+          </label>
+          <label className="setting">
             <input type="checkbox" checked={checkUpdates} onChange={(e) => setCheckUpdates(e.currentTarget.checked)} />
             Check for updates on startup
           </label>
+          <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13 }}>Signed in to YouTube Music</span>
+            <span style={{ flex: 1 }} />
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={async () => {
+                setShowSettings(false);
+                await signOut();
+                setSignedIn(false);
+                setSelected(new Set());
+                setStatus("Signed out");
+              }}
+            >
+              Sign out
+            </button>
+          </div>
           <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
             YouTube Music Manager (beta)
             <button className="small" onClick={() => openUrl("https://github.com/hruif/YouTubeMusicPlaylistManager")}>Source</button>
