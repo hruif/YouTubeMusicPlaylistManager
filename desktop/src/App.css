@@ -300,11 +300,20 @@ input,
      Containment keeps a window resize from reflowing it against the rest of the page — the main
      cause of resize lag. */
   contain: content;
+  /* Permanently reserve the scrollbar's gutter so the list width never changes whether or not the
+     bar is showing — that's what lets us hide it during a resize without the list reflowing wider. */
+  scrollbar-gutter: stable;
 }
 .song-inner {
   position: relative;
   width: 100%;
   contain: layout paint;
+}
+/* Hide the scrollbar *within its reserved gutter* during an active window resize (the collapsed
+   spacer would make the thumb wrong). The gutter above keeps the layout width constant, so the list
+   doesn't reflow — only the bar disappears. */
+.song-scroll.resizing {
+  scrollbar-width: none;
 }
 .song-row {
   position: absolute;
