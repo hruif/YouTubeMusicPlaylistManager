@@ -5,6 +5,17 @@
     <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>YouTube Music Manager</title>
+    <!-- Critical styles inlined so the first paint already has the app background. Without this the
+         page is default white until the JS bundle + App.css finish loading (a multi-second white
+         flash). Colors mirror --app-bg in App.css. -->
+    <style>
+      :root { color-scheme: light dark; }
+      html, body, #root { margin: 0; height: 100%; }
+      html, body { background: #f3f3f5; }
+      @media (prefers-color-scheme: dark) {
+        html, body { background: #1e1e21; }
+      }
+    </style>
   </head>
 
   <body>

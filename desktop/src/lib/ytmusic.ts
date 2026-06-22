@@ -1,7 +1,7 @@
 // Thin youtubei.js wrapper for the Phase 0 spike: sign in via the embedded webview (interactively
 // or silently on startup), then prove a real authenticated read (account/library) and write.
 
-import { Innertube } from "youtubei.js";
+import { Innertube, YTNodes } from "youtubei.js";
 import { invoke } from "@tauri-apps/api/core";
 import { tauriFetch } from "./tauriFetch";
 
@@ -136,16 +136,30 @@ export type Playlist = { id: string; title: string };
 export type Track = { videoId: string; title: string; artist: string; thumb?: string };
 export type CombinedSong = Track & { playlists: string[] };
 
+// A playlist you own carries a MusicEditablePlaylistDetailHeader. Modern YT Music also returns a
+// MusicResponsiveHeader, and youtubei.js resolves `playlist.header` to *that* one first — so the old
+// `header.type === "..."` check reports false for owned playlists too. The editable node is still in
+// the parsed page though, so look for it there (with the header check kept as a fallback).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isPlaylistEditable(playlist: any): boolean {
+  if (playlist?.header?.type === "MusicEditablePlaylistDetailHeader") return true;
+  try {
+    const found = playlist?.page?.contents_memo?.getType(YTNodes.MusicEditablePlaylistDetailHeader);
+    return !!found?.length;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Fetch all tracks of a YT Music playlist (paginated), plus whether it's editable (owned) — YT
- * Music returns an editable header only for playlists you own.
+ * Fetch all tracks of a YT Music playlist (paginated), plus whether it's editable (owned).
  */
 export async function getPlaylistTracks(
   playlistId: string,
 ): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let playlist: any = await requireClient().music.getPlaylist(playlistId);
-  const editable = playlist?.header?.type === "MusicEditablePlaylistDetailHeader";
+  const editable = isPlaylistEditable(playlist);
   const h = playlist?.header?.title;
   const title: string = (typeof h === "string" ? h : h?.text) ?? "";
   const out: Track[] = [];

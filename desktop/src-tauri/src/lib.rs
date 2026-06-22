@@ -357,6 +357,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionState::default())
         .manage(HttpClient(http_client))
+        // The main window starts hidden (tauri.conf.json) so the webview can paint a styled shell
+        // before it's shown, avoiding a blank/white launch flash. The frontend reveals it after the
+        // first paint; this is a safety net so a frontend failure can never strand it invisible.
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    if !window.is_visible().unwrap_or(true) {
+                        let _ = window.show();
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             sign_in_youtube_music,
             try_silent_sign_in,

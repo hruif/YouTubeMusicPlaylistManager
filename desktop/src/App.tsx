@@ -83,6 +83,7 @@ function App() {
   const [manageQuery, setManageQuery] = useState("");
   const [detail, setDetail] = useState<CombinedSong | null>(null);
   const [customDraft, setCustomDraft] = useState("");
+  const [detailAddTarget, setDetailAddTarget] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
@@ -108,7 +109,6 @@ function App() {
   const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
   const [showRemoved, setShowRemoved] = useState<string | null>(null);
   const [showTemp, setShowTemp] = useState(false);
-  const [addUrlOpen, setAddUrlOpen] = useState(false);
   const [addUrl, setAddUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [replaceNames, setReplaceNames] = useState(ui0.replaceNames);
@@ -286,6 +286,7 @@ function App() {
   function openDetails(s: CombinedSong) {
     setDetail(s);
     setCustomDraft(cacheRef.current.customNames[s.videoId] ?? "");
+    setDetailAddTarget("");
   }
   // Stable indirection so the memoized-row callbacks don't depend on openDetails' identity.
   const openDetailsRef = useRef(openDetails);
@@ -410,7 +411,7 @@ function App() {
       fail("Couldn't find a playlist id in that link.");
       return;
     }
-    setAddUrlOpen(false);
+    setShowManage(false);
     setAddUrl("");
     setBusy(true);
     setStatus("Loading playlist…");
@@ -484,11 +485,6 @@ function App() {
     () => cache.playlists.filter((p) => !hidden.has(p.id)),
     [cache.playlists, hidden],
   );
-  const titleToId = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const p of cache.playlists) m.set(p.title, p.id);
-    return m;
-  }, [cache.playlists]);
 
   function isStale(id: string): boolean {
     const t = cache.updatedAt[id];
@@ -746,6 +742,66 @@ function App() {
     );
   }
 
+  // Add/remove a single song to/from one playlist — the quick edits offered in the Details screen.
+  // Optimistic with revert-on-error, mirroring the multi-select add/remove flows.
+  async function addOneTo(song: CombinedSong, target: Playlist) {
+    const existing = cacheRef.current.tracksByPlaylist[target.id] ?? [];
+    if (existing.some((t) => t.videoId === song.videoId)) {
+      setStatus(`Already in “${target.title}”`);
+      return;
+    }
+    const track = { videoId: song.videoId, title: song.title, artist: song.artist, thumb: song.thumb };
+    persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: [...existing, track] } });
+    setBusy(true);
+    setStatus(`Adding to “${target.title}”…`);
+    try {
+      await addVideos(target.id, [song.videoId]);
+      setStatus(`Added to “${target.title}”`);
+    } catch (err) {
+      persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
+      fail(`Add failed: ${errText(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function removeOneFrom(song: CombinedSong, target: Playlist) {
+    const existing = cacheRef.current.tracksByPlaylist[target.id] ?? [];
+    if (!existing.some((t) => t.videoId === song.videoId)) return;
+    confirmAction(
+      `Remove from “${target.title}”?`,
+      `Removes “${song.title}” from this playlist on your YouTube Music account.`,
+      async () => {
+        const remaining = existing.filter((t) => t.videoId !== song.videoId);
+        persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining } });
+        setBusy(true);
+        setStatus(`Removing from “${target.title}”…`);
+        try {
+          await removeVideos(target.id, [song.videoId]);
+          setStatus(`Removed from “${target.title}”`);
+        } catch (err) {
+          persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
+          fail(`Remove failed: ${errText(err)}`);
+        } finally {
+          setBusy(false);
+        }
+      },
+    );
+  }
+  // Live (cache-derived) playlist membership for the open Details song, and the playlists it could be
+  // added to — recomputed from the cache so the Details screen updates as you add/remove.
+  const detailMembership = useMemo(
+    () =>
+      detail
+        ? cache.playlists.filter((p) => (cache.tracksByPlaylist[p.id] ?? []).some((t) => t.videoId === detail.videoId))
+        : [],
+    [detail, cache.playlists, cache.tracksByPlaylist],
+  );
+  const detailAddTargets = useMemo(() => {
+    if (!detail) return [];
+    const inIds = new Set(detailMembership.map((p) => p.id));
+    return cache.playlists.filter((p) => !inIds.has(p.id));
+  }, [detail, detailMembership, cache.playlists]);
+
   // Delete a playlist (non-optimistic — don't drop local data unless YouTube confirms). Archives
   // the song list locally first so it can be recreated. Invoked from the hardened delete modal.
   async function doDelete(p: Playlist) {
@@ -1000,9 +1056,7 @@ function App() {
           {signedIn && cache.tempPlaylists.length > 0 && (
             <button disabled={busy} onClick={() => setShowTemp(true)}>Queues ({cache.tempPlaylists.length})</button>
           )}
-          {signedIn && <button disabled={busy} onClick={() => { setAddUrl(""); setAddUrlOpen(true); }}>Add playlist</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
-          {signedIn && <button disabled={busy} title="Re-fetch the list of playlists from your account" onClick={() => refreshPlaylists()}>Refresh playlists</button>}
           {signedIn && <button disabled={busy} onClick={() => setShowSettings(true)} title="Settings">⚙</button>}
         </span>
       </header>
@@ -1054,7 +1108,7 @@ function App() {
               title="Re-pull the latest songs for the selected playlists (e.g. after editing them elsewhere). Songs load automatically the first time you select a playlist."
               onClick={() => runUpdate(selectedPlaylists)}
             >
-              Refresh selected{selectedPlaylists.length ? ` (${selectedPlaylists.length})` : ""}
+              Refresh playlists{selectedPlaylists.length ? ` (${selectedPlaylists.length})` : ""}
             </button>
             <button
               disabled={busy || songs.length === 0}
@@ -1142,7 +1196,43 @@ function App() {
 
       {showManage && (
         <Overlay title="Manage playlists" onClose={() => setShowManage(false)}>
-          <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0 }}>
+          <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 6px" }}>Add a playlist</p>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 6px" }}>
+            Paste any public YouTube / YouTube Music playlist link (or its id). It's added read-only
+            unless you own it.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              style={{ flex: 1 }}
+              placeholder="https://music.youtube.com/playlist?list=…"
+              value={addUrl}
+              onChange={(e) => setAddUrl(e.currentTarget.value)}
+              onKeyDown={(e) => e.key === "Enter" && addUrl.trim() && addPublicPlaylist(addUrl)}
+            />
+            <button className="primary" disabled={busy || !addUrl.trim()} onClick={() => addPublicPlaylist(addUrl)}>Add</button>
+            <button
+              disabled={busy}
+              onClick={() => { setShowManage(false); setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}
+            >
+              Import from Spotify
+            </button>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 6px", borderTop: "1px solid var(--border-subtle)", paddingTop: 14 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Your playlists</span>
+            <button
+              className="small"
+              disabled={busy}
+              title="Re-fetch the list of playlists from your YouTube Music account (e.g. after creating or deleting one elsewhere)"
+              onClick={() => refreshPlaylists()}
+            >
+              Refresh list
+            </button>
+          </div>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
             Unchecked playlists are hidden from the main sidebar (still cached). {hidden.size} hidden.
           </p>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
@@ -1183,26 +1273,49 @@ function App() {
             </button>
             <code style={{ color: "var(--muted)" }}>{detail.videoId}</code>
           </p>
-          <p style={{ margin: "10px 0 4px" }}><strong>In {detail.playlists.length} playlist(s):</strong></p>
-          <ul style={{ margin: 0, paddingLeft: 18, maxHeight: "38vh", overflow: "auto" }}>
-            {detail.playlists.map((name) => {
-              const id = titleToId.get(name);
-              return (
-                <li key={name} style={{ marginBottom: 2 }}>
-                  {name}
-                  {id && (
-                    <button
-                      className="small"
-                      style={{ marginLeft: 8 }}
-                      onClick={() => openUrl(`https://music.youtube.com/playlist?list=${id}`)}
-                    >
-                      open
-                    </button>
+          <p style={{ margin: "12px 0 4px" }}><strong>In {detailMembership.length} loaded playlist(s):</strong></p>
+          <div className="panel" style={{ maxHeight: "32vh", overflow: "auto" }}>
+            {detailMembership.length === 0 ? (
+              <p className="empty" style={{ padding: 10 }}>Not in any loaded playlist.</p>
+            ) : (
+              detailMembership.map((p) => (
+                <div key={p.id} className="pl-row">
+                  <span className="pl-title">{p.title}{editable.has(p.id) ? "" : " (read-only)"}</span>
+                  <button className="small" onClick={() => openUrl(`https://music.youtube.com/playlist?list=${p.id}`)}>open</button>
+                  {editable.has(p.id) && (
+                    <button className="small danger" disabled={busy} onClick={() => removeOneFrom(detail, p)}>remove</button>
                   )}
-                </li>
-              );
-            })}
-          </ul>
+                </div>
+              ))
+            )}
+          </div>
+          <p style={{ margin: "12px 0 4px" }}><strong>Add to a playlist:</strong></p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              style={{ flex: 1 }}
+              value={detailAddTarget}
+              onChange={(e) => setDetailAddTarget(e.currentTarget.value)}
+            >
+              <option value="">Choose a playlist…</option>
+              {detailAddTargets.map((p) => (
+                <option key={p.id} value={p.id}>{p.title}{editable.has(p.id) ? " ✓" : ""}</option>
+              ))}
+            </select>
+            <button
+              className="primary"
+              disabled={busy || !detailAddTarget}
+              onClick={() => {
+                const target = detailAddTargets.find((p) => p.id === detailAddTarget);
+                if (target) addOneTo(detail, target);
+                setDetailAddTarget("");
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
+            ✓ marks playlists you own. Others can be tried but YouTube may reject the edit.
+          </p>
         </Overlay>
       )}
 
@@ -1455,37 +1568,6 @@ function App() {
                 <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
               </div>
             ))}
-          </div>
-        </Overlay>
-      )}
-
-      {addUrlOpen && (
-        <Overlay title="Add a playlist" onClose={() => setAddUrlOpen(false)}>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Paste any public YouTube / YouTube Music playlist link (or its id). It's added read-only
-            unless you own it.
-          </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              spellCheck={false}
-              autoCorrect="off"
-              autoCapitalize="off"
-              style={{ flex: 1 }}
-              placeholder="https://music.youtube.com/playlist?list=…"
-              value={addUrl}
-              onChange={(e) => setAddUrl(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && addUrl.trim() && addPublicPlaylist(addUrl)}
-            />
-            <button className="primary" disabled={busy || !addUrl.trim()} onClick={() => addPublicPlaylist(addUrl)}>Add</button>
-          </div>
-          <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 14, paddingTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12.5, color: "var(--muted)", flex: 1 }}>Have a Spotify playlist? Recreate it on YouTube Music.</span>
-            <button
-              disabled={busy}
-              onClick={() => { setAddUrlOpen(false); setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}
-            >
-              Import from Spotify
-            </button>
           </div>
         </Overlay>
       )}

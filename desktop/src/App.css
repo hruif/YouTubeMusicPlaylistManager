@@ -98,7 +98,8 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
 }
 
-input {
+input,
+select {
   font: inherit;
   font-size: 13px;
   padding: 5px 9px;
@@ -108,8 +109,12 @@ input {
   color: inherit;
   outline: none;
 }
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--accent);
+}
+select {
+  cursor: pointer;
 }
 
 /* Layout */
