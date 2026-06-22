@@ -13,6 +13,9 @@ files:
   - electron-dist/**/*
   - dist/**/*
   - package.json
+  # Everything is esbuild/vite-bundled, so nothing in node_modules is needed at runtime — excluding
+  # it drops ~25 MB of duplicated youtubei.js/React/etc. from the asar.
+  - "!node_modules/**/*"
 
 asar: true
 compression: maximum
