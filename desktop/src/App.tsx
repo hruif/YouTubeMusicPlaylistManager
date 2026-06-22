@@ -445,7 +445,17 @@ function App() {
     setStatus("Refreshing playlist list…");
     try {
       const playlists = await getLibraryPlaylists();
-      persist({ ...cacheRef.current, playlists });
+      // New playlists default to HIDDEN: the sidebar is opt-in (you add the playlists you want via
+      // Manage), which is friendlier than starting with everything and pruning. On a fresh library
+      // every playlist is "new", so the sidebar starts empty. Playlists added by URL are shown
+      // explicitly elsewhere, so they're never auto-hidden here.
+      const known = new Set(cacheRef.current.playlists.map((p) => p.id));
+      const newlyHidden = playlists.filter((p) => !known.has(p.id)).map((p) => p.id);
+      persist({
+        ...cacheRef.current,
+        playlists,
+        hidden: [...new Set([...cacheRef.current.hidden, ...newlyHidden])],
+      });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
       fail(`Failed to refresh playlists: ${errText(err)}`);
@@ -871,11 +881,30 @@ function App() {
     }
   }
 
-  // Export a playlist's cached tracks to a CSV (native save dialog).
+  // Export a playlist's tracks to a CSV (native save dialog). Fetches the songs on demand if they
+  // aren't cached yet, so it works straight from Manage playlists without loading them first.
   async function exportPlaylist(p: Playlist) {
-    const tracks = cache.tracksByPlaylist[p.id];
+    let tracks = cache.tracksByPlaylist[p.id];
+    if (!tracks) {
+      setBusy(true);
+      setStatus(`Loading “${p.title}” to export…`);
+      try {
+        const r = await getPlaylistTracks(p.id);
+        tracks = r.tracks;
+        persist({
+          ...cacheRef.current,
+          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: r.tracks },
+          updatedAt: { ...cacheRef.current.updatedAt, [p.id]: Date.now() },
+        });
+      } catch (err) {
+        fail(`Export failed: ${errText(err)}`);
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
     if (!tracks || tracks.length === 0) {
-      setStatus(`Load songs for “${p.title}” first to export it`);
+      setStatus(`“${p.title}” has no songs to export`);
       return;
     }
     const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -1093,7 +1122,6 @@ function App() {
                           : []),
                         { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
                         { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
-                        { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
                       ])
                     }
                   >
@@ -1105,7 +1133,12 @@ function App() {
                   </div>
                 );
               })}
-              {visiblePlaylists.length === 0 && <p className="empty">All playlists hidden — use “Manage playlists”.</p>}
+              {visiblePlaylists.length === 0 && (
+                <div className="empty" style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+                  <span>No playlists added yet. Add the ones you want to work with.</span>
+                  <button className="small" onClick={() => setShowManage(true)}>Manage playlists</button>
+                </div>
+              )}
             </div>
             <button
               disabled={busy || selectedPlaylists.length === 0}
@@ -1222,7 +1255,8 @@ function App() {
             </button>
           </div>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Unchecked playlists are hidden from the main sidebar (still cached). {hidden.size} hidden.
+            Check the playlists you want in the sidebar. Right-click one for export, open, or delete.
+            {hidden.size > 0 ? ` ${cache.playlists.length - hidden.size} of ${cache.playlists.length} shown.` : ""}
           </p>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             placeholder="Filter…"
@@ -1232,7 +1266,17 @@ function App() {
           />
           <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
             {manageList.map((p) => (
-              <label key={p.id} className="pl-row">
+              <label
+                key={p.id}
+                className="pl-row"
+                onContextMenu={(e) =>
+                  openMenu(e, [
+                    { label: "Export to CSV…", onClick: () => exportPlaylist(p) },
+                    { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
+                    { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
+                  ])
+                }
+              >
                 <input type="checkbox" checked={!hidden.has(p.id)} onChange={(e) => setPlaylistHidden(p.id, !e.currentTarget.checked)} />
                 <span className="pl-title">{p.title}</span>
               </label>

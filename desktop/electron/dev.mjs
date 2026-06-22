@@ -1,6 +1,6 @@
 // Dev runner: bundle main/preload, start the Vite dev server, wait for it, then launch Electron
 // pointed at it. One command, no extra deps (no concurrently/wait-on).
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { build } from "esbuild";
 
 const PORT = 1420;
@@ -17,6 +17,12 @@ async function bundle() {
   };
   await build({ ...common, entryPoints: ["electron/main.ts"], outfile: "electron-dist/main.cjs" });
   await build({ ...common, entryPoints: ["electron/preload.ts"], outfile: "electron-dist/preload.cjs" });
+  if (process.platform === "darwin") {
+    execFileSync("swiftc", [
+      "electron/login-helper/login.swift", "-O", "-o", "electron-dist/login-helper",
+      "-framework", "WebKit", "-framework", "AppKit", "-framework", "Foundation",
+    ], { stdio: "inherit" });
+  }
 }
 
 async function waitForServer(port) {

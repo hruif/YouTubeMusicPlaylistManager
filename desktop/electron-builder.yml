@@ -17,6 +17,11 @@ files:
   # it drops ~25 MB of duplicated youtubei.js/React/etc. from the asar.
   - "!node_modules/**/*"
 
+# The native WKWebView login helper ships as a plain executable in Resources (outside the asar).
+extraResources:
+  - from: electron-dist/login-helper
+    to: login-helper
+
 asar: true
 compression: maximum
 removePackageScripts: true

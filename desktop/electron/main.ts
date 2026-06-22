@@ -20,12 +20,13 @@ let mainWindow: BrowserWindow | null = null;
 // Set true once the renderer has confirmed it's OK to close (exit-cleanup done / user chose close).
 let allowClose = false;
 
-// A clean desktop-Chrome UA (no "Electron"/app tokens) for the Google login window. Electron *is*
-// Chromium, so matching Chrome avoids Google's "this browser may not be secure" embedded-webview
-// block, which a Safari UA (mismatched against the Chromium engine) intermittently tripped.
+// Present the login window as desktop Safari. Google trusts Safari on macOS more loosely than it
+// scrutinizes Chrome (which it cross-checks against client hints + engine), so a *consistent* Safari
+// impersonation — Safari UA AND no Sec-CH-UA client hints (real Safari sends none) — is the most
+// reliable way past the "this browser may not be secure" block. It's also exactly what the working
+// Tauri/WKWebView build presents.
 const LOGIN_USER_AGENT =
-  `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ` +
-  `Chrome/${process.versions.chrome} Safari/537.36`;
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15";
 
 function cacheFile(): string {
   return path.join(app.getPath("userData"), "library_cache.json");
