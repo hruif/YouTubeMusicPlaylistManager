@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { bestYoutubeMatch, combineFromCache } from "./ytmusic";
+import {
+  bestYoutubeMatch,
+  combineFromCache,
+  parseYouTubePlaylistId,
+  normalizeCookie,
+  isPlaylistEditable,
+} from "./ytmusic";
 
 const cand = (videoId: string, title: string, artist: string) => ({ videoId, title, artist });
 
@@ -45,5 +51,64 @@ describe("combineFromCache", () => {
   });
   it("ignores selected playlists with no cached tracks", () => {
     expect(combineFromCache([{ id: "A", title: "PA" }], {})).toEqual([]);
+  });
+});
+
+describe("parseYouTubePlaylistId", () => {
+  it("extracts list= from a YT Music URL", () => {
+    expect(parseYouTubePlaylistId("https://music.youtube.com/playlist?list=PLabc1234567")).toBe("PLabc1234567");
+  });
+  it("extracts list= regardless of param position", () => {
+    expect(parseYouTubePlaylistId("https://www.youtube.com/watch?v=xyz&list=PLabc1234567")).toBe("PLabc1234567");
+  });
+  it("strips the VL browse-id prefix", () => {
+    expect(parseYouTubePlaylistId("https://music.youtube.com/playlist?list=VLPLabc1234567")).toBe("PLabc1234567");
+  });
+  it("accepts a bare id", () => {
+    expect(parseYouTubePlaylistId("PLabc1234567")).toBe("PLabc1234567");
+  });
+  it("rejects junk / too-short ids", () => {
+    expect(parseYouTubePlaylistId("not a playlist")).toBeNull();
+    expect(parseYouTubePlaylistId("https://music.youtube.com/")).toBeNull();
+    expect(parseYouTubePlaylistId("")).toBeNull();
+  });
+});
+
+describe("normalizeCookie (SAPISID aliasing)", () => {
+  it("leaves a cookie that already has SAPISID untouched", () => {
+    const c = "FOO=1; SAPISID=abc; BAR=2";
+    expect(normalizeCookie(c)).toBe(c);
+  });
+  it("adds SAPISID from __Secure-3PAPISID when missing", () => {
+    expect(normalizeCookie("__Secure-3PAPISID=abc; X=1")).toBe("__Secure-3PAPISID=abc; X=1; SAPISID=abc");
+  });
+  it("does not treat __Secure-3PAPISID as a present SAPISID (boundary-anchored)", () => {
+    expect(normalizeCookie("__Secure-3PAPISID=zzz")).toContain("; SAPISID=zzz");
+  });
+  it("leaves a cookie with neither unchanged", () => {
+    expect(normalizeCookie("FOO=1; BAR=2")).toBe("FOO=1; BAR=2");
+  });
+});
+
+describe("isPlaylistEditable (ownership detection)", () => {
+  it("true via the legacy header.type fallback", () => {
+    expect(isPlaylistEditable({ header: { type: "MusicEditablePlaylistDetailHeader" } })).toBe(true);
+  });
+  it("true when the editable node is in the page memo even though header is MusicResponsiveHeader", () => {
+    const playlist = {
+      header: { type: "MusicResponsiveHeader" },
+      page: { contents_memo: { getType: () => [{}] } },
+    };
+    expect(isPlaylistEditable(playlist)).toBe(true);
+  });
+  it("false when neither the header nor the memo has the editable node", () => {
+    const playlist = {
+      header: { type: "MusicResponsiveHeader" },
+      page: { contents_memo: { getType: () => [] } },
+    };
+    expect(isPlaylistEditable(playlist)).toBe(false);
+  });
+  it("false (no throw) when the page is absent", () => {
+    expect(isPlaylistEditable({ header: { type: "MusicResponsiveHeader" } })).toBe(false);
   });
 });

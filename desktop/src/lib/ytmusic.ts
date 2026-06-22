@@ -12,7 +12,7 @@ let client: Innertube | null = null;
 // youtubei.js authenticates by reading the literal `SAPISID` cookie. On the .youtube.com domain
 // that value is often only present as `__Secure-3PAPISID` (same value, different name), so we add
 // a `SAPISID=` entry when it's missing. Without this, requests go out unauthenticated.
-function normalizeCookie(cookie: string): string {
+export function normalizeCookie(cookie: string): string {
   if (/(?:^|;\s*)SAPISID=/.test(cookie)) return cookie;
   const match = cookie.match(/(?:^|;\s*)__Secure-3PAPISID=([^;]+)/);
   return match ? `${cookie}; SAPISID=${match[1]}` : cookie;
@@ -141,7 +141,7 @@ export type CombinedSong = Track & { playlists: string[] };
 // `header.type === "..."` check reports false for owned playlists too. The editable node is still in
 // the parsed page though, so look for it there (with the header check kept as a fallback).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isPlaylistEditable(playlist: any): boolean {
+export function isPlaylistEditable(playlist: any): boolean {
   if (playlist?.header?.type === "MusicEditablePlaylistDetailHeader") return true;
   try {
     const found = playlist?.page?.contents_memo?.getType(YTNodes.MusicEditablePlaylistDetailHeader);

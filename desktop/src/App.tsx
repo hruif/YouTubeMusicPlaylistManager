@@ -23,10 +23,9 @@ import {
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
 import { checkForUpdate } from "./lib/update";
-import { ROW_H, STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
-import { useVirtual } from "./hooks/useVirtual";
+import { STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
 import { Overlay } from "./components/Overlay";
-import { SongRow } from "./components/SongRow";
+import { SongList } from "./components/SongList";
 import "./App.css";
 
 // Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
@@ -962,7 +961,6 @@ function App() {
     return copy;
   }, [songs, query, dupOnly, unavailableOnly, sortKey, sortAsc, cache.customNames]);
 
-  const v = useVirtual(visibleSongs.length);
 
   function sortBy(key: SortKey) {
     if (sortKey === key) setSortAsc((a) => !a);
@@ -1144,34 +1142,19 @@ function App() {
               <div className="col" onClick={() => sortBy("artist")}>Artist{arrow("artist")}</div>
               <div className="col" onClick={() => sortBy("count")}>In playlists{arrow("count")}</div>
             </div>
-            <div className="song-scroll" ref={v.ref}>
-              {visibleSongs.length === 0 ? (
-                <p className="empty">
-                  {songs.length === 0
-                    ? "Select a playlist to load its songs (cached after the first time)."
-                    : "No songs match."}
-                </p>
-              ) : (
-                <div className="song-inner" style={{ height: visibleSongs.length * ROW_H }}>
-                  {visibleSongs.slice(v.start, v.end).map((s, idx) => {
-                    const i = v.start + idx;
-                    return (
-                      <SongRow
-                        key={s.videoId}
-                        song={s}
-                        index={i}
-                        zebra={i % 2 === 1}
-                        selected={selectedSongs.has(s.videoId)}
-                        customName={cache.customNames[s.videoId]}
-                        replaceName={replaceNames}
-                        onClick={onSongClick}
-                        onContextMenu={onSongContextMenu}
-                      />
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <SongList
+              songs={visibleSongs}
+              emptyMessage={
+                songs.length === 0
+                  ? "Select a playlist to load its songs (cached after the first time)."
+                  : "No songs match."
+              }
+              selectedSongs={selectedSongs}
+              customNames={cache.customNames}
+              replaceNames={replaceNames}
+              onSongClick={onSongClick}
+              onSongContextMenu={onSongContextMenu}
+            />
           </section>
         </div>
       )}
