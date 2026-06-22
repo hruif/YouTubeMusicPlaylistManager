@@ -1,0 +1,41 @@
+appId: com.hruif.ytmpm
+productName: YouTube Music Manager
+copyright: © hruif
+
+directories:
+  output: release
+  buildResources: build
+
+# The main + preload are esbuild-bundled into electron-dist/, so NO node_modules need to ship — we
+# package only the bundled output + the static renderer. That's the biggest app-specific size win;
+# the rest is the unavoidable Chromium runtime.
+files:
+  - electron-dist/**/*
+  - dist/**/*
+  - package.json
+
+asar: true
+compression: maximum
+removePackageScripts: true
+# Ship only the en-US Chromium locale pack (drops ~50 other .pak files, several MB).
+electronLanguages:
+  - en-US
+
+mac:
+  category: public.app-category.music
+  target:
+    - dmg
+  # Unsigned for the beta (same as the Tauri build); set an identity later to sign/notarize.
+  identity: null
+
+dmg:
+  writeUpdateInfo: false
+
+win:
+  target:
+    - nsis
+
+linux:
+  target:
+    - AppImage
+  category: AudioVideo

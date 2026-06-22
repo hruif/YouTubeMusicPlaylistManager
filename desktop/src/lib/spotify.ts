@@ -7,7 +7,7 @@
 // Every failure throws a SpotifyError with a clear message; callers must treat breakage as expected
 // and non-fatal (show it, abort the import — never crash the app).
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 
 export class SpotifyError extends Error {}
 export type SpotifyTrack = { title: string; artist: string };

@@ -2,7 +2,7 @@
 // data dir (via the Rust read_cache/write_cache commands). Lets the app load instantly and fetch
 // only on an explicit update. It's all text, so size is negligible.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import type { Playlist, Track } from "./ytmusic";
 
 // A locally-archived deleted playlist, so an accidental delete doesn't lose the song list — it

@@ -1,11 +1,7 @@
 import { describe, it, expect } from "vitest";
-import {
-  bestYoutubeMatch,
-  combineFromCache,
-  parseYouTubePlaylistId,
-  normalizeCookie,
-  isPlaylistEditable,
-} from "./ytmusic";
+import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId } from "./ytmusic";
+// These moved to the Electron main process (they operate on youtubei.js internals).
+import { normalizeCookie, isPlaylistEditable } from "../../electron/yt";
 
 const cand = (videoId: string, title: string, artist: string) => ({ videoId, title, artist });
 

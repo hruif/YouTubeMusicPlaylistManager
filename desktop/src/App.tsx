@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  invoke,
+  openExternal as openUrl,
+  onCloseRequested,
+  closeWindow,
+} from "./lib/native";
 import {
   signIn,
   trySilentSignIn,
@@ -263,22 +266,25 @@ function App() {
     }
   }
   useEffect(() => {
-    const w = getCurrentWindow();
-    let unlisten: (() => void) | undefined;
-    w.onCloseRequested(async (event) => {
-      if (closingRef.current || cacheRef.current.tempPlaylists.length === 0) return; // let it close
-      event.preventDefault();
+    // The window is held open until we call closeWindow() (Tauri: preventDefault+destroy; Electron:
+    // main vetoes then we allow-close). So every path through the handler must end in closeWindow()
+    // or a prompt.
+    const unlisten = onCloseRequested(async () => {
+      if (closingRef.current) return;
+      if (cacheRef.current.tempPlaylists.length === 0) {
+        closingRef.current = true;
+        await closeWindow();
+        return;
+      }
       if (autoDeleteQueuesRef.current) {
         closingRef.current = true;
         await deleteAllTemp();
-        await w.destroy();
+        await closeWindow();
       } else {
         setExitPrompt(true);
       }
-    }).then((u) => {
-      unlisten = u;
     });
-    return () => unlisten?.();
+    return () => unlisten();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1663,7 +1669,7 @@ function App() {
             <button
               onClick={async () => {
                 closingRef.current = true;
-                await getCurrentWindow().destroy();
+                await closeWindow();
               }}
             >
               Keep &amp; close
@@ -1674,7 +1680,7 @@ function App() {
                 closingRef.current = true;
                 setExitPrompt(false);
                 await deleteAllTemp();
-                await getCurrentWindow().destroy();
+                await closeWindow();
               }}
             >
               Delete &amp; close
