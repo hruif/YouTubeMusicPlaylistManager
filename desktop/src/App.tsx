@@ -94,6 +94,10 @@ function App() {
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
   const visibleSongsRef = useRef<CombinedSong[]>([]); // latest visible songs, for the Cmd+A handler
+  // Refs updated every render so the once-mounted keydown listener sees current state. closeTopmost
+  // dismisses the menu / topmost modal (Escape); deleteSelected removes the selected songs (Delete).
+  const closeTopmostRef = useRef<() => boolean>(() => false);
+  const deleteSelectedRef = useRef<() => void>(() => {});
   const lastSongIndex = useRef<number | null>(null);
   const lastClick = useRef<{ id: string; t: number } | null>(null);
   const [addPicker, setAddPicker] = useState(false);
@@ -462,20 +466,27 @@ function App() {
     lastSongIndex.current = null;
   }, [sortKey, sortAsc, query, dupOnly, unavailableOnly]);
 
-  // Cmd/Ctrl+F focuses the song search; Cmd/Ctrl+A selects all visible songs (unless typing).
+  // Keyboard: Esc dismisses the menu / topmost modal; Cmd+F search; Cmd+A select all; Delete removes
+  // the selected songs. Esc works even while typing; the rest are ignored inside text inputs.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      const k = e.key.toLowerCase();
-      if (k === "f") {
+      if (e.key === "Escape") {
+        if (closeTopmostRef.current()) e.preventDefault();
+        return;
+      }
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
-      } else if (k === "a") {
-        const el = document.activeElement as HTMLElement | null;
-        if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
         e.preventDefault();
         setSelectedSongs(new Set(visibleSongsRef.current.map((s) => s.videoId)));
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelectedRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -851,18 +862,35 @@ function App() {
     const ids = [...new Set(existing.filter((t) => selectedSongs.has(t.videoId)).map((t) => t.videoId))];
     if (ids.length === 0) return;
     confirmAction(
-      `Remove ${ids.length} song(s) from “${target.title}”?`,
+      `Remove ${ids.length} song${ids.length === 1 ? "" : "s"} from “${target.title}”?`,
       "This removes them from the playlist on your YouTube Music account.",
       async () => {
+        const removed = existing.filter((t) => selectedSongs.has(t.videoId));
         const remaining = existing.filter((t) => !selectedSongs.has(t.videoId));
-        persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining } });
+        // Archive what we removed into the playlist's "recently removed" list (deduped, capped).
+        const now = Date.now();
+        const prevRemoved = cacheRef.current.removedSongs[target.id] ?? [];
+        const seen = new Set(prevRemoved.map((r) => `${r.title}|${r.artist}`));
+        const additions = removed
+          .filter((g) => !seen.has(`${g.title}|${g.artist}`))
+          .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
+        persist({
+          ...cacheRef.current,
+          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining },
+          removedSongs: { ...cacheRef.current.removedSongs, [target.id]: [...additions, ...prevRemoved].slice(0, 500) },
+        });
         setBusy(true);
         setStatus(`Removing ${ids.length} from ${target.title}…`);
         try {
           await removeVideos(target.id, ids);
           setStatus(`Removed ${ids.length} from ${target.title}`);
         } catch (err) {
-          persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
+          // Revert both the track list and the archive (the removal didn't actually happen).
+          persist({
+            ...cacheRef.current,
+            tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing },
+            removedSongs: { ...cacheRef.current.removedSongs, [target.id]: prevRemoved },
+          });
           fail(`Remove failed: ${errText(err)}`);
         } finally {
           setBusy(false);
@@ -1120,6 +1148,41 @@ function App() {
     return copy;
   }, [songs, query, dupOnly, unavailableOnly, sortKey, sortAsc, cache.customNames]);
   visibleSongsRef.current = visibleSongs;
+
+  // Any modal open? (Delete-key removal is suppressed while one is, so it can't fire in the
+  // background.) confirm/deleteTarget/exitPrompt/error are checked first as the most-nested.
+  const anyModalOpen =
+    !!menu || !!error || !!confirm || !!deleteTarget || exitPrompt || !!detail || addPicker || removePicker ||
+    createOpen || !!showUnmatched || !!showRemoved || spotifyOpen || showTemp || showDeleted || showSettings || showManage;
+
+  // Esc: dismiss the most-nested overlay (returns true if it closed something).
+  closeTopmostRef.current = () => {
+    if (menu) return setMenu(null), true;
+    if (error) return setError(null), true;
+    if (confirm) return setConfirm(null), true; // cancel — Esc never confirms a destructive action
+    if (deleteTarget) return setDeleteTarget(null), setDeleteText(""), true;
+    if (exitPrompt) return setExitPrompt(false), true;
+    if (detail) return setDetail(null), true;
+    if (addPicker) return setAddPicker(false), true;
+    if (removePicker) return setRemovePicker(false), true;
+    if (createOpen) return setCreateOpen(false), true;
+    if (showUnmatched) return setShowUnmatched(null), true;
+    if (showRemoved) return setShowRemoved(null), true;
+    if (spotifyOpen) return setSpotifyOpen(false), true;
+    if (showTemp) return setShowTemp(false), true;
+    if (showDeleted) return setShowDeleted(false), true;
+    if (showSettings) return setShowSettings(false), true;
+    if (showManage) return setShowManage(false), true;
+    return false;
+  };
+
+  // Delete/Backspace: remove the selected songs. One source playlist → remove directly (with the
+  // usual confirm); several → open the picker to choose. Never while a modal is open.
+  deleteSelectedRef.current = () => {
+    if (anyModalOpen || selectedSongs.size === 0) return;
+    if (removeTargets.length === 1) removeSelectedFrom(removeTargets[0]);
+    else if (removeTargets.length > 1) setRemovePicker(true);
+  };
 
   function sortBy(key: SortKey) {
     if (sortKey === key) setSortAsc((a) => !a);
@@ -1552,7 +1615,9 @@ function App() {
         <Overlay title={confirm.title} onClose={() => setConfirm(null)}>
           <p style={{ fontSize: 13 }}>{confirm.body}</p>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setConfirm(null)}>Cancel</button>
+            {/* Cancel is autofocused so Enter (and Esc) cancel — Enter never fires a destructive
+                confirm that has no other safeguard. */}
+            <button autoFocus onClick={() => setConfirm(null)}>Cancel</button>
             <button
               className="primary"
               onClick={() => {
@@ -1594,8 +1659,12 @@ function App() {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                setDeleteTarget(null);
-                setDeleteText("");
+                // Enter only deletes once the name matches (the safeguard); otherwise it cancels.
+                if (deleteText.trim() === deleteTarget.title.trim()) doDelete(deleteTarget);
+                else {
+                  setDeleteTarget(null);
+                  setDeleteText("");
+                }
               }
             }}
             style={{ width: "100%", marginBottom: 10 }}
