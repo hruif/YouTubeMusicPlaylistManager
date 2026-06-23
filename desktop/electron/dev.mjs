@@ -56,15 +56,23 @@ console.log("vite up — launching electron");
 const electronBin = (await import("electron")).default;
 const electron = spawn(electronBin, ["."], { stdio: "inherit", shell: false });
 
+function killVite() {
+  try {
+    process.kill(-vite.pid, "SIGKILL"); // Vite's whole process group (incl. its esbuild service)
+  } catch {
+    /* already gone */
+  }
+  try {
+    vite.kill("SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
 let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  try {
-    process.kill(-vite.pid); // kill Vite's whole process group
-  } catch {
-    /* already gone */
-  }
+  killVite();
   try {
     electron.kill();
   } catch {
@@ -72,13 +80,8 @@ const shutdown = () => {
   }
   process.exit(0);
 };
+electron.on("exit", shutdown); // fires when the app quits
 electron.on("close", shutdown);
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-process.on("exit", () => {
-  try {
-    if (vite.pid) process.kill(-vite.pid);
-  } catch {
-    /* already gone */
-  }
-});
+process.on("exit", killVite);

@@ -36,6 +36,7 @@ import "./App.css";
 // selection/sort, search (Cmd+F), hide playlists, details with external links.
 
 type SortKey = "title" | "artist" | "count";
+type PlaylistSort = "name" | "updated" | "count";
 
 // --- small persisted UI state (selection/sort/filter) in localStorage (tiny, frequent writes) ---
 type UiState = {
@@ -48,6 +49,7 @@ type UiState = {
   autoDeleteQueues: boolean;
   checkUpdates: boolean;
   autoRefreshOnLaunch: boolean;
+  playlistSort: PlaylistSort;
 };
 const UI_KEY = "ytm.ui";
 function loadUi(): UiState {
@@ -61,6 +63,7 @@ function loadUi(): UiState {
     autoDeleteQueues: false,
     checkUpdates: true,
     autoRefreshOnLaunch: true,
+    playlistSort: "name",
   };
   try {
     const raw = localStorage.getItem(UI_KEY);
@@ -90,6 +93,7 @@ function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
+  const visibleSongsRef = useRef<CombinedSong[]>([]); // latest visible songs, for the Cmd+A handler
   const lastSongIndex = useRef<number | null>(null);
   const lastClick = useRef<{ id: string; t: number } | null>(null);
   const [addPicker, setAddPicker] = useState(false);
@@ -118,6 +122,7 @@ function App() {
   const [autoDeleteQueues, setAutoDeleteQueues] = useState(ui0.autoDeleteQueues);
   const [checkUpdates, setCheckUpdates] = useState(ui0.checkUpdates);
   const [autoRefreshOnLaunch, setAutoRefreshOnLaunch] = useState(ui0.autoRefreshOnLaunch);
+  const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
   // True until the initial silent sign-in settles, so the welcome screen shows "Signing in…" for a
@@ -361,6 +366,27 @@ function App() {
       .finally(() => setBusy(false));
   }
 
+  // Drop a queue from the app entirely (no YouTube call) — an escape hatch for a stuck entry whose
+  // playlist is already gone (or that you just want out of the app). Purges all local traces of it.
+  function forgetTemp(id: string) {
+    const c = cacheRef.current;
+    const tracksByPlaylist = { ...c.tracksByPlaylist };
+    delete tracksByPlaylist[id];
+    const updatedAt = { ...c.updatedAt };
+    delete updatedAt[id];
+    persist({
+      ...c,
+      tempPlaylists: c.tempPlaylists.filter((t) => t.id !== id),
+      playlists: c.playlists.filter((p) => p.id !== id),
+      shown: c.shown.filter((x) => x !== id),
+      external: c.external.filter((x) => x !== id),
+      editable: c.editable.filter((x) => x !== id),
+      tracksByPlaylist,
+      updatedAt,
+    });
+    setStatus("Removed from queues");
+  }
+
   async function doSignIn() {
     setBusy(true);
     setStatus("Signing in…");
@@ -381,20 +407,24 @@ function App() {
   function openMenu(e: React.MouseEvent, items: { label: string; onClick: () => void }[]) {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 190), y: e.clientY, items });
+    // Clamp so the menu stays on-screen: flip up if it would overflow the bottom edge.
+    const estHeight = items.length * 30 + 8;
+    const x = Math.min(e.clientX, window.innerWidth - 196);
+    const y = Math.min(e.clientY, Math.max(8, window.innerHeight - estHeight - 8));
+    setMenu({ x, y, items });
   }
 
-  // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own;
-  // any left-click dismisses an open context menu. Use the CAPTURE phase so it fires even for clicks
-  // inside a modal (whose .modal stops propagation, which would otherwise swallow the dismiss).
+  // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own; any
+  // left-click dismisses an open context menu (bubble phase — capture phase would unmount the menu
+  // item before its own click handler runs). The Overlay lets in-modal clicks bubble here too.
   useEffect(() => {
     const onCtx = (e: MouseEvent) => e.preventDefault();
     const onClick = () => setMenu(null);
     window.addEventListener("contextmenu", onCtx);
-    window.addEventListener("click", onClick, true);
+    window.addEventListener("click", onClick);
     return () => {
       window.removeEventListener("contextmenu", onCtx);
-      window.removeEventListener("click", onClick, true);
+      window.removeEventListener("click", onClick);
     };
   }, []);
 
@@ -403,12 +433,12 @@ function App() {
     try {
       localStorage.setItem(
         UI_KEY,
-        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch }),
+        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort }),
       );
     } catch {
       /* ignore */
     }
-  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch]);
+  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
   // (sort/filter/search) so a range isn't computed across two different orderings.
@@ -416,13 +446,20 @@ function App() {
     lastSongIndex.current = null;
   }, [sortKey, sortAsc, query, dupOnly, unavailableOnly]);
 
-  // Cmd/Ctrl+F focuses the song search.
+  // Cmd/Ctrl+F focuses the song search; Cmd/Ctrl+A selects all visible songs (unless typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "f") {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
+      } else if (k === "a") {
+        const el = document.activeElement as HTMLElement | null;
+        if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+        e.preventDefault();
+        setSelectedSongs(new Set(visibleSongsRef.current.map((s) => s.videoId)));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -528,12 +565,28 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stable playlist ordering (the library fetch order is unstable across refreshes). Default by name.
+  const sortPlaylists = useCallback(
+    (list: Playlist[]): Playlist[] => {
+      const copy = [...list];
+      if (playlistSort === "updated") {
+        copy.sort((a, b) => (cache.updatedAt[b.id] ?? 0) - (cache.updatedAt[a.id] ?? 0));
+      } else if (playlistSort === "count") {
+        copy.sort((a, b) => (cache.tracksByPlaylist[b.id]?.length ?? 0) - (cache.tracksByPlaylist[a.id]?.length ?? 0));
+      } else {
+        copy.sort((a, b) => a.title.localeCompare(b.title));
+      }
+      return copy;
+    },
+    [playlistSort, cache.updatedAt, cache.tracksByPlaylist],
+  );
+
   // The sidebar is opt-in: it shows only playlists the user has added (cache.shown), defaulting to
   // none. Adding playlists you want is friendlier than pruning a full list.
   const shown = useMemo(() => new Set(cache.shown), [cache.shown]);
   const visiblePlaylists = useMemo(
-    () => cache.playlists.filter((p) => shown.has(p.id)),
-    [cache.playlists, shown],
+    () => sortPlaylists(cache.playlists.filter((p) => shown.has(p.id))),
+    [cache.playlists, shown, sortPlaylists],
   );
 
   function isStale(id: string): boolean {
@@ -1050,7 +1103,7 @@ function App() {
     });
     return copy;
   }, [songs, query, dupOnly, unavailableOnly, sortKey, sortAsc, cache.customNames]);
-
+  visibleSongsRef.current = visibleSongs;
 
   function sortBy(key: SortKey) {
     if (sortKey === key) setSortAsc((a) => !a);
@@ -1126,8 +1179,10 @@ function App() {
   // Live title from the master playlist list, so the Queues panel is a view over it (the marker's
   // stored title is only a fallback for the brief window before a refresh confirms the playlist).
   const titleById = useMemo(() => new Map(cache.playlists.map((p) => [p.id, p.title])), [cache.playlists]);
-  const manageList = cache.playlists.filter(
-    (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
+  const manageList = sortPlaylists(
+    cache.playlists.filter(
+      (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
+    ),
   );
 
   return (
@@ -1160,6 +1215,17 @@ function App() {
           <section className="sidebar">
             <div className="sidebar-head">
               <strong>Playlists ({visiblePlaylists.length})</strong>
+              <select
+                className="small"
+                value={playlistSort}
+                onChange={(e) => setPlaylistSort(e.currentTarget.value as PlaylistSort)}
+                title="Sort playlists"
+                style={{ padding: "1px 4px", fontSize: 12 }}
+              >
+                <option value="name">A–Z</option>
+                <option value="updated">Updated</option>
+                <option value="count">Size</option>
+              </select>
               <button className="small" onClick={() => setSelected(new Set(visiblePlaylists.map((p) => p.id)))}>Select all</button>
               <button className="small" onClick={() => setSelected(new Set())}>Clear</button>
             </div>
@@ -1720,6 +1786,7 @@ function App() {
                     <span className="pl-meta">{relativeAge(t.createdAt)}</span>
                     <button className="small" onClick={() => openPlaylist(t.id)}>open</button>
                     <button className="small" disabled={busy} onClick={() => deleteTemp(t.id)}>delete</button>
+                    <button className="small" title="Remove from this list without deleting on YouTube" onClick={() => forgetTemp(t.id)}>forget</button>
                   </div>
                 ))}
               </div>

@@ -24,7 +24,29 @@ export const SongRow = memo(function SongRow({ song, index, zebra, selected, cus
       onContextMenu={(e) => onContextMenu(e, index)}
     >
       <div className="cell title-cell">
-        {song.thumb ? <img className="thumb" src={song.thumb} loading="lazy" alt="" /> : <span className="thumb" />}
+        {song.thumb ? (
+          // If the cached CDN art URL fails (they can expire), fall back to the always-available
+          // i.ytimg.com video thumbnail; if that also fails, drop the src so the .thumb grey box
+          // shows instead of a broken-image icon. (A refresh re-fetches fresh art URLs.)
+          <img
+            className="thumb"
+            src={song.thumb}
+            loading="lazy"
+            alt=""
+            onError={(e) => {
+              const img = e.currentTarget;
+              const fallback = `https://i.ytimg.com/vi/${song.videoId}/default.jpg`;
+              if (!img.dataset.fellBack && img.src !== fallback) {
+                img.dataset.fellBack = "1";
+                img.src = fallback;
+              } else {
+                img.removeAttribute("src");
+              }
+            }}
+          />
+        ) : (
+          <span className="thumb" />
+        )}
         {customName ? (
           <span className="ttext" title={song.title}>
             {customName}

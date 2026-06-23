@@ -8,8 +8,11 @@ export function Overlay({
   children: React.ReactNode;
 }) {
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    // Close only when the backdrop itself is clicked (target === the overlay), NOT via
+    // stopPropagation on the modal — that way clicks inside the modal still bubble to window so an
+    // open context menu dismisses.
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
         <div className="modal-head">
           <h2>{title}</h2>
           <button onClick={onClose}>Close</button>
