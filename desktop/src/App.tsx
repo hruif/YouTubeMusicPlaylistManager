@@ -258,13 +258,22 @@ function App() {
   const autoDeleteQueuesRef = useRef(autoDeleteQueues);
   autoDeleteQueuesRef.current = autoDeleteQueues;
   async function deleteAllTemp() {
+    const remaining: typeof cacheRef.current.tempPlaylists = [];
+    let failed = 0;
     for (const t of cacheRef.current.tempPlaylists) {
       try {
         await deletePlaylist(t.id);
       } catch {
-        /* ignore — best-effort on exit */
+        remaining.push(t); // keep the ones that failed so they're not lost
+        failed += 1;
       }
     }
+    // Persist the cleared list AND save it durably now — on the quit path the debounced save won't
+    // fire before the app exits, which made deleted queues reappear as "leftover" next launch.
+    const next = { ...cacheRef.current, tempPlaylists: remaining };
+    persist(next);
+    await saveCache(next);
+    if (failed) setStatus(`Couldn't delete ${failed} queue(s) — they remain on your account.`);
   }
   useEffect(() => {
     // The window is held open until we call closeWindow() (Tauri: preventDefault+destroy; Electron:
@@ -279,6 +288,7 @@ function App() {
       }
       if (autoDeleteQueuesRef.current) {
         closingRef.current = true;
+        await deferClose(); // deleting on the network may take longer than the force-quit timer
         await deleteAllTemp();
         await closeWindow();
       } else {
@@ -651,11 +661,11 @@ function App() {
   );
   // Targets for "Add to playlist": the playlists shown in the sidebar; ownership can't be reliably
   // detected up front, so editable-detected ones sort first and the add attempt reports rejection.
+  // Only playlists in the sidebar that we can actually modify (owned) — no point listing read-only
+  // ones you can't add to.
   const addTargets = useMemo(() => {
     const q = addQuery.trim().toLowerCase();
-    return visiblePlaylists
-      .filter((p) => p.title.toLowerCase().includes(q))
-      .sort((a, b) => Number(editable.has(b.id)) - Number(editable.has(a.id)));
+    return visiblePlaylists.filter((p) => editable.has(p.id) && p.title.toLowerCase().includes(q));
   }, [visiblePlaylists, editable, addQuery]);
 
   // Add the selected songs to a playlist you own — optimistic, reverting on error.
@@ -814,8 +824,9 @@ function App() {
   const detailAddTargets = useMemo(() => {
     if (!detail) return [];
     const inIds = new Set(detailMembership.map((p) => p.id));
-    return cache.playlists.filter((p) => !inIds.has(p.id));
-  }, [detail, detailMembership, cache.playlists]);
+    // Only sidebar playlists we can modify (owned) that the song isn't already in.
+    return visiblePlaylists.filter((p) => editable.has(p.id) && !inIds.has(p.id));
+  }, [detail, detailMembership, visiblePlaylists, editable]);
 
   // Delete a playlist (non-optimistic — don't drop local data unless YouTube confirms). Archives
   // the song list locally first so it can be recreated. Invoked from the hardened delete modal.
@@ -1329,9 +1340,9 @@ function App() {
               value={detailAddTarget}
               onChange={(e) => setDetailAddTarget(e.currentTarget.value)}
             >
-              <option value="">Choose a playlist…</option>
+              <option value="">{detailAddTargets.length ? "Choose a playlist…" : "No editable sidebar playlists"}</option>
               {detailAddTargets.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}{editable.has(p.id) ? " ✓" : ""}</option>
+                <option key={p.id} value={p.id}>{p.title}</option>
               ))}
             </select>
             <button
@@ -1346,28 +1357,23 @@ function App() {
               Add
             </button>
           </div>
-          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
-            ✓ marks playlists you own. Others can be tried but YouTube may reject the edit.
-          </p>
         </Overlay>
       )}
 
       {addPicker && (
         <Overlay title={`Add ${selectedTracks.length} song(s) to…`} onClose={() => setAddPicker(false)}>
           <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>
-            Pick a playlist you own. ✓ marks ones detected as editable; others are still allowed and
-            will report an error if YouTube rejects the edit.
+            Pick one of your editable playlists from the sidebar.
           </p>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off" placeholder="Filter playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
           <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
             {addTargets.map((p) => (
               <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
-                {editable.has(p.id) && <span style={{ color: "var(--accent)" }}>✓</span>}
                 <span className="pl-title">{p.title}</span>
                 {cache.tracksByPlaylist[p.id] && <span className="pl-meta">{cache.tracksByPlaylist[p.id].length}</span>}
               </div>
             ))}
-            {addTargets.length === 0 && <p className="empty">No matches.</p>}
+            {addTargets.length === 0 && <p className="empty">No editable playlists in the sidebar. Add some via Manage playlists.</p>}
           </div>
         </Overlay>
       )}

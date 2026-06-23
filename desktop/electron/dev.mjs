@@ -1,6 +1,7 @@
 // Dev runner: bundle main/preload, start the Vite dev server, wait for it, then launch Electron
 // pointed at it. One command, no extra deps (no concurrently/wait-on).
 import { spawn, execFileSync } from "node:child_process";
+import path from "node:path";
 import { build } from "esbuild";
 
 const PORT = 1420;
@@ -40,9 +41,13 @@ async function waitForServer(port) {
 
 await bundle();
 
-const vite = spawn("npx", ["vite", "--port", String(PORT), "--strictPort"], {
+// Run Vite via its own binary in a detached process group, so we can kill the WHOLE tree on exit
+// (going through `npx` left an orphaned Vite that kept the terminal alive after the app quit).
+const viteBin = path.join("node_modules", ".bin", "vite");
+const vite = spawn(viteBin, ["--port", String(PORT), "--strictPort"], {
   stdio: "inherit",
   shell: false,
+  detached: true,
 });
 
 await waitForServer(PORT);
@@ -51,11 +56,29 @@ console.log("vite up — launching electron");
 const electronBin = (await import("electron")).default;
 const electron = spawn(electronBin, ["."], { stdio: "inherit", shell: false });
 
+let shuttingDown = false;
 const shutdown = () => {
-  vite.kill();
-  electron.kill();
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    process.kill(-vite.pid); // kill Vite's whole process group
+  } catch {
+    /* already gone */
+  }
+  try {
+    electron.kill();
+  } catch {
+    /* already gone */
+  }
   process.exit(0);
 };
 electron.on("close", shutdown);
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+process.on("exit", () => {
+  try {
+    if (vite.pid) process.kill(-vite.pid);
+  } catch {
+    /* already gone */
+  }
+});
