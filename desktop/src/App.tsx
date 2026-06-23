@@ -4,6 +4,7 @@ import {
   openExternal as openUrl,
   onCloseRequested,
   closeWindow,
+  deferClose,
 } from "./lib/native";
 import {
   signIn,
@@ -281,6 +282,7 @@ function App() {
         await deleteAllTemp();
         await closeWindow();
       } else {
+        await deferClose(); // we're asking the user — stop the shell's force-quit timer
         setExitPrompt(true);
       }
     });

@@ -19,6 +19,15 @@ const DEV_URL = "http://localhost:1420";
 let mainWindow: BrowserWindow | null = null;
 // Set true once the renderer has confirmed it's OK to close (exit-cleanup done / user chose close).
 let allowClose = false;
+// Safety net so a hung/unresponsive renderer can never trap the app open: if it doesn't respond to a
+// close request in time, force-quit. Cancelled when the renderer legitimately needs time (exit prompt).
+let closeTimer: ReturnType<typeof setTimeout> | null = null;
+function clearCloseTimer(): void {
+  if (closeTimer) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+  }
+}
 
 // Present the login window as desktop Safari. Google trusts Safari on macOS more loosely than it
 // scrutinizes Chrome (which it cross-checks against client hints + engine), so a *consistent* Safari
@@ -87,6 +96,11 @@ function createWindow(): void {
     if (allowClose || !mainWindow) return;
     e.preventDefault();
     mainWindow.webContents.send("close-requested");
+    clearCloseTimer();
+    closeTimer = setTimeout(() => {
+      allowClose = true;
+      app.quit();
+    }, 5000);
   });
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -109,9 +123,13 @@ ipcMain.handle("window:allow-close-and-quit", () => {
   // The renderer finished its exit cleanup and wants to quit. Quit the whole app — not just close
   // the window — so it doesn't linger in the dock (and so Cmd+Q actually quits on macOS). allowClose
   // lets the upcoming window 'close' through without re-vetoing.
+  clearCloseTimer();
   allowClose = true;
   app.quit();
 });
+// The renderer is showing the exit-cleanup prompt and needs the user to decide — cancel the force-
+// quit safety timer so we wait for them instead of quitting out from under the prompt.
+ipcMain.handle("window:defer-close", () => clearCloseTimer());
 ipcMain.handle("open-external", (_e, url: string) => shell.openExternal(url));
 
 // Single-instance: a second launch focuses the existing window instead of racing on the cache.

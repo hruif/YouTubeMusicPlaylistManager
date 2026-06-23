@@ -12,6 +12,7 @@ const api = {
   setBackgroundColor: (color: [number, number, number]): Promise<void> =>
     ipcRenderer.invoke("window:set-background", color),
   allowCloseAndQuit: (): Promise<void> => ipcRenderer.invoke("window:allow-close-and-quit"),
+  deferClose: (): Promise<void> => ipcRenderer.invoke("window:defer-close"),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("open-external", url),
   onCloseRequested: (cb: () => void): (() => void) => {
     const listener = () => cb();

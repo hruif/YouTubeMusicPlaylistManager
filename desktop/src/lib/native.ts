@@ -13,6 +13,7 @@ type ElectronAPI = {
   showWindow: () => Promise<void>;
   setBackgroundColor: (color: [number, number, number]) => Promise<void>;
   allowCloseAndQuit: () => Promise<void>;
+  deferClose: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   onCloseRequested: (cb: () => void) => () => void;
 };
@@ -58,6 +59,12 @@ export function onCloseRequested(handler: () => void): () => void {
 export async function closeWindow(): Promise<void> {
   if (isElectron) return electron!.allowCloseAndQuit();
   await getCurrentWindow().destroy();
+}
+
+// Tell the shell we're showing the exit-cleanup prompt, so its force-quit safety timer waits for the
+// user. No-op under Tauri (it has no such timer).
+export async function deferClose(): Promise<void> {
+  if (isElectron) await electron!.deferClose();
 }
 
 export async function openExternal(url: string): Promise<void> {
