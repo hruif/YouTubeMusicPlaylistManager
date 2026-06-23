@@ -378,15 +378,16 @@ function App() {
   }
 
   // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own;
-  // any left-click dismisses an open context menu.
+  // any left-click dismisses an open context menu. Use the CAPTURE phase so it fires even for clicks
+  // inside a modal (whose .modal stops propagation, which would otherwise swallow the dismiss).
   useEffect(() => {
     const onCtx = (e: MouseEvent) => e.preventDefault();
     const onClick = () => setMenu(null);
     window.addEventListener("contextmenu", onCtx);
-    window.addEventListener("click", onClick);
+    window.addEventListener("click", onClick, true);
     return () => {
       window.removeEventListener("contextmenu", onCtx);
-      window.removeEventListener("click", onClick);
+      window.removeEventListener("click", onClick, true);
     };
   }, []);
 

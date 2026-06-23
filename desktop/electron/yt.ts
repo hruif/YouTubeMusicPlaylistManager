@@ -229,10 +229,19 @@ export async function deletePlaylist(playlistId: string): Promise<void> {
   const actions = requireClient().actions as unknown as {
     execute(endpoint: string, args: Record<string, unknown>): Promise<{ success: boolean; status_code: number }>;
   };
-  const res = await actions.execute("/playlist/delete", {
-    playlistId: normalizePlaylistId(playlistId),
-    parse: false,
-  });
+  let res: { success: boolean; status_code: number };
+  try {
+    res = await actions.execute("/playlist/delete", {
+      playlistId: normalizePlaylistId(playlistId),
+      parse: false,
+    });
+  } catch (err) {
+    // A playlist that's already gone (deleted elsewhere) is the goal of "delete" — treat as success.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/\b404\b|not[\s_-]?found/i.test(msg)) return;
+    throw err;
+  }
+  if (res?.status_code === 404) return; // already gone — done
   const ok = res?.success !== false && (res?.status_code === undefined || res.status_code < 400);
   if (!ok) throw new Error(`YouTube rejected the delete (success=${res?.success}, status=${res?.status_code})`);
 }
