@@ -1175,15 +1175,15 @@ function App() {
         setSelectedSongs(new Set([s.videoId]));
         lastSongIndex.current = index;
       }
+      const many = count > 1;
+      const n = many ? `${count} ` : ""; // "5 " when multiple, "" for a single song
       openMenu(e, [
         // For a single song "Open in YouTube Music" below already covers it — only offer the queue
         // (which creates a temp playlist) when there's more than one.
-        ...(count > 1
-          ? [{ label: `Play ${count} in YouTube Music`, onClick: () => playInYouTube(ids, `▶ Queue — ${count} songs`) }]
-          : []),
-        { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
-        { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
-        { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
+        ...(many ? [{ label: `Play ${count} in YouTube Music`, onClick: () => playInYouTube(ids, `▶ Queue — ${count} songs`) }] : []),
+        { label: `Add ${n}to playlist…`, onClick: () => setAddPicker(true) },
+        { label: `Remove ${n}from playlist…`, onClick: () => setRemovePicker(true) },
+        { label: many ? `New playlist from ${count} songs…` : "New playlist from this song…", onClick: () => setCreateOpen(true) },
         { label: "Set custom name…", onClick: () => openDetailsRef.current(s) },
         { label: "Open in YouTube Music", onClick: () => openSong(s.videoId) },
         { label: "Details", onClick: () => openDetailsRef.current(s) },
@@ -1512,7 +1512,7 @@ function App() {
       )}
 
       {addPicker && (
-        <Overlay title={`Add ${selectedTracks.length} song(s) to…`} onClose={() => setAddPicker(false)}>
+        <Overlay title={`Add ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"} to…`} onClose={() => setAddPicker(false)}>
           <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>
             Pick one of your editable playlists from the sidebar.
           </p>
@@ -1530,7 +1530,7 @@ function App() {
       )}
 
       {removePicker && (
-        <Overlay title={`Remove ${selectedTracks.length} song(s) from…`} onClose={() => setRemovePicker(false)}>
+        <Overlay title={`Remove ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"} from…`} onClose={() => setRemovePicker(false)}>
           {removeTargets.length === 0 ? (
             <p className="empty">The selected songs aren’t in any of the loaded (selected) playlists.</p>
           ) : (
@@ -1639,7 +1639,7 @@ function App() {
       )}
 
       {createOpen && (
-        <Overlay title={`New playlist from ${selectedTracks.length} song(s)`} onClose={() => setCreateOpen(false)}>
+        <Overlay title={`New playlist from ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"}`} onClose={() => setCreateOpen(false)}>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             autoFocus
             placeholder="Playlist name"
