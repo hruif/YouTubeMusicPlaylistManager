@@ -223,6 +223,7 @@ function App() {
           tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: matchedTracks },
           updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
           editable: [...new Set([...cacheRef.current.editable, newId])],
+          shown: [...new Set([...cacheRef.current.shown, newId])], // a playlist you just made should show
           unmatched: unmatched.length ? { ...cacheRef.current.unmatched, [newId]: unmatched } : cacheRef.current.unmatched,
         });
       } else {
@@ -444,8 +445,10 @@ function App() {
         tracksByPlaylist: { ...c.tracksByPlaylist, [id]: tracks },
         updatedAt: { ...c.updatedAt, [id]: Date.now() },
         editable: editable ? [...new Set([...c.editable, id])] : c.editable,
-        // A playlist you explicitly add by URL should appear in the sidebar.
+        // A playlist you explicitly add by URL should appear in the sidebar, and be marked external
+        // so a library refresh (which only returns YOUR playlists) doesn't wipe it.
         shown: [...new Set([...c.shown, id])],
+        external: [...new Set([...c.external, id])],
       });
       setSelected(new Set([id]));
       setStatus(`Added “${name}” (${tracks.length} songs)`);
@@ -460,17 +463,25 @@ function App() {
     setBusy(true);
     setStatus("Refreshing playlist list…");
     try {
-      const playlists = await getLibraryPlaylists();
+      const library = await getLibraryPlaylists();
+      const c = cacheRef.current; // latest, AFTER the await
+      const libraryIds = new Set(library.map((p) => p.id));
+      // getLibraryPlaylists only returns YOUR library, so re-append URL-added (external) playlists
+      // that aren't in it — otherwise a refresh would silently drop them. Drop external markers that
+      // are now in the library (e.g. you saved/created it since).
+      const externalPlaylists = c.playlists.filter((p) => c.external.includes(p.id) && !libraryIds.has(p.id));
+      const playlists = [...library, ...externalPlaylists];
+      const liveIds = new Set(playlists.map((p) => p.id));
       // The sidebar is opt-in (cache.shown), so new playlists don't appear until added via Manage.
       // Queues are a *view* over real playlists, so reconcile them here: drop any queue whose
-      // playlist no longer exists on the account. A grace window protects a just-created queue that
-      // the library landing hasn't caught up to yet (eventual consistency).
-      const liveIds = new Set(playlists.map((p) => p.id));
+      // playlist no longer exists. A grace window protects a just-created queue the library landing
+      // hasn't caught up to yet (eventual consistency).
       const grace = Date.now() - 120_000;
       persist({
-        ...cacheRef.current,
+        ...c,
         playlists,
-        tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => liveIds.has(t.id) || t.createdAt > grace),
+        external: c.external.filter((id) => liveIds.has(id)),
+        tempPlaylists: c.tempPlaylists.filter((t) => liveIds.has(t.id) || t.createdAt > grace),
       });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
@@ -602,6 +613,8 @@ function App() {
         const gone = new Set(notFoundIds);
         const tracks = { ...next.tracksByPlaylist };
         const upd = { ...next.updatedAt };
+        const removed = { ...next.removedSongs };
+        const unm = { ...next.unmatched };
         const archived: LibraryCache["deleted"] = [];
         for (const id of notFoundIds) {
           const pl = cacheRef.current.playlists.find((p) => p.id === id);
@@ -609,13 +622,18 @@ function App() {
           if (pl && t.length) archived.push({ id, title: pl.title, tracks: t, deletedAt: now });
           delete tracks[id];
           delete upd[id];
+          delete removed[id];
+          delete unm[id];
         }
         next = {
           ...next,
           playlists: next.playlists.filter((p) => !gone.has(p.id)),
           tracksByPlaylist: tracks,
           updatedAt: upd,
+          removedSongs: removed,
+          unmatched: unm,
           shown: next.shown.filter((id) => !gone.has(id)),
+          external: next.external.filter((id) => !gone.has(id)),
           editable: next.editable.filter((id) => !gone.has(id)),
           tempPlaylists: next.tempPlaylists.filter((t) => !gone.has(t.id)),
           deleted: [...archived, ...next.deleted].slice(0, 30),
@@ -725,6 +743,7 @@ function App() {
           tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: tracks },
           updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
           editable: [...new Set([...cacheRef.current.editable, newId])],
+          shown: [...new Set([...cacheRef.current.shown, newId])], // a playlist you just made should show
         });
         setStatus(`Created “${name}” with ${tracks.length} songs`);
       } else {
@@ -852,14 +871,22 @@ function App() {
       delete tracksByPlaylist[p.id];
       const updatedAt = { ...cache.updatedAt };
       delete updatedAt[p.id];
+      const removedSongs = { ...cacheRef.current.removedSongs };
+      delete removedSongs[p.id];
+      const unmatched = { ...cacheRef.current.unmatched };
+      delete unmatched[p.id];
       const archived = { id: p.id, title: p.title, tracks, deletedAt: Date.now() };
       persist({
         ...cacheRef.current,
         playlists: cacheRef.current.playlists.filter((x) => x.id !== p.id),
         tracksByPlaylist,
         updatedAt,
+        removedSongs,
+        unmatched,
         shown: cacheRef.current.shown.filter((id) => id !== p.id),
+        external: cacheRef.current.external.filter((id) => id !== p.id),
         editable: cacheRef.current.editable.filter((id) => id !== p.id),
+        tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => t.id !== p.id),
         deleted: [archived, ...cacheRef.current.deleted].slice(0, 30),
       });
       setSelected((prev) => {
@@ -889,6 +916,7 @@ function App() {
           tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [newId]: d.tracks },
           updatedAt: { ...cacheRef.current.updatedAt, [newId]: Date.now() },
           editable: [...new Set([...cacheRef.current.editable, newId])],
+          shown: [...new Set([...cacheRef.current.shown, newId])], // a playlist you just made should show
         });
         setStatus(`Recreated “${d.title}” with ${d.tracks.length} songs`);
       } else {
@@ -1086,8 +1114,11 @@ function App() {
     [visibleSongs, selectedSongs],
   );
 
-  const manageList = cache.playlists.filter((p) =>
-    p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
+  // Queue playlists are real (private) playlists, so the library fetch returns them — but they're
+  // managed in Queues, not here, so keep them out of the Manage list.
+  const tempIds = useMemo(() => new Set(cache.tempPlaylists.map((t) => t.id)), [cache.tempPlaylists]);
+  const manageList = cache.playlists.filter(
+    (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
   );
 
   return (

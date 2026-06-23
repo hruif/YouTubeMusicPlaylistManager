@@ -20,6 +20,7 @@ describe("loadCache", () => {
     expect(c.tracksByPlaylist).toEqual({});
     expect(c.updatedAt).toEqual({});
     expect(c.shown).toEqual([]);
+    expect(c.external).toEqual([]);
     expect(c.editable).toEqual([]);
     expect(c.deleted).toEqual([]);
     expect(c.unmatched).toEqual({});
