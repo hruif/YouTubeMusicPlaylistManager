@@ -106,8 +106,11 @@ ipcMain.handle("window:set-background", (_e, _color: [number, number, number]) =
   // renderer's platform layer has a uniform surface across Tauri/Electron.)
 });
 ipcMain.handle("window:allow-close-and-quit", () => {
+  // The renderer finished its exit cleanup and wants to quit. Quit the whole app — not just close
+  // the window — so it doesn't linger in the dock (and so Cmd+Q actually quits on macOS). allowClose
+  // lets the upcoming window 'close' through without re-vetoing.
   allowClose = true;
-  mainWindow?.close();
+  app.quit();
 });
 ipcMain.handle("open-external", (_e, url: string) => shell.openExternal(url));
 
@@ -138,7 +141,7 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
-  });
+  // Single-window utility: closing the window quits the app on every platform (matching the Tauri
+  // build), rather than the macOS default of staying alive with no window.
+  app.on("window-all-closed", () => app.quit());
 }
