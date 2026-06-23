@@ -865,32 +865,32 @@ function App() {
       `Remove ${ids.length} song${ids.length === 1 ? "" : "s"} from “${target.title}”?`,
       "This removes them from the playlist on your YouTube Music account.",
       async () => {
-        const removed = existing.filter((t) => selectedSongs.has(t.videoId));
-        const remaining = existing.filter((t) => !selectedSongs.has(t.videoId));
-        // Archive what we removed into the playlist's "recently removed" list (deduped, capped).
-        const now = Date.now();
-        const prevRemoved = cacheRef.current.removedSongs[target.id] ?? [];
-        const seen = new Set(prevRemoved.map((r) => `${r.title}|${r.artist}`));
-        const additions = removed
-          .filter((g) => !seen.has(`${g.title}|${g.artist}`))
-          .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
-        persist({
-          ...cacheRef.current,
-          tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining },
-          removedSongs: { ...cacheRef.current.removedSongs, [target.id]: [...additions, ...prevRemoved].slice(0, 500) },
-        });
         setBusy(true);
         setStatus(`Removing ${ids.length} from ${target.title}…`);
         try {
-          await removeVideos(target.id, ids);
-          setStatus(`Removed ${ids.length} from ${target.title}`);
-        } catch (err) {
-          // Revert both the track list and the archive (the removal didn't actually happen).
+          // Non-optimistic: update the cache to what was ACTUALLY removed (some songs may be
+          // un-removable), then archive those into the playlist's "recently removed" list.
+          const removedIds = new Set(await removeVideos(target.id, ids));
+          const cur = cacheRef.current.tracksByPlaylist[target.id] ?? existing;
+          const removed = cur.filter((t) => removedIds.has(t.videoId));
+          const remaining = cur.filter((t) => !removedIds.has(t.videoId));
+          const now = Date.now();
+          const prevRemoved = cacheRef.current.removedSongs[target.id] ?? [];
+          const seen = new Set(prevRemoved.map((r) => `${r.title}|${r.artist}`));
+          const additions = removed
+            .filter((g) => !seen.has(`${g.title}|${g.artist}`))
+            .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
           persist({
             ...cacheRef.current,
-            tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing },
-            removedSongs: { ...cacheRef.current.removedSongs, [target.id]: prevRemoved },
+            tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining },
+            removedSongs: { ...cacheRef.current.removedSongs, [target.id]: [...additions, ...prevRemoved].slice(0, 500) },
           });
+          setStatus(
+            removedIds.size < ids.length
+              ? `Removed ${removedIds.size} of ${ids.length} from ${target.title} (some couldn't be removed)`
+              : `Removed ${removedIds.size} from ${target.title}`,
+          );
+        } catch (err) {
           fail(`Remove failed: ${errText(err)}`);
         } finally {
           setBusy(false);

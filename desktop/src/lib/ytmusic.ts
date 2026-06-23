@@ -45,8 +45,9 @@ export async function addVideos(playlistId: string, videoIds: string[]): Promise
   await invoke("yt_add_videos", { playlistId, videoIds });
 }
 
-export async function removeVideos(playlistId: string, videoIds: string[]): Promise<void> {
-  await invoke("yt_remove_videos", { playlistId, videoIds });
+/** Returns the videoIds actually removed (some may be skipped if not found in the playlist). */
+export async function removeVideos(playlistId: string, videoIds: string[]): Promise<string[]> {
+  return invoke<string[]>("yt_remove_videos", { playlistId, videoIds });
 }
 
 export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {

@@ -216,8 +216,33 @@ export async function addVideos(playlistId: string, videoIds: string[]): Promise
   await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), videoIds);
 }
 
-export async function removeVideos(playlistId: string, videoIds: string[]): Promise<void> {
-  await requireClient().playlist.removeVideos(normalizePlaylistId(playlistId), videoIds);
+// Returns the videoIds actually removed. youtubei.js's removeVideos paginates the playlist to find
+// each song's set-video-id and throws "There are no continuations" if any requested id isn't there
+// (e.g. an unavailable track the regular client can't see), which fails the WHOLE batch. So on that
+// failure we retry one-by-one — the removable songs still go, the un-findable ones are skipped.
+export async function removeVideos(playlistId: string, videoIds: string[]): Promise<string[]> {
+  const pid = normalizePlaylistId(playlistId);
+  const client = requireClient();
+  try {
+    await client.playlist.removeVideos(pid, videoIds);
+    return videoIds;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/continuation|not found|were not found/i.test(msg)) throw err;
+    const removed: string[] = [];
+    for (const id of videoIds) {
+      try {
+        await client.playlist.removeVideos(pid, [id]);
+        removed.push(id);
+      } catch {
+        /* not found in the playlist — skip */
+      }
+    }
+    if (removed.length === 0) {
+      throw new Error("None of the songs could be removed — they may be unavailable or already gone.");
+    }
+    return removed;
+  }
 }
 
 export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {
