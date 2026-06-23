@@ -327,6 +327,11 @@ function App() {
   // The temp playlist is tracked so it can be cleaned up later (Queues panel).
   async function playInYouTube(videoIds: string[], title: string) {
     if (videoIds.length === 0) return;
+    // A single song needs no queue — just open the song directly.
+    if (videoIds.length === 1) {
+      openSong(videoIds[0]);
+      return;
+    }
     setBusy(true);
     setStatus(`Building queue “${title}”…`);
     try {
@@ -342,6 +347,10 @@ function App() {
           editable: [...new Set([...c.editable, newId])],
           tempPlaylists: [{ id: newId, title, createdAt: Date.now() }, ...c.tempPlaylists].slice(0, 50),
         });
+        // YouTube needs a moment to index a brand-new playlist; opening immediately often shows a
+        // blank page. A short wait makes the opened page actually show the songs.
+        setStatus(`Building queue “${title}”…`);
+        await new Promise((r) => setTimeout(r, 1500));
         await openPlaylist(newId);
         setStatus(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
       } else {
@@ -366,14 +375,19 @@ function App() {
       .finally(() => setBusy(false));
   }
 
-  // Drop a queue from the app entirely (no YouTube call) — an escape hatch for a stuck entry whose
-  // playlist is already gone (or that you just want out of the app). Purges all local traces of it.
-  function forgetTemp(id: string) {
+  // Remove a playlist from the app entirely (no YouTube call) — for playlists you don't own (can't
+  // delete), e.g. URL-added public ones. Purges all local traces, including any archived removed/
+  // unmatched songs keyed by its id.
+  function removeFromCache(id: string) {
     const c = cacheRef.current;
     const tracksByPlaylist = { ...c.tracksByPlaylist };
     delete tracksByPlaylist[id];
     const updatedAt = { ...c.updatedAt };
     delete updatedAt[id];
+    const removedSongs = { ...c.removedSongs };
+    delete removedSongs[id];
+    const unmatched = { ...c.unmatched };
+    delete unmatched[id];
     persist({
       ...c,
       tempPlaylists: c.tempPlaylists.filter((t) => t.id !== id),
@@ -383,8 +397,15 @@ function App() {
       editable: c.editable.filter((x) => x !== id),
       tracksByPlaylist,
       updatedAt,
+      removedSongs,
+      unmatched,
     });
-    setStatus("Removed from queues");
+    setSelected((prev) => {
+      const s = new Set(prev);
+      s.delete(id);
+      return s;
+    });
+    setStatus("Removed from your list");
   }
 
   async function doSignIn() {
@@ -414,18 +435,13 @@ function App() {
     setMenu({ x, y, items });
   }
 
-  // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own; any
-  // left-click dismisses an open context menu (bubble phase — capture phase would unmount the menu
-  // item before its own click handler runs). The Overlay lets in-modal clicks bubble here too.
+  // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own. Dismissal
+  // is handled by the menu's own full-screen backdrop (see the render), so a dismiss click is
+  // consumed there and can't also trigger the thing underneath it.
   useEffect(() => {
     const onCtx = (e: MouseEvent) => e.preventDefault();
-    const onClick = () => setMenu(null);
     window.addEventListener("contextmenu", onCtx);
-    window.addEventListener("click", onClick);
-    return () => {
-      window.removeEventListener("contextmenu", onCtx);
-      window.removeEventListener("click", onClick);
-    };
+    return () => window.removeEventListener("contextmenu", onCtx);
   }, []);
 
   // Persist UI state on change.
@@ -1160,7 +1176,11 @@ function App() {
         lastSongIndex.current = index;
       }
       openMenu(e, [
-        { label: `Play ${count} in YouTube Music`, onClick: () => playInYouTube(ids, `▶ Queue — ${count} song${count > 1 ? "s" : ""}`) },
+        // For a single song "Open in YouTube Music" below already covers it — only offer the queue
+        // (which creates a temp playlist) when there's more than one.
+        ...(count > 1
+          ? [{ label: `Play ${count} in YouTube Music`, onClick: () => playInYouTube(ids, `▶ Queue — ${count} songs`) }]
+          : []),
         { label: `Add ${count} to playlist…`, onClick: () => setAddPicker(true) },
         { label: `Remove ${count} from playlist…`, onClick: () => setRemovePicker(true) },
         { label: `New playlist from ${count} song${count > 1 ? "s" : ""}…`, onClick: () => setCreateOpen(true) },
@@ -1372,6 +1392,17 @@ function App() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 6px", borderTop: "1px solid var(--border-subtle)", paddingTop: 14 }}>
             <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Your playlists</span>
+            <select
+              className="small"
+              value={playlistSort}
+              onChange={(e) => setPlaylistSort(e.currentTarget.value as PlaylistSort)}
+              title="Sort playlists"
+              style={{ padding: "1px 4px", fontSize: 12 }}
+            >
+              <option value="name">A–Z</option>
+              <option value="updated">Updated</option>
+              <option value="count">Size</option>
+            </select>
             <button
               className="small"
               disabled={busy}
@@ -1400,7 +1431,11 @@ function App() {
                   openMenu(e, [
                     { label: "Export to CSV…", onClick: () => exportPlaylist(p) },
                     { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
-                    { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
+                    // URL-added public playlists aren't yours to delete — offer to remove them from
+                    // the app instead. Library playlists are your own, so they get the real delete.
+                    cache.external.includes(p.id)
+                      ? { label: "Remove from list", onClick: () => removeFromCache(p.id) }
+                      : { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
                   ])
                 }
               >
@@ -1786,7 +1821,6 @@ function App() {
                     <span className="pl-meta">{relativeAge(t.createdAt)}</span>
                     <button className="small" onClick={() => openPlaylist(t.id)}>open</button>
                     <button className="small" disabled={busy} onClick={() => deleteTemp(t.id)}>delete</button>
-                    <button className="small" title="Remove from this list without deleting on YouTube" onClick={() => forgetTemp(t.id)}>forget</button>
                   </div>
                 ))}
               </div>
@@ -1866,20 +1900,32 @@ function App() {
       )}
 
       {menu && (
-        <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
-          {menu.items.map((it) => (
-            <div
-              key={it.label}
-              className="ctx-item"
-              onClick={() => {
-                it.onClick();
-                setMenu(null);
-              }}
-            >
-              {it.label}
-            </div>
-          ))}
-        </div>
+        <>
+          {/* Full-screen catcher: the first click anywhere just dismisses the menu and is consumed
+              here, so it can't also close a modal, select a song, etc. The menu sits above it. */}
+          <div
+            className="menu-backdrop"
+            onClick={() => setMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu(null);
+            }}
+          />
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }}>
+            {menu.items.map((it) => (
+              <div
+                key={it.label}
+                className="ctx-item"
+                onClick={() => {
+                  it.onClick();
+                  setMenu(null);
+                }}
+              >
+                {it.label}
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </main>
   );
