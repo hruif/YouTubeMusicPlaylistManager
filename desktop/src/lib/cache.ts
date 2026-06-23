@@ -13,7 +13,7 @@ export type LibraryCache = {
   playlists: Playlist[];
   tracksByPlaylist: Record<string, Track[]>;
   updatedAt: Record<string, number>; // playlist id -> last-fetched epoch ms
-  hidden: string[]; // playlist ids hidden from the main sidebar
+  shown: string[]; // playlist ids the user has added to the sidebar (opt-in; empty = none shown)
   editable: string[]; // playlist ids you own (detected on update)
   deleted: DeletedPlaylist[]; // archive of deleted playlists (for recreation)
   unmatched: Record<string, { title: string; artist: string }[]>; // Spotify tracks not matched, by new playlist id
@@ -26,7 +26,7 @@ export const EMPTY_CACHE: LibraryCache = {
   playlists: [],
   tracksByPlaylist: {},
   updatedAt: {},
-  hidden: [],
+  shown: [],
   editable: [],
   deleted: [],
   unmatched: {},
@@ -44,7 +44,7 @@ export async function loadCache(): Promise<LibraryCache> {
       playlists: parsed.playlists ?? [],
       tracksByPlaylist: parsed.tracksByPlaylist ?? {},
       updatedAt: parsed.updatedAt ?? {},
-      hidden: parsed.hidden ?? [],
+      shown: parsed.shown ?? [],
       editable: parsed.editable ?? [],
       deleted: parsed.deleted ?? [],
       unmatched: parsed.unmatched ?? {},

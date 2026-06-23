@@ -350,6 +350,7 @@ function App() {
       setSignedIn(true);
       setBusy(false);
       if (cache.playlists.length === 0) await refreshPlaylists();
+      else setStatus(`${cache.playlists.length} playlists`);
     } catch (err) {
       fail(`Sign-in failed: ${errText(err)}`);
       setBusy(false);
@@ -430,6 +431,8 @@ function App() {
         tracksByPlaylist: { ...c.tracksByPlaylist, [id]: tracks },
         updatedAt: { ...c.updatedAt, [id]: Date.now() },
         editable: editable ? [...new Set([...c.editable, id])] : c.editable,
+        // A playlist you explicitly add by URL should appear in the sidebar.
+        shown: [...new Set([...c.shown, id])],
       });
       setSelected(new Set([id]));
       setStatus(`Added “${name}” (${tracks.length} songs)`);
@@ -445,17 +448,9 @@ function App() {
     setStatus("Refreshing playlist list…");
     try {
       const playlists = await getLibraryPlaylists();
-      // New playlists default to HIDDEN: the sidebar is opt-in (you add the playlists you want via
-      // Manage), which is friendlier than starting with everything and pruning. On a fresh library
-      // every playlist is "new", so the sidebar starts empty. Playlists added by URL are shown
-      // explicitly elsewhere, so they're never auto-hidden here.
-      const known = new Set(cacheRef.current.playlists.map((p) => p.id));
-      const newlyHidden = playlists.filter((p) => !known.has(p.id)).map((p) => p.id);
-      persist({
-        ...cacheRef.current,
-        playlists,
-        hidden: [...new Set([...cacheRef.current.hidden, ...newlyHidden])],
-      });
+      // Just refresh the list. The sidebar is opt-in (cache.shown), so new playlists simply don't
+      // appear until the user adds them via Manage — no hide bookkeeping needed.
+      persist({ ...cacheRef.current, playlists });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
       fail(`Failed to refresh playlists: ${errText(err)}`);
@@ -495,10 +490,12 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hidden = useMemo(() => new Set(cache.hidden), [cache.hidden]);
+  // The sidebar is opt-in: it shows only playlists the user has added (cache.shown), defaulting to
+  // none. Adding playlists you want is friendlier than pruning a full list.
+  const shown = useMemo(() => new Set(cache.shown), [cache.shown]);
   const visiblePlaylists = useMemo(
-    () => cache.playlists.filter((p) => !hidden.has(p.id)),
-    [cache.playlists, hidden],
+    () => cache.playlists.filter((p) => shown.has(p.id)),
+    [cache.playlists, shown],
   );
 
   function isStale(id: string): boolean {
@@ -515,12 +512,13 @@ function App() {
     });
   }
 
-  function setPlaylistHidden(id: string, hide: boolean) {
-    const next = new Set(cache.hidden);
-    if (hide) next.add(id);
+  // Add/remove a playlist from the sidebar (opt-in). Removing also deselects it.
+  function setPlaylistShown(id: string, show: boolean) {
+    const next = new Set(cache.shown);
+    if (show) next.add(id);
     else next.delete(id);
-    persist({ ...cacheRef.current, hidden: [...next] });
-    if (hide)
+    persist({ ...cacheRef.current, shown: [...next] });
+    if (!show)
       setSelected((prev) => {
         const s = new Set(prev);
         s.delete(id);
@@ -596,7 +594,7 @@ function App() {
           playlists: next.playlists.filter((p) => !gone.has(p.id)),
           tracksByPlaylist: tracks,
           updatedAt: upd,
-          hidden: next.hidden.filter((id) => !gone.has(id)),
+          shown: next.shown.filter((id) => !gone.has(id)),
           editable: next.editable.filter((id) => !gone.has(id)),
           deleted: [...archived, ...next.deleted].slice(0, 30),
         };
@@ -649,7 +647,7 @@ function App() {
     () => songs.filter((s) => selectedSongs.has(s.videoId)),
     [songs, selectedSongs],
   );
-  // Targets for "Add to playlist": the shown (non-hidden) playlists; ownership can't be reliably
+  // Targets for "Add to playlist": the playlists shown in the sidebar; ownership can't be reliably
   // detected up front, so editable-detected ones sort first and the add attempt reports rejection.
   const addTargets = useMemo(() => {
     const q = addQuery.trim().toLowerCase();
@@ -837,7 +835,7 @@ function App() {
         playlists: cacheRef.current.playlists.filter((x) => x.id !== p.id),
         tracksByPlaylist,
         updatedAt,
-        hidden: cacheRef.current.hidden.filter((id) => id !== p.id),
+        shown: cacheRef.current.shown.filter((id) => id !== p.id),
         editable: cacheRef.current.editable.filter((id) => id !== p.id),
         deleted: [archived, ...cacheRef.current.deleted].slice(0, 30),
       });
@@ -1120,7 +1118,7 @@ function App() {
                         ...(cache.unmatched[p.id]?.length
                           ? [{ label: `Unmatched from Spotify (${cache.unmatched[p.id].length})`, onClick: () => setShowUnmatched(p.id) }]
                           : []),
-                        { label: "Hide from sidebar", onClick: () => setPlaylistHidden(p.id, true) },
+                        { label: "Remove from sidebar", onClick: () => setPlaylistShown(p.id, false) },
                         { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
                       ])
                     }
@@ -1129,7 +1127,7 @@ function App() {
                     <span className="pl-title" onClick={() => toggleSelected(p.id)}>{p.title}</span>
                     {stale && <span className={`dot ${tracks ? "stale" : "none"}`} title={tracks ? `Updated ${relativeAge(cache.updatedAt[p.id])}` : "Not cached"} />}
                     {tracks && <span className="pl-meta">{tracks.length}</span>}
-                    <button className="pl-hide" title="Hide from sidebar" onClick={() => setPlaylistHidden(p.id, true)}>×</button>
+                    <button className="pl-hide" title="Remove from sidebar" onClick={() => setPlaylistShown(p.id, false)}>×</button>
                   </div>
                 );
               })}
@@ -1256,7 +1254,7 @@ function App() {
           </div>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
             Check the playlists you want in the sidebar. Right-click one for export, open, or delete.
-            {hidden.size > 0 ? ` ${cache.playlists.length - hidden.size} of ${cache.playlists.length} shown.` : ""}
+            {` ${shown.size} of ${cache.playlists.length} shown.`}
           </p>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
             placeholder="Filter…"
@@ -1277,7 +1275,7 @@ function App() {
                   ])
                 }
               >
-                <input type="checkbox" checked={!hidden.has(p.id)} onChange={(e) => setPlaylistHidden(p.id, !e.currentTarget.checked)} />
+                <input type="checkbox" checked={shown.has(p.id)} onChange={(e) => setPlaylistShown(p.id, e.currentTarget.checked)} />
                 <span className="pl-title">{p.title}</span>
               </label>
             ))}
