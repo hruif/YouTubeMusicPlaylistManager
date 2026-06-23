@@ -327,9 +327,15 @@ function App() {
     try {
       const newId = await createPlaylist(title, videoIds);
       if (newId) {
+        const c = cacheRef.current;
         persist({
-          ...cacheRef.current,
-          tempPlaylists: [{ id: newId, title, createdAt: Date.now() }, ...cacheRef.current.tempPlaylists].slice(0, 50),
+          ...c,
+          // A queue is a real (owned) playlist, so put it in the master list immediately — the
+          // Queues panel just *marks* which playlists are queues (tempPlaylists), rather than being a
+          // parallel list. It's kept out of the sidebar (not in `shown`) and out of Manage (tempIds).
+          playlists: c.playlists.some((p) => p.id === newId) ? c.playlists : [{ id: newId, title }, ...c.playlists],
+          editable: [...new Set([...c.editable, newId])],
+          tempPlaylists: [{ id: newId, title, createdAt: Date.now() }, ...c.tempPlaylists].slice(0, 50),
         });
         await openPlaylist(newId);
         setStatus(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
@@ -1117,6 +1123,9 @@ function App() {
   // Queue playlists are real (private) playlists, so the library fetch returns them — but they're
   // managed in Queues, not here, so keep them out of the Manage list.
   const tempIds = useMemo(() => new Set(cache.tempPlaylists.map((t) => t.id)), [cache.tempPlaylists]);
+  // Live title from the master playlist list, so the Queues panel is a view over it (the marker's
+  // stored title is only a fallback for the brief window before a refresh confirms the playlist).
+  const titleById = useMemo(() => new Map(cache.playlists.map((p) => [p.id, p.title])), [cache.playlists]);
   const manageList = cache.playlists.filter(
     (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
   );
@@ -1707,7 +1716,7 @@ function App() {
               <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
                 {cache.tempPlaylists.map((t) => (
                   <div key={t.id} className="pl-row">
-                    <span className="pl-title">{t.title}</span>
+                    <span className="pl-title">{titleById.get(t.id) ?? t.title}</span>
                     <span className="pl-meta">{relativeAge(t.createdAt)}</span>
                     <button className="small" onClick={() => openPlaylist(t.id)}>open</button>
                     <button className="small" disabled={busy} onClick={() => deleteTemp(t.id)}>delete</button>
