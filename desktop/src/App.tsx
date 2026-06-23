@@ -461,9 +461,17 @@ function App() {
     setStatus("Refreshing playlist list…");
     try {
       const playlists = await getLibraryPlaylists();
-      // Just refresh the list. The sidebar is opt-in (cache.shown), so new playlists simply don't
-      // appear until the user adds them via Manage — no hide bookkeeping needed.
-      persist({ ...cacheRef.current, playlists });
+      // The sidebar is opt-in (cache.shown), so new playlists don't appear until added via Manage.
+      // Queues are a *view* over real playlists, so reconcile them here: drop any queue whose
+      // playlist no longer exists on the account. A grace window protects a just-created queue that
+      // the library landing hasn't caught up to yet (eventual consistency).
+      const liveIds = new Set(playlists.map((p) => p.id));
+      const grace = Date.now() - 120_000;
+      persist({
+        ...cacheRef.current,
+        playlists,
+        tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => liveIds.has(t.id) || t.createdAt > grace),
+      });
       setStatus(`${playlists.length} playlists`);
     } catch (err) {
       fail(`Failed to refresh playlists: ${errText(err)}`);
@@ -609,6 +617,7 @@ function App() {
           updatedAt: upd,
           shown: next.shown.filter((id) => !gone.has(id)),
           editable: next.editable.filter((id) => !gone.has(id)),
+          tempPlaylists: next.tempPlaylists.filter((t) => !gone.has(t.id)),
           deleted: [...archived, ...next.deleted].slice(0, 30),
         };
         setSelected((prev) => {
