@@ -216,33 +216,124 @@ export async function addVideos(playlistId: string, videoIds: string[]): Promise
   await requireClient().playlist.addVideos(normalizePlaylistId(playlistId), videoIds);
 }
 
-// Returns the videoIds actually removed. youtubei.js's removeVideos paginates the playlist to find
-// each song's set-video-id and throws "There are no continuations" if any requested id isn't there
-// (e.g. an unavailable track the regular client can't see), which fails the WHOLE batch. So on that
-// failure we retry one-by-one — the removable songs still go, the un-findable ones are skipped.
+// Removing a song needs its "set-video-id" — the id of the song's slot in *this* playlist, distinct
+// from the videoId. youtubei.js's own removeVideos finds it by paging the playlist through the
+// REGULAR YouTube client, which doesn't reliably see YouTube Music items and throws "There are no
+// continuations". Instead we page the playlist through the YTMUSIC client (the same view the user
+// sees) and read each slot's set-video-id straight from the raw JSON's `playlistItemData`, then
+// remove via the edit endpoint directly.
+//
+// Returns the videoIds actually removed (ones not found in the playlist are skipped).
 export async function removeVideos(playlistId: string, videoIds: string[]): Promise<string[]> {
   const pid = normalizePlaylistId(playlistId);
   const client = requireClient();
-  try {
-    await client.playlist.removeVideos(pid, videoIds);
-    return videoIds;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/continuation|not found|were not found/i.test(msg)) throw err;
-    const removed: string[] = [];
-    for (const id of videoIds) {
-      try {
-        await client.playlist.removeVideos(pid, [id]);
-        removed.push(id);
-      } catch {
-        /* not found in the playlist — skip */
+  const browseId = `VL${pid}`;
+  const wanted = new Set(videoIds);
+  // Two tiers of videoId -> set-video-id, both keyed by the wanted song's id. We prefer a slot match
+  // (the id stored in the playlist slot itself) and only fall back to a wide match (the id found
+  // anywhere in the row, e.g. the watch endpoint) for songs the slot id didn't catch.
+  const slotMatch = new Map<string, string>();
+  const wideMatch = new Map<string, string>();
+  const matchedCount = (): number =>
+    [...wanted].filter((id) => slotMatch.has(id) || wideMatch.has(id)).length;
+
+  const actions = client.actions as unknown as {
+    execute(endpoint: string, args: Record<string, unknown>): Promise<{ data?: unknown }>;
+  };
+
+  // Collect every videoId string anywhere under a node (a playlist row references its song's id in
+  // several places — the slot's playlistItemData, the watch endpoint, the menu — and which one our
+  // displayed id came from varies for "song" vs "video" items, so we match against all of them).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const collectVideoIds = (node: any, into: Set<string>): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) collectVideoIds(child, into);
+      return;
+    }
+    if (typeof node.videoId === "string") into.add(node.videoId);
+    for (const key in node) collectVideoIds(node[key], into);
+  };
+
+  // Record set-video-ids for any wanted song among this page's playlist rows. Only true playlist
+  // members carry a playlistSetVideoId, so unrelated "related songs" rows are skipped automatically.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const scanRows = (node: any): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) scanRows(child);
+      return;
+    }
+    const renderer = node.musicResponsiveListItemRenderer;
+    const setVideoId = renderer?.playlistItemData?.playlistSetVideoId;
+    if (renderer && setVideoId) {
+      const slotId = renderer.playlistItemData?.videoId;
+      if (typeof slotId === "string" && wanted.has(slotId) && !slotMatch.has(slotId)) {
+        slotMatch.set(slotId, setVideoId);
       }
+      const ids = new Set<string>();
+      collectVideoIds(renderer, ids);
+      for (const id of ids) if (wanted.has(id) && !wideMatch.has(id)) wideMatch.set(id, setVideoId);
     }
-    if (removed.length === 0) {
-      throw new Error("None of the songs could be removed — they may be unavailable or already gone.");
-    }
-    return removed;
+    for (const key in node) scanRows(node[key]);
+  };
+
+  // The continuation token for the PLAYLIST SONGS specifically: the trailing continuationItemRenderer
+  // that sits in the same list as the song rows. Critically NOT the section list's nextContinuationData
+  // (that paginates the "related songs" suggestions and derails us off the actual track list).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nextSongsToken = (root: any): string | null => {
+    let token: string | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const visit = (node: any): void => {
+      if (token || !node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        // A list holding song rows: its trailing continuationItemRenderer is the songs continuation.
+        if (node.some((el) => el?.musicResponsiveListItemRenderer)) {
+          for (const el of node) {
+            const t = el?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+            if (t) { token = t; return; }
+          }
+        }
+        for (const el of node) { visit(el); if (token) return; }
+        return;
+      }
+      for (const key in node) { visit(node[key]); if (token) return; }
+    };
+    visit(root);
+    return token;
+  };
+
+  let res = await actions.execute("/browse", { browseId, client: "YTMUSIC", parse: false });
+  scanRows(res?.data);
+  let token = nextSongsToken(res?.data);
+  let guard = 0;
+  while (token && matchedCount() < wanted.size && guard++ < 60) {
+    res = await actions.execute("/browse", { continuation: token, client: "YTMUSIC", parse: false });
+    scanRows(res?.data);
+    const next = nextSongsToken(res?.data);
+    if (next === token) break; // no forward progress — stop rather than loop forever
+    token = next;
   }
+
+  // Resolve each wanted song to its set-video-id, preferring the slot match over the wide one.
+  const resolved = new Map<string, string>(); // videoId -> set-video-id
+  for (const id of wanted) {
+    const setVideoId = slotMatch.get(id) ?? wideMatch.get(id);
+    if (setVideoId) resolved.set(id, setVideoId);
+  }
+  if (resolved.size === 0) {
+    throw new Error("Couldn't find the selected song(s) in this playlist to remove.");
+  }
+
+  const editActions = [...new Set(resolved.values())].map((setVideoId) => ({
+    action: "ACTION_REMOVE_VIDEO",
+    setVideoId,
+  }));
+  const endpoint = new YTNodes.NavigationEndpoint({ playlistEditEndpoint: { playlistId: pid, actions: editActions } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await endpoint.call(client.actions as any);
+  return [...resolved.keys()];
 }
 
 export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {
