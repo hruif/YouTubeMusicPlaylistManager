@@ -19,7 +19,7 @@ export type LibraryCache = {
   deleted: DeletedPlaylist[]; // archive of deleted playlists (for recreation)
   unmatched: Record<string, { title: string; artist: string }[]>; // Spotify tracks not matched, by new playlist id
   customNames: Record<string, string>; // local searchable aliases, by videoId
-  removedSongs: Record<string, { title: string; artist: string; removedAt: number }[]>; // archived on update, by playlist id
+  removedSongs: Record<string, { videoId?: string; title: string; artist: string; removedAt: number }[]>; // archived on update/removal, by playlist id
   tempPlaylists: { id: string; title: string; createdAt: number }[]; // "play in YouTube Music" queues, for cleanup
 };
 

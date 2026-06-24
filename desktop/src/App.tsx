@@ -678,7 +678,7 @@ function App() {
         const seen = new Set(existing.map((r) => `${r.title}|${r.artist}`));
         const additions = gone
           .filter((g) => !seen.has(`${g.title}|${g.artist}`))
-          .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
+          .map((g) => ({ videoId: g.videoId, title: g.title, artist: g.artist, removedAt: now }));
         if (additions.length) {
           removedSongs[id] = [...additions, ...existing].slice(0, 500);
           removedCount += additions.length;
@@ -751,6 +751,18 @@ function App() {
     [selectedPlaylists, cache.tracksByPlaylist],
   );
 
+  // Keep the song selection in sync with the songs that actually exist. Deselecting a playlist or a
+  // refresh can drop songs out of the list, and a lingering selection of gone songs is confusing.
+  // (Pruned against `songs`, not the search-filtered view, so typing a filter doesn't deselect.)
+  useEffect(() => {
+    setSelectedSongs((prev) => {
+      if (prev.size === 0) return prev;
+      const present = new Set(songs.map((s) => s.videoId));
+      const next = new Set([...prev].filter((id) => present.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [songs]);
+
   // Auto-load songs for a selected playlist the first time it's opened (fetch-once-on-demand).
   // `autoTried` caps each playlist at one automatic attempt per session so a retryable network
   // failure — which never lands in the cache — can't spin the effect into an infinite refetch loop.
@@ -802,6 +814,16 @@ function App() {
     setStatus(`Adding ${toAdd.length} to ${target.title}…`);
     try {
       await addVideos(target.id, toAdd.map((t) => t.videoId));
+      // Adding a song back un-removes it: drop it from this playlist's "recently removed" archive.
+      const addedIds = new Set(toAdd.map((t) => t.videoId));
+      const prevRemoved = cacheRef.current.removedSongs[target.id] ?? [];
+      const newRemoved = prevRemoved.filter((t) => !(t.videoId && addedIds.has(t.videoId)));
+      if (newRemoved.length !== prevRemoved.length) {
+        persist({
+          ...cacheRef.current,
+          removedSongs: { ...cacheRef.current.removedSongs, [target.id]: newRemoved },
+        });
+      }
       setStatus(`Added ${toAdd.length} to ${target.title}`);
     } catch (err) {
       persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
@@ -879,7 +901,7 @@ function App() {
           const seen = new Set(prevRemoved.map((r) => `${r.title}|${r.artist}`));
           const additions = removed
             .filter((g) => !seen.has(`${g.title}|${g.artist}`))
-            .map((g) => ({ title: g.title, artist: g.artist, removedAt: now }));
+            .map((g) => ({ videoId: g.videoId, title: g.title, artist: g.artist, removedAt: now }));
           persist({
             ...cacheRef.current,
             tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining },
@@ -1802,15 +1824,19 @@ function App() {
       {showRemoved && (
         <Overlay title="Removed songs (archived on update)" onClose={() => setShowRemoved(null)}>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Songs that disappeared from this playlist (deleted/taken down). The link is gone, but the
-            title/artist are kept so you can find a replacement.
+            Songs removed from this playlist — by you, or dropped when the playlist changed. “Open”
+            jumps straight to the song on YouTube Music.
           </p>
           <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
             {(cache.removedSongs[showRemoved] ?? []).map((t, i) => (
               <div key={i} className="pl-row">
                 <span className="pl-title">{t.title}</span>
                 <span className="pl-meta">{t.artist} · {relativeAge(t.removedAt)}</span>
-                <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
+                {t.videoId ? (
+                  <button className="small" onClick={() => openSong(t.videoId!)}>open</button>
+                ) : (
+                  <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
+                )}
               </div>
             ))}
           </div>
