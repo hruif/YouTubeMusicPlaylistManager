@@ -122,7 +122,7 @@ the release bundle, collide (same group).
 > **`desktop/`** and is now the primary download (release `desktop-v0.3.0`) — its own docs are
 > `desktop/README.md` and `desktop/BUILD.md`; see the desktop entry in `dev-docs/STATUS.md`. Build
 > artifacts there (`desktop/node_modules`, `desktop/dist`, `desktop/electron-dist`, `desktop/release`)
-> are gitignored. (A legacy `desktop/src-tauri/` Tauri prototype predates the Electron build.)
+> are gitignored.
 
 - **Root:** only `main.py` (the entry point the `.spec` builds from and `python3 main.py` runs),
   the root docs (`README.md`, `CONTRIBUTING.md`), and config (`pytest.ini`, the `.spec`, etc.).
