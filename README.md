@@ -15,6 +15,10 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 > [`desktop/BUILD.md`](desktop/BUILD.md). The original Python app below still works but is no longer
 > the primary download.
 
+_Everything below — Features, Usage, the "queue headers" sign-in, and the build steps — describes the
+original **Python** app. The native desktop app uses in-app sign-in (no header copying) and has its
+own guide in [`desktop/README.md`](desktop/README.md)._
+
 ## Features
 
 - **Add YouTube Playlists**: Import any public YouTube Music playlist by URL

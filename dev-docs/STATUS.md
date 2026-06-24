@@ -177,12 +177,15 @@ for architecture/layout.
 
 ## Backlog — to do
 
-- [ ] **UI revamp / successor app — Tauri rewrite (major, in progress).** Rebuild as a **Tauri**
-  (Rust + web frontend) desktop app to fix the manual-header auth friction and get a modern UI.
-  Decision recorded in `dev-docs/FUTURE_DIRECTIONS.md` (Tauri chosen over Qt/Electron on a
-  best-product lens — chiefly macOS WKWebView being the most robust path through Google's
-  embedded-webview sign-in block, plus footprint and frontend ecosystem). Auth/`youtubei.js`
-  approach adaptable under JustAnotherMusicClient's Apache-2.0 license, in a `desktop/` subfolder.
+- [x] **UI revamp / successor app — native desktop rewrite (shipped 2026-06-23).** A modern
+  React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
+  sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
+  keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
+  Swift helper sidecar. Now the **primary download** (release `desktop-v0.3.0`, universal `.dmg`);
+  the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
+  `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
+  historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
+  universal `.dmg`). Auth/`youtubei.js` adapted under JustAnotherMusicClient's Apache-2.0 license.
   - **Phase 0 — DONE (validated 2026-06-17).** Embedded WKWebView login works (Google doesn't
     block it), the session persists across launches (silent re-capture — true no-reauth), and
     authenticated read **and** write both work via `youtubei.js` 17.0.1. Auth gotchas (Cookie
@@ -220,7 +223,7 @@ for architecture/layout.
     pagination, shift-select, and transfer dedupe/retry fixes; Vitest tests + `desktop-ci` for the
     matcher/cache logic; **in-app update checker** (checks for newer `desktop-v*` releases → banner).
     Latest release: **`desktop-v0.2.0`**.
-  - **On `main`, unreleased (will roll into the next `desktop-v*`):** single-instance lock; App.tsx
+  - **Released in `desktop-v0.3.0` (also the Tauri→Electron re-platform):** single-instance lock; App.tsx
     split into modules + memoized rows; **"Play in YouTube Music" queue** (private temp playlist from
     selected songs/playlists, opened to play) + a "Queues" manager with **startup reminder + quit-time
     cleanup prompt** (or auto-delete via a setting); **add any public playlist by URL**; a **Settings
@@ -232,10 +235,12 @@ for architecture/layout.
     youtube-dl-takedown basis), moving the app from "low-risk playlist utility" to "yt-dlp-class
     streaming client" — too much takedown risk for a publicly-distributed app. Playback stays via the
     "Play in YouTube Music" queue (opens the official site).
-  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID); full cutover when ready.
+  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID); a Windows/Linux build
+    (config stubs exist in `electron-builder.yml`).
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  The Python app keeps shipping until parity.
+  Cutover done: the Electron app (`desktop-v0.3.0`) is the featured download; the Python app is the
+  legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not

@@ -1,12 +1,13 @@
-# YouTube Music Manager — native (Tauri) app
+# YouTube Music Manager — native desktop app
 
-The native rewrite of [YouTube Music Playlist Manager](../README.md), built with **Tauri (Rust)** +
-**React/TypeScript**. Shipped as a coexisting **beta** (GitHub pre-release `desktop-v0.1.0`); the
-original Python app remains the primary download for now.
+The native rewrite of [YouTube Music Playlist Manager](../README.md), built with **Electron** +
+**React/TypeScript** (Vite). It's the recommended download — current release `desktop-v0.3.0`, a
+universal macOS `.dmg`. The original Python app still works but is no longer the primary download.
 
 ## What it does
-- **Sign in once, in-app** — an embedded Google login captures a self-refreshing session, so there's
-  no more copying browser headers.
+- **Sign in once, in-app** — a native WKWebView login window captures a YouTube session, so there's
+  no more copying browser headers. The session is stored encrypted at rest (macOS Keychain via
+  Electron `safeStorage`).
 - **Library** — your full YouTube Music playlists (including private), cached locally for instant,
   virtualized browsing; combined sortable song view, search, custom names, hide unwanted playlists.
 - **Edit your playlists** — add / remove / create / delete / remove-repeats, optimistic with revert
@@ -19,18 +20,25 @@ original Python app remains the primary download for now.
 See [`BUILD.md`](BUILD.md). TL;DR:
 ```bash
 npm install
-npm run tauri dev      # needs Rust: source "$HOME/.cargo/env"
-npm run tauri build    # production .app/.dmg
+npm run electron:dev     # bundles main/preload + Swift helper, starts Vite, launches Electron
+npm run electron:build   # production universal .dmg via electron-builder (output in release/)
 ```
 
 ## How it works (high level)
-- Auth + all API traffic route through a small Rust HTTP proxy (`src-tauri/src/lib.rs`) so the
-  session cookies are attached; the frontend talks to YouTube via `youtubei.js`.
-- The embedded-WebView login + proxy approach is adapted from JustAnotherMusicClient (Apache-2.0);
+- **`youtubei.js` runs in the Electron main process** (Node — no CORS or forbidden-header limits) and
+  is exposed to the renderer through a single generic `invoke(cmd, args)` IPC channel
+  (`electron/main.ts` → `electron/backend.ts` → `electron/yt.ts`).
+- **Sign-in** spawns a native Swift WKWebView helper (`electron/login-helper/login.swift`, compiled by
+  `electron/build.mjs`): Google trusts WKWebView (= Safari) but blocks Electron's embedded Chromium,
+  so the helper captures the youtube.com cookies and hands them to `youtubei.js` (`electron/auth.ts`).
+- **Spotify** access is an unofficial port of the Python app's `spotapi` (`src/lib/spotify.ts`),
+  routed through a host-allowlisted `proxy_http_request` in the main process; it's fragile by nature,
+  so failures are surfaced as non-fatal popups.
+- The WebView-login-with-cookie-capture approach is adapted from JustAnotherMusicClient (Apache-2.0);
   see [`NOTICE`](NOTICE).
-- Spotify access is an unofficial port of the Python app's `spotapi` (`src/lib/spotify.ts`) and is
-  fragile by nature — failures are surfaced as non-fatal popups.
 
 ## Status & background
-See the repo's [`dev-docs/STATUS.md`](../dev-docs/STATUS.md) (the "Tauri rewrite" entry) and
-[`dev-docs/FUTURE_DIRECTIONS.md`](../dev-docs/FUTURE_DIRECTIONS.md) for the rationale and roadmap.
+See the repo's [`dev-docs/STATUS.md`](../dev-docs/STATUS.md) and
+[`dev-docs/FUTURE_DIRECTIONS.md`](../dev-docs/FUTURE_DIRECTIONS.md) for the rationale and roadmap (the
+desktop app was prototyped on Tauri, then moved to Electron for smooth resizing — keeping the native
+WKWebView sign-in via the helper sidecar).

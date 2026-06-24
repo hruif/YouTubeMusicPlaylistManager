@@ -1,10 +1,13 @@
 # Future Directions — UI Revamp, Auth, and Delivery
 
-_Status: Tauri rewrite chosen and BUILT — shipped as a coexisting beta (`desktop-v0.1.0`, 2026-06-18).
-See `dev-docs/STATUS.md` for what's done; this doc is the original rationale/roadmap (kept for
-background). The "shared core / Chrome-extension-first" musings below were superseded — Tauri was
-built directly; the Chrome extension remains the fallback if Google ever blocks the embedded login._
-_Last updated: 2026-06-18._
+_Status: native desktop app SHIPPED and now the primary download (`desktop-v0.3.0`, 2026-06-23).
+**Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing — the native macOS
+WKWebView sign-in (the key advantage analyzed below) was preserved as a Swift helper sidecar, so the
+Tauri-vs-Electron reasoning below is historical, not the final stack. See `dev-docs/STATUS.md` for
+what shipped; this doc is the original rationale/roadmap (kept for background). The "shared core /
+Chrome-extension-first" musings below were superseded; the Chrome extension remains the fallback if
+Google ever blocks the embedded login._
+_Last updated: 2026-06-23._
 
 Scoping document for where the app could go next. Two motivating goals, three possible delivery
 forms, and a **shared-core architecture** that keeps both directions open without committing to

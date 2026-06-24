@@ -101,7 +101,7 @@
 
           const release = await response.json();
           const assets = release.assets || [];
-          // Prefer the native desktop .dmg (Apple Silicon); fall back to a legacy macOS .zip.
+          // Prefer the native desktop .dmg (universal — Apple Silicon + Intel); fall back to a legacy macOS .zip.
           const macAsset =
             assets.find((asset) => /\.dmg$/i.test(asset.name || "")) ||
             assets.find((asset) => /macOS\.zip$/i.test(asset.name || ""));

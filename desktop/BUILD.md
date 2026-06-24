@@ -1,52 +1,51 @@
-# Building & packaging the desktop (Tauri) app
+# Building & packaging the desktop (Electron) app
 
 ## Develop
 ```bash
 cd desktop
 npm install
-npm run tauri dev      # needs Rust on PATH: source "$HOME/.cargo/env"
+npm run electron:dev      # bundles main/preload (esbuild) + the Swift login-helper, starts Vite,
+                          # then launches Electron pointed at the dev server
 ```
+No Rust needed. macOS builds the native login-helper with `swiftc` (Xcode command-line tools).
 
 ## Production build
 ```bash
 cd desktop
-npm run tauri build
+npm run electron:build    # vite build → bundle main/preload + helper → electron-builder
 ```
-Artifacts land in `src-tauri/target/release/bundle/`:
-- `macos/YouTube Music Manager.app`
-- `dmg/YouTube Music Manager_<version>_<arch>.dmg`
+Artifacts land in `release/`:
+- `release/mac-universal/YouTube Music Manager.app`
+- `release/YouTube Music Manager-<version>-universal.dmg`
 
-With `--target universal-apple-darwin` (the ship vehicle — see below), the bundle path is instead
-`src-tauri/target/universal-apple-darwin/release/bundle/…` and the dmg is suffixed `_universal`.
-
-The bundle is **~12 MB** (the Python app was ~148 MB) — Tauri uses the system WebView
-(WKWebView) instead of bundling a browser/runtime.
-
-`--target universal-apple-darwin` builds a universal (Intel + Apple Silicon) binary; a plain build
-targets the host arch only (this machine: `aarch64`).
+Packaging is configured in [`electron-builder.yml`](electron-builder.yml). Notable choices:
+- **`mac.target: { dmg, arch: universal }`** — one DMG that runs on Apple Silicon **and** Intel.
+- **`files` excludes `node_modules`** — the main + preload are esbuild-bundled into `electron-dist/`,
+  so nothing from `node_modules` ships at runtime; the asar holds only the bundles + the Vite output.
+- **`extraResources`** ships the native `login-helper` outside the asar (a plain executable).
+- The Swift helper is compiled **universal** too (`electron/build.mjs` builds arm64 + x86_64 and
+  `lipo`s them), so in-app sign-in works on both arches.
+- `electronLanguages: en-US` and `compression: maximum` trim the build; even so the `.dmg` is
+  ~176 MB — Electron bundles its own Chromium runtime (that's the floor, not app bloat).
 
 ## Signing & notarization (current state)
 
-The build is **ad-hoc signed** (`Signature=adhoc`, `TeamIdentifier=not set`) — i.e. effectively
-unsigned, the same as the Python app. So a downloaded copy is blocked by Gatekeeper on first launch;
-users approve it the same way as before:
+The build is **unsigned** (`mac.identity: null`) — so a downloaded copy is blocked by Gatekeeper on
+first launch. Users approve it once:
 
 > **System Settings → Privacy & Security → Open Anyway**, or
 > `xattr -dr com.apple.quarantine "/Applications/YouTube Music Manager.app"`, or Control-click → Open.
 
 **To notarize** (removes the Gatekeeper prompt) you need a **paid Apple Developer ID** — the project
-has never had one, which is why neither app is notarized. With a Developer ID, Tauri notarizes
-automatically when these env vars are set for `tauri build`:
-- `APPLE_SIGNING_IDENTITY` (or `APPLE_CERTIFICATE` + `APPLE_CERTIFICATE_PASSWORD`)
-- `APPLE_ID`, `APPLE_PASSWORD` (app-specific password), `APPLE_TEAM_ID`
-
-See the Tauri macOS code-signing docs. No code change is needed — it's purely credentials + env.
+has never had one, which is why neither app is notarized. With a Developer ID, set a signing identity
+in `electron-builder.yml` (`mac.identity`) and configure electron-builder notarization
+(`mac.notarize`, or an `afterSign` notarize hook with `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
+`APPLE_TEAM_ID` in the environment). It's purely credentials + config — no app code change.
 
 ## Distribution / updates
 
-- Ship the `.dmg` (it preserves the signed `.app`; no `ditto`/symlink dance needed like the Python
-  zip flow).
-- **In-app update checker is deferred** until the Tauri app has its own release line/versioning
-  (the repo's current GitHub Releases are the Python app's). When it does, either Tauri's updater
-  plugin (needs a signing key + an update manifest) or a simple "check GitHub latest release vs
-  `version`" check (like the Python app) can be wired in.
+- Ship the `.dmg`. The GitHub Pages site (`docs/`) and `releases/latest` point at it; the download
+  button resolves the latest release's `.dmg`.
+- Cut a release with `gh release create desktop-v<version> "release/…-universal.dmg" --target main
+  --latest` (see the repo root README's "Publish the download page" section).
+- The in-app update checker compares the running version against the latest GitHub release.
