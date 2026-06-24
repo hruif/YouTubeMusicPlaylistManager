@@ -10,8 +10,8 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 > [`desktop/`](desktop/) — current release
 > [`desktop-v0.3.0`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest).
 > It signs in **in-app** (no header copying), edits playlists, and imports from Spotify, with smooth
-> resizing on a Chromium runtime. Ships as an Apple Silicon `.dmg`; it's unsigned, so use **Open
-> Anyway** on first launch. See [`desktop/README.md`](desktop/README.md) and
+> resizing on a Chromium runtime. Ships as a universal `.dmg` (Apple Silicon + Intel); it's
+> unsigned, so use **Open Anyway** on first launch. See [`desktop/README.md`](desktop/README.md) and
 > [`desktop/BUILD.md`](desktop/BUILD.md). The original Python app below still works but is no longer
 > the primary download.
 
