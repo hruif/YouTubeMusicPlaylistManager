@@ -122,18 +122,24 @@ export function combineFromCache(
   selected: Playlist[],
   tracksByPlaylist: Record<string, Track[]>,
 ): CombinedSong[] {
-  const byVideo = new Map<string, CombinedSong>();
+  // Membership is deduped by playlist *id*, not title: two playlists that happen to share a title
+  // still count as two, and a song listed twice within one playlist doesn't inflate the count. The
+  // displayed `playlists` array holds titles (resolved per id).
+  const byVideo = new Map<string, CombinedSong & { _ids: Set<string> }>();
   for (const playlist of selected) {
     for (const track of tracksByPlaylist[playlist.id] ?? []) {
       const existing = byVideo.get(track.videoId);
       if (existing) {
-        if (!existing.playlists.includes(playlist.title)) existing.playlists.push(playlist.title);
+        if (!existing._ids.has(playlist.id)) {
+          existing._ids.add(playlist.id);
+          existing.playlists.push(playlist.title);
+        }
       } else {
-        byVideo.set(track.videoId, { ...track, playlists: [playlist.title] });
+        byVideo.set(track.videoId, { ...track, playlists: [playlist.title], _ids: new Set([playlist.id]) });
       }
     }
   }
-  return [...byVideo.values()];
+  return [...byVideo.values()].map(({ _ids, ...song }) => song);
 }
 
 // Conservative Spotify->YouTube matcher (ported from the Python app's spotify_matcher).

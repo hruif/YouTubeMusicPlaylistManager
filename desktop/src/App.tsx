@@ -419,8 +419,8 @@ function App() {
       await signIn();
       setSignedIn(true);
       setBusy(false);
-      if (cache.playlists.length === 0) await refreshPlaylists();
-      else setStatus(`${cache.playlists.length} playlists`);
+      if (cacheRef.current.playlists.length === 0) await refreshPlaylists();
+      else setStatus(`${cacheRef.current.playlists.length} playlists`);
     } catch (err) {
       fail(`Sign-in failed: ${errText(err)}`);
       setBusy(false);
@@ -1284,10 +1284,14 @@ function App() {
   // Live title from the master playlist list, so the Queues panel is a view over it (the marker's
   // stored title is only a fallback for the brief window before a refresh confirms the playlist).
   const titleById = useMemo(() => new Map(cache.playlists.map((p) => [p.id, p.title])), [cache.playlists]);
-  const manageList = sortPlaylists(
-    cache.playlists.filter(
-      (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
-    ),
+  const manageList = useMemo(
+    () =>
+      sortPlaylists(
+        cache.playlists.filter(
+          (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
+        ),
+      ),
+    [cache.playlists, tempIds, manageQuery, sortPlaylists],
   );
 
   return (
@@ -1464,7 +1468,7 @@ function App() {
               placeholder="https://music.youtube.com/playlist?list=…"
               value={addUrl}
               onChange={(e) => setAddUrl(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && addUrl.trim() && addPublicPlaylist(addUrl)}
+              onKeyDown={(e) => e.key === "Enter" && !busy && addUrl.trim() && addPublicPlaylist(addUrl)}
             />
             <button className="primary" disabled={busy || !addUrl.trim()} onClick={() => addPublicPlaylist(addUrl)}>Add</button>
             <button
@@ -1736,7 +1740,7 @@ function App() {
             placeholder="Playlist name"
             value={newName}
             onChange={(e) => setNewName(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && createFromSelection()}
+            onKeyDown={(e) => e.key === "Enter" && !busy && createFromSelection()}
             style={{ width: "100%", marginBottom: 10 }}
           />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -1885,7 +1889,12 @@ function App() {
                 setShowSettings(false);
                 await signOut();
                 setSignedIn(false);
+                // Wipe local state so the next account (or sign-in) starts clean — otherwise the
+                // previous account's playlists/tracks linger in memory and get re-saved to disk.
+                persist({ ...EMPTY_CACHE });
                 setSelected(new Set());
+                setSelectedSongs(new Set());
+                autoTried.current = new Set();
                 setStatus("Signed out");
               }}
             >
@@ -1930,18 +1939,21 @@ function App() {
                       async () => {
                         setBusy(true);
                         const ids = cacheRef.current.tempPlaylists.map((t) => t.id);
-                        let remaining = [...cacheRef.current.tempPlaylists];
+                        const failed = new Set<string>();
                         for (const id of ids) {
                           try {
                             await deletePlaylist(id);
-                            remaining = remaining.filter((t) => t.id !== id);
-                            persist({ ...cacheRef.current, tempPlaylists: remaining });
                           } catch {
-                            /* keep it in the list to retry */
+                            failed.add(id); // keep it in the list to retry
                           }
                         }
+                        // Persist once at the end, off the latest cache, keeping only the failures.
+                        persist({
+                          ...cacheRef.current,
+                          tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => failed.has(t.id)),
+                        });
                         setBusy(false);
-                        setStatus(`Deleted ${ids.length - remaining.length} queue(s)`);
+                        setStatus(`Deleted ${ids.length - failed.size} queue(s)`);
                       },
                     )
                   }

@@ -17,14 +17,36 @@ function helperPath(): string {
     : path.join(app.getAppPath(), "electron-dist", "login-helper");
 }
 
+let inFlight: Promise<SignInResult> | null = null;
+
 // Interactive login. Resolves with the captured cookie, or null if the user cancelled / timed out.
+// Concurrent calls share one helper process (so a double-click on "Sign in" can't spawn two windows),
+// and the helper is killed if the app quits mid-login rather than orphaned for up to 6 minutes.
 export async function signIn(): Promise<SignInResult> {
+  if (inFlight) return inFlight;
+  inFlight = runHelper().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function runHelper(): Promise<SignInResult> {
   const result = await new Promise<SignInResult | null>((resolve, reject) => {
-    execFile(
+    let child: ReturnType<typeof execFile> | undefined;
+    const killChild = (): void => {
+      try {
+        child?.kill();
+      } catch {
+        /* already gone */
+      }
+    };
+    app.once("before-quit", killChild);
+    child = execFile(
       helperPath(),
       [],
       { timeout: 6 * 60_000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
+        app.removeListener("before-quit", killChild);
         // The helper prints the JSON (or "null") as its last stdout line; AppKit may log noise.
         const line = (stdout || "").trim().split("\n").filter(Boolean).pop() ?? "null";
         if (err && !stdout) return reject(err);

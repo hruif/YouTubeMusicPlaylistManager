@@ -130,7 +130,16 @@ ipcMain.handle("window:allow-close-and-quit", () => {
 // The renderer is showing the exit-cleanup prompt and needs the user to decide — cancel the force-
 // quit safety timer so we wait for them instead of quitting out from under the prompt.
 ipcMain.handle("window:defer-close", () => clearCloseTimer());
-ipcMain.handle("open-external", (_e, url: string) => shell.openExternal(url));
+ipcMain.handle("open-external", (_e, url: string) => {
+  // Only ever hand the OS a web URL — never file://, custom schemes, etc.
+  try {
+    const { protocol } = new URL(url);
+    if (protocol === "https:" || protocol === "http:") return shell.openExternal(url);
+  } catch {
+    /* malformed URL — ignore */
+  }
+  return Promise.resolve();
+});
 
 // Single-instance: a second launch focuses the existing window instead of racing on the cache.
 if (!app.requestSingleInstanceLock()) {

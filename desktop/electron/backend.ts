@@ -78,7 +78,9 @@ export function registerBackend(deps: BackendDeps): void {
   registerCommand("yt_account_info", () => yt.getAccountInfo());
 
   // ---- Generic HTTP proxy: mirrors the old Rust proxy's shape so the renderer's Spotify code is
-  // unchanged. Node has no CORS, so this just forwards the request. ----
+  // unchanged. Node has no CORS, so this just forwards the request. The renderer only ever proxies
+  // Spotify's web API (and the public TOTP-secret host), so we allowlist those hosts rather than
+  // leave an open arbitrary-fetch primitive that could reach the LAN / loopback / metadata services. ----
   registerCommand("proxy_http_request", async (a) => {
     const input = a.input as {
       method: string;
@@ -86,6 +88,11 @@ export function registerBackend(deps: BackendDeps): void {
       headers: Record<string, string>;
       body_base64?: string | null;
     };
+    const url = new URL(input.url);
+    const allowed = /(^|\.)spotify\.com$|(^|\.)thetadev\.de$/.test(url.hostname);
+    if (url.protocol !== "https:" || !allowed) {
+      throw new Error(`Proxy refused: ${url.protocol}//${url.hostname} is not an allowed host`);
+    }
     const body = input.body_base64 ? Buffer.from(input.body_base64, "base64") : undefined;
     const res = await fetch(input.url, { method: input.method, headers: input.headers, body });
     const buf = Buffer.from(await res.arrayBuffer());
