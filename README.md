@@ -6,12 +6,14 @@ Only relatively basic functionality currently. You can search through playlists 
 
 Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 
-> **Native rewrite (beta).** A from-scratch native version (Tauri + React) now lives in
-> [`desktop/`](desktop/) and is shipped as a coexisting beta — pre-release
-> [`desktop-v0.2.0`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/desktop-v0.2.0).
-> It signs in **in-app** (no header copying), edits playlists, and imports from Spotify, in a ~12 MB
-> universal app. The Python app below remains the primary download for now. See
-> [`desktop/README.md`](desktop/README.md) and [`desktop/BUILD.md`](desktop/BUILD.md).
+> **Now a native desktop app.** The recommended version is a from-scratch native app in
+> [`desktop/`](desktop/) — current release
+> [`desktop-v0.3.0`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest).
+> It signs in **in-app** (no header copying), edits playlists, and imports from Spotify, with smooth
+> resizing on a Chromium runtime. Ships as an Apple Silicon `.dmg`; it's unsigned, so use **Open
+> Anyway** on first launch. See [`desktop/README.md`](desktop/README.md) and
+> [`desktop/BUILD.md`](desktop/BUILD.md). The original Python app below still works but is no longer
+> the primary download.
 
 ## Features
 
@@ -188,7 +190,7 @@ After pushing the workflow, open the repository on GitHub and set Pages to deplo
 https://hruif.github.io/YouTubeMusicPlaylistManager/
 ```
 
-The page links to GitHub Releases for downloads instead of storing app binaries in the repository. Upload `dist/YouTubeMusicPlaylistManager-0.6.0-macOS.zip` or the current versioned zip to a GitHub Release when you want users to download the app.
+The page links to GitHub Releases for downloads instead of storing app binaries in the repository. It now features the native desktop `.dmg` (built per [`desktop/BUILD.md`](desktop/BUILD.md)) — the download button resolves to the latest release's `.dmg`, falling back to a legacy macOS `.zip`. Mark the desktop release as **Latest** so the button picks it up.
 
 ## Optional Spotify support
 

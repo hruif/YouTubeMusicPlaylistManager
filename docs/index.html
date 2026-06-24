@@ -32,11 +32,11 @@
           </div>
           <p id="release-status" class="release-status">Checking latest release...</p>
           <p class="release-status">
-            <strong>New —</strong> a faster native rewrite: sign in once in-app (no header copying),
-            edit playlists, and import from Spotify. Universal (Apple Silicon + Intel); it's a
-            <code>.dmg</code> (open it and drag the app to Applications; same "Open Anyway" first
-            launch).
-            <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/desktop-v0.2.0">Try the beta&nbsp;→</a>
+            A native desktop app: sign in once in-app (no header copying), edit playlists, and import
+            from Spotify. Ships as an Apple Silicon <code>.dmg</code> — open it and drag the app to
+            Applications, then use <strong>Open Anyway</strong> on first launch (it isn't notarized
+            yet). The original Python app is still
+            <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">available here</a>.
           </p>
         </div>
       </section>
@@ -54,18 +54,18 @@
         <article class="panel">
           <h2>Install Notes</h2>
           <ol>
-            <li>Download the latest macOS zip from GitHub Releases.</li>
-            <li>Unzip it and move the app to your Applications folder.</li>
+            <li>Download the latest <code>.dmg</code> from GitHub Releases (Apple Silicon).</li>
+            <li>Open the <code>.dmg</code> and drag <strong>YouTube Music Manager</strong> to your Applications folder.</li>
             <li>
               The app isn't notarized by Apple, so macOS blocks it on first launch. The simplest fix:
               double-click the app once (it gets blocked), then open
               <strong>System Settings → Privacy &amp; Security</strong>, scroll to the Security section,
-              and click <strong>Open Anyway</strong> next to "YouTube Music Playlist Manager."
+              and click <strong>Open Anyway</strong> next to "YouTube Music Manager."
             </li>
             <li>
               Alternatively, clear the quarantine flag in Terminal, then open it normally:
               <br>
-              <code>xattr -dr com.apple.quarantine "/Applications/YouTube Music Playlist Manager.app"</code>
+              <code>xattr -dr com.apple.quarantine "/Applications/YouTube Music Manager.app"</code>
               <br>
               (On older macOS you can also Control-click the app and choose <strong>Open</strong>.)
             </li>
@@ -100,9 +100,11 @@
           }
 
           const release = await response.json();
-          const macAsset = (release.assets || []).find((asset) =>
-            /macOS\.zip$/i.test(asset.name || "")
-          );
+          const assets = release.assets || [];
+          // Prefer the native desktop .dmg (Apple Silicon); fall back to a legacy macOS .zip.
+          const macAsset =
+            assets.find((asset) => /\.dmg$/i.test(asset.name || "")) ||
+            assets.find((asset) => /macOS\.zip$/i.test(asset.name || ""));
 
           if (macAsset && macAsset.browser_download_url) {
             downloadLink.href = macAsset.browser_download_url;
