@@ -9,23 +9,37 @@ function buildLoginHelper() {
     console.log("electron: skipping login-helper (macOS only)");
     return;
   }
-  execFileSync(
-    "swiftc",
-    [
-      "electron/login-helper/login.swift",
-      "-O",
-      "-o",
-      "electron-dist/login-helper",
-      "-framework",
-      "WebKit",
-      "-framework",
-      "AppKit",
-      "-framework",
-      "Foundation",
-    ],
-    { stdio: "inherit" },
-  );
-  console.log("electron: built login-helper (Swift/WKWebView)");
+  // The app ships as a universal binary, so the helper must run on both arches too — otherwise
+  // sign-in breaks on whichever Mac the helper wasn't built for. Compile each slice, then lipo them
+  // into one fat Mach-O. (swiftc builds a single arch per invocation, hence the per-arch loop.)
+  const arches = ["arm64", "x86_64"];
+  const slices = [];
+  for (const arch of arches) {
+    const out = `electron-dist/login-helper-${arch}`;
+    execFileSync(
+      "swiftc",
+      [
+        "electron/login-helper/login.swift",
+        "-O",
+        "-target",
+        `${arch}-apple-macos11`,
+        "-o",
+        out,
+        "-framework",
+        "WebKit",
+        "-framework",
+        "AppKit",
+        "-framework",
+        "Foundation",
+      ],
+      { stdio: "inherit" },
+    );
+    slices.push(out);
+  }
+  execFileSync("lipo", ["-create", "-output", "electron-dist/login-helper", ...slices], {
+    stdio: "inherit",
+  });
+  console.log("electron: built universal login-helper (Swift/WKWebView, arm64 + x86_64)");
 }
 
 const watch = process.argv.includes("--watch");

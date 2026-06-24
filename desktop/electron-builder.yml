@@ -32,7 +32,8 @@ electronLanguages:
 mac:
   category: public.app-category.music
   target:
-    - dmg
+    - target: dmg
+      arch: universal # one DMG that runs on Apple Silicon + Intel
   # Unsigned for the beta (same as the Tauri build); set an identity later to sign/notarize.
   identity: null
 
