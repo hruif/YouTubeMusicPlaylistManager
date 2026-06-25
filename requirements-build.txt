@@ -1,2 +1,4 @@
 pyinstaller
 Pillow
+ytmusicapi
+spotapi

@@ -32,12 +32,24 @@
           </div>
           <p id="release-status" class="release-status">Checking latest release...</p>
           <p class="release-status">
-            A native desktop app: sign in once in-app (no header copying), edit playlists, and import
-            from Spotify. Ships as a universal <code>.dmg</code> (Apple Silicon + Intel) — open it and
-            drag the app to Applications, then use <strong>Open Anyway</strong> on first launch (it
-            isn't notarized yet). The original Python app is still
+            A native desktop app (Apple Silicon + Intel): sign in once in-app, edit playlists, and import
+            from Spotify - open it and drag the app to Applications, then use <strong>Open Anyway</strong>
+            on first launch (you may have to go to settings, see below).
+            An older Python version of the app is
             <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">available here</a>.
           </p>
+          <div class="legacy-downloads" aria-labelledby="legacy-downloads-title">
+            <p id="legacy-downloads-title" class="legacy-title">Legacy Python downloads</p>
+            <p class="legacy-copy">
+              The native macOS app above is recommended. These older Tk/Python builds are available
+              as alternatives for Windows, Linux, and macOS.
+            </p>
+            <div id="legacy-download-links" class="legacy-links">
+              <a class="button secondary compact" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">
+                Open legacy release
+              </a>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -86,8 +98,74 @@
     <script>
       const releaseStatus = document.getElementById("release-status");
       const downloadLink = document.getElementById("download-link");
+      const legacyDownloadLinks = document.getElementById("legacy-download-links");
       const latestReleaseUrl = "https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest";
       const latestReleaseApiUrl = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/latest";
+      const legacyReleaseUrl = "https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0";
+      const legacyReleaseApiUrl = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/tags/v0.6.0";
+
+      const legacyTargets = [
+        {
+          label: "Python for Windows",
+          patterns: [/python-windows.*\.zip$/i, /windows.*\.zip$/i]
+        },
+        {
+          label: "Python for Linux",
+          patterns: [/python-linux.*\.tar\.gz$/i, /python-linux.*\.zip$/i, /linux.*\.(tar\.gz|zip)$/i]
+        },
+        {
+          label: "Python for macOS",
+          patterns: [/python-macos.*\.zip$/i, /macos\.zip$/i]
+        }
+      ];
+
+      function findAsset(assets, patterns) {
+        return assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name || "")));
+      }
+
+      function makeDownloadButton(label, href) {
+        const link = document.createElement("a");
+        link.className = "button secondary compact";
+        link.href = href;
+        link.textContent = label;
+        return link;
+      }
+
+      function showLegacyFallback() {
+        legacyDownloadLinks.replaceChildren(makeDownloadButton("Open legacy release", legacyReleaseUrl));
+      }
+
+      async function wireLegacyDownloads() {
+        try {
+          const response = await fetch(legacyReleaseApiUrl, {
+            headers: { Accept: "application/vnd.github+json" }
+          });
+
+          if (!response.ok) {
+            throw new Error(`GitHub returned ${response.status}`);
+          }
+
+          const release = await response.json();
+          const assets = release.assets || [];
+          const links = legacyTargets
+            .map((target) => {
+              const asset = findAsset(assets, target.patterns);
+              return asset?.browser_download_url
+                ? makeDownloadButton(target.label, asset.browser_download_url)
+                : null;
+            })
+            .filter(Boolean);
+
+          if (!links.length) {
+            showLegacyFallback();
+            return;
+          }
+
+          legacyDownloadLinks.replaceChildren(...links, makeDownloadButton("All legacy assets", release.html_url || legacyReleaseUrl));
+        } catch (error) {
+          showLegacyFallback();
+        }
+      }
 
       async function wireLatestRelease() {
         try {
@@ -122,6 +200,7 @@
       }
 
       wireLatestRelease();
+      wireLegacyDownloads();
     </script>
 
     <!--

@@ -166,21 +166,27 @@ python main.py
 
 The "Play in YouTube Music" temporary-playlist feature is available in the normal app (set it up via Settings > Set Queue Headers). It uses ytmusicapi browser-header auth rather than the official YouTube Data API, so there is no quota, but the copied browser headers must be refreshed when Google changes or expires the session.
 
-## Build a macOS app
+## Build the legacy Python app
 
-Install build dependencies, then run the build script:
+Install build dependencies, then run the cross-platform build script on the OS you want to package:
 
 ```bash
 python -m pip install -r requirements-build.txt
-python tools/build_macos_app.py
+python tools/build_legacy_python_app.py
 ```
 
-The script creates:
+PyInstaller builds are OS-native, so Windows/Linux/macOS artifacts must be produced on matching
+hosts. The script creates one of:
 
-- `dist/YouTube Music Playlist Manager.app`
-- `dist/YouTubeMusicPlaylistManager-0.6.0-macOS.zip`
+- `dist/YouTubeMusicPlaylistManager-0.6.0-python-macOS.zip`
+- `dist/YouTubeMusicPlaylistManager-0.6.0-python-windows.zip`
+- `dist/YouTubeMusicPlaylistManager-0.6.0-python-linux.tar.gz`
 
-Attach the zip file to a GitHub Release so the built-in update checker can find it. The app bundle uses the bundled app icon and launches under the name "YouTube Music Playlist Manager" instead of "Python".
+To build all three legacy alternatives, run the **legacy-python-build** workflow in GitHub Actions.
+It builds on macOS, Windows, and Linux runners, uploads workflow artifacts, and can attach the
+archives to the `v0.6.0` GitHub Release for the download page.
+
+The macOS app bundle uses the bundled app icon and launches under the name "YouTube Music Playlist Manager" instead of "Python".
 
 The zip is created with `ditto` (not `shutil.make_archive`) so the `.app`'s symlinks and code signature survive the round-trip — Python's zip follows symlinks, which duplicates the framework tree (~2x size) and invalidates the signature, making the downloaded app fail Gatekeeper as "damaged". The build is only ad-hoc signed (not notarized — that needs a paid Apple Developer ID), so on first launch users must approve it: open it once, then **System Settings → Privacy & Security → Open Anyway**, or clear the quarantine flag (`xattr -dr com.apple.quarantine "…/YouTube Music Playlist Manager.app"`), or Control-click → Open. The download page documents this.
 
@@ -194,7 +200,7 @@ After pushing the workflow, open the repository on GitHub and set Pages to deplo
 https://hruif.github.io/YouTubeMusicPlaylistManager/
 ```
 
-The page links to GitHub Releases for downloads instead of storing app binaries in the repository. It now features the native desktop `.dmg` (built per [`desktop/BUILD.md`](desktop/BUILD.md)) — the download button resolves to the latest release's `.dmg`, falling back to a legacy macOS `.zip`. Mark the desktop release as **Latest** so the button picks it up.
+The page links to GitHub Releases for downloads instead of storing app binaries in the repository. It features the native desktop `.dmg` (built per [`desktop/BUILD.md`](desktop/BUILD.md)) — the primary download button resolves to the latest release's `.dmg`. The legacy Python download row resolves Windows/Linux/macOS assets from the `v0.6.0` release, falling back to the release page if those assets have not been uploaded yet. Mark the desktop release as **Latest** so the primary button picks it up.
 
 ## Optional Spotify support
 

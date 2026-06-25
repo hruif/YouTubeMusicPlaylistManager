@@ -169,6 +169,10 @@ for architecture/layout.
   the old global Search screen; see Removed.)
 - **In-app release update checker.** Checks for newer published releases and notifies the user
   when one is available.
+- **Legacy Python release alternatives.** `.github/workflows/legacy-python-build.yml` builds the
+  Tk/Python app with PyInstaller on native macOS, Windows, and Linux runners, then can attach
+  `*-python-*` archives to the `v0.6.0` release. The download page shows those as secondary
+  alternatives below the recommended native macOS `.dmg`.
 - **Single-instance lock** (`app_lock.py`) — prevents two instances racing on the temp-playlist
   records. The lock lives in the same data dir as those records (`private_user_data_path`), so
   every instance that shares the records shares the lock — from-source runs, separate repo
@@ -191,7 +195,7 @@ for architecture/layout.
     authenticated read **and** write both work via `youtubei.js` 17.0.1. Auth gotchas (Cookie
     stripped by WKWebView; `Origin` must be set or the SAPISIDHASH is ignored → `yt_li=0`;
     `SAPISID`/`__Secure-3PAPISID` aliasing) documented in `dev-docs/FUTURE_DIRECTIONS.md`. (Final
-    manual confirm that a write lands on music.youtube.com still pending.)
+    live write confirmation was completed during the later edit/queue feature work.)
   - **Phase 1 — DONE.** YT Music library API (names, full list, private playlists); cache-driven
     (library cached as JSON in the app data dir — instant browsing, network only on explicit
     "Update", concurrent + resilient fetch, pooled HTTP client); virtualized combined sortable song
@@ -235,8 +239,10 @@ for architecture/layout.
     youtube-dl-takedown basis), moving the app from "low-risk playlist utility" to "yt-dlp-class
     streaming client" — too much takedown risk for a publicly-distributed app. Playback stays via the
     "Play in YouTube Music" queue (opens the official site).
-  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID); a Windows/Linux build
-    (config stubs exist in `electron-builder.yml`).
+  - **Remaining:** notarization (deferred — needs a paid Apple Developer ID); native Electron
+    Windows/Linux builds. Linux packaging has an `electron-builder.yml` AppImage target and a
+    WebKitGTK login spike (`desktop/electron/login-helper/login_linux_spike.py`), but the Linux
+    in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   Cutover done: the Electron app (`desktop-v0.3.0`) is the featured download; the Python app is the

@@ -132,10 +132,41 @@ h2 {
   border-color: var(--accent);
 }
 
+.button.compact {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
 .release-status {
   margin: 14px 0 0;
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.legacy-downloads {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.legacy-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.legacy-copy {
+  max-width: 760px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.legacy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .content-grid {

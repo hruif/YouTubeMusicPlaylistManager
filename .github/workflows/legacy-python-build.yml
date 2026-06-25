@@ -1,0 +1,73 @@
+name: legacy-python-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub Release tag to upload the legacy Python artifacts to"
+        required: true
+        default: "v0.6.0"
+      upload_to_release:
+        description: "Upload built archives to the release tag"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build legacy Python app (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            label: macOS
+            artifact_name: legacy-python-macos
+          - os: windows-latest
+            label: Windows
+            artifact_name: legacy-python-windows
+          - os: ubuntu-latest
+            label: Linux
+            artifact_name: legacy-python-linux
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Linux GUI build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Build legacy Python app
+        run: python tools/build_legacy_python_app.py
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/YouTubeMusicPlaylistManager-*-python-*
+          if-no-files-found: error
+
+      - name: Upload to GitHub Release
+        if: inputs.upload_to_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload "${{ inputs.release_tag }}" dist/YouTubeMusicPlaylistManager-*-python-* --clobber

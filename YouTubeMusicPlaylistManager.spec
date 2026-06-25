@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
@@ -9,14 +10,26 @@ from app.app_info import APP_BUNDLE_IDENTIFIER, APP_NAME, APP_VERSION
 
 
 ROOT = Path(SPECPATH)
-ICON = ROOT / "assets" / "app_icon.icns"
+IS_MAC = sys.platform == "darwin"
+IS_WINDOWS = sys.platform.startswith("win")
+ICON_DIR = Path(os.environ.get("PLAYLIST_MANAGER_BUILD_ICON_DIR", ROOT / "assets"))
+ICON = ICON_DIR / ("app_icon.icns" if IS_MAC else "app_icon.ico" if IS_WINDOWS else "app_icon.png")
+EXE_ICON = str(ICON) if (IS_MAC or IS_WINDOWS) else None
+TLS_CLIENT_PATTERN = (
+    "dependencies/*.dylib"
+    if IS_MAC
+    else "dependencies/*.dll"
+    if IS_WINDOWS
+    else "dependencies/*.so"
+)
 
-# Debug builds (python tools/build_macos_app.py --debug) bundle a runtime hook that
-# turns on the experimental YouTube queue actions, and use a distinct app name so the
-# debug bundle does not overwrite or get confused with the release build.
+# Debug builds bundle a runtime hook that turns on the experimental YouTube queue actions,
+# and use a distinct app name so the debug bundle does not overwrite or get confused with
+# the release build.
 DEBUG_BUILD = os.environ.get("PLAYLIST_MANAGER_BUILD_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 BUNDLE_NAME = f"{APP_NAME} (Debug)" if DEBUG_BUILD else APP_NAME
 RUNTIME_HOOKS = [str(ROOT / "tools" / "debug_queue_runtime_hook.py")] if DEBUG_BUILD else []
+HIDDEN_IMPORTS = ["AppKit", "Foundation"] if IS_MAC else []
 
 
 a = Analysis(
@@ -25,15 +38,11 @@ a = Analysis(
     binaries=[],
     datas=[
         ("assets", "assets"),
-        # macOS build: only the .dylib backends are loadable here. Bundling the Windows
-        # .dll / Linux .so files (~79 MB) just bloats the app, so keep mac dylibs only.
-        *collect_data_files("tls_client", includes=["dependencies/*.dylib"]),
+        # tls_client ships native backends for every OS; bundle only the backend loadable here.
+        *collect_data_files("tls_client", includes=[TLS_CLIENT_PATTERN]),
         *collect_data_files("ytmusicapi", includes=["locales/**/*"]),
     ],
-    hiddenimports=[
-        "AppKit",
-        "Foundation",
-    ],
+    hiddenimports=HIDDEN_IMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=RUNTIME_HOOKS,
@@ -81,7 +90,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(ICON),
+    icon=EXE_ICON,
 )
 coll = COLLECT(
     exe,
@@ -92,16 +101,18 @@ coll = COLLECT(
     upx_exclude=[],
     name=BUNDLE_NAME,
 )
-app = BUNDLE(
-    coll,
-    name=f"{BUNDLE_NAME}.app",
-    icon=str(ICON),
-    bundle_identifier=APP_BUNDLE_IDENTIFIER + (".debug" if DEBUG_BUILD else ""),
-    info_plist={
-        "CFBundleDisplayName": BUNDLE_NAME,
-        "CFBundleName": BUNDLE_NAME,
-        "CFBundleShortVersionString": APP_VERSION,
-        "CFBundleVersion": APP_VERSION,
-        "NSHighResolutionCapable": "True",
-    },
-)
+
+if IS_MAC:
+    app = BUNDLE(
+        coll,
+        name=f"{BUNDLE_NAME}.app",
+        icon=str(ICON),
+        bundle_identifier=APP_BUNDLE_IDENTIFIER + (".debug" if DEBUG_BUILD else ""),
+        info_plist={
+            "CFBundleDisplayName": BUNDLE_NAME,
+            "CFBundleName": BUNDLE_NAME,
+            "CFBundleShortVersionString": APP_VERSION,
+            "CFBundleVersion": APP_VERSION,
+            "NSHighResolutionCapable": "True",
+        },
+    )
