@@ -47,10 +47,10 @@
         <article class="panel">
           <h2>Install Notes</h2>
           <ol>
-            <li>Download the latest <code>.dmg</code> from GitHub Releases (universal — Apple Silicon + Intel).</li>
+            <li>Download the latest <code>.dmg</code>.</li>
             <li>Open the <code>.dmg</code> and drag <strong>YouTube Music Manager</strong> to your Applications folder.</li>
             <li>
-              The app isn't notarized by Apple, so macOS blocks it on first launch. The simplest fix:
+              The app isn't notarized by Apple, so macOS blocks it on first launch. To fix:
               double-click the app once (it gets blocked), then open
               <strong>System Settings → Privacy &amp; Security</strong>, scroll to the Security section,
               and click <strong>Open Anyway</strong> next to "YouTube Music Manager."
@@ -59,8 +59,6 @@
               Alternatively, clear the quarantine flag in Terminal, then open it normally:
               <br>
               <code>xattr -dr com.apple.quarantine "/Applications/YouTube Music Manager.app"</code>
-              <br>
-              (On older macOS you can also Control-click the app and choose <strong>Open</strong>.)
             </li>
           </ol>
           <details class="legacy-downloads">
