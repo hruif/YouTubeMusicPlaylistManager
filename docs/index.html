@@ -31,25 +31,6 @@
             </a>
           </div>
           <p id="release-status" class="release-status">Checking latest release...</p>
-          <p class="release-status">
-            A native desktop app (Apple Silicon + Intel): sign in once in-app, edit playlists, and import
-            from Spotify - open it and drag the app to Applications, then use <strong>Open Anyway</strong>
-            on first launch (you may have to go to settings, see below).
-            An older Python version of the app is
-            <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">available here</a>.
-          </p>
-          <div class="legacy-downloads" aria-labelledby="legacy-downloads-title">
-            <p id="legacy-downloads-title" class="legacy-title">Legacy Python downloads</p>
-            <p class="legacy-copy">
-              The native macOS app above is recommended. These older Tk/Python builds are available
-              as alternatives for Windows, Linux, and macOS.
-            </p>
-            <div id="legacy-download-links" class="legacy-links">
-              <a class="button secondary compact" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">
-                Open legacy release
-              </a>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -82,15 +63,19 @@
               (On older macOS you can also Control-click the app and choose <strong>Open</strong>.)
             </li>
           </ol>
-        </article>
-
-        <article class="panel wide">
-          <h2>Built For Playlist Cleanup</h2>
-          <p>
-            This app is a personal tool for making playlist maintenance less tedious: select the playlists
-            you care about, view the combined songs in one place, search within the display, and open detailed
-            song or playlist information when you need to untangle duplicates.
-          </p>
+          <details class="legacy-downloads">
+            <summary>Need Windows, Linux, or the older Python app?</summary>
+            <p class="legacy-copy">
+              The native macOS app is the main download. Legacy Tk/Python builds are available as
+              alternatives; the packaged archives should not require a separate Python install. If
+              you run from source instead, install Python 3.10+ first.
+            </p>
+            <div id="legacy-download-links" class="legacy-links">
+              <a class="legacy-link" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">
+                Open legacy release
+              </a>
+            </div>
+          </details>
         </article>
       </section>
     </main>
@@ -125,7 +110,7 @@
 
       function makeDownloadButton(label, href) {
         const link = document.createElement("a");
-        link.className = "button secondary compact";
+        link.className = "legacy-link";
         link.href = href;
         link.textContent = label;
         return link;
