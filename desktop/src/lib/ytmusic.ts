@@ -27,8 +27,10 @@ export async function signOut(): Promise<void> {
   await invoke("sign_out_youtube_music");
 }
 
-export async function getAccountInfo(): Promise<string> {
-  return invoke<string>("yt_account_info");
+export type AccountInfo = { name: string; handle?: string };
+
+export async function getAccountInfo(): Promise<AccountInfo> {
+  return invoke<AccountInfo>("yt_account_info");
 }
 
 export async function getLibraryPlaylists(): Promise<Playlist[]> {
@@ -50,8 +52,14 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
   return invoke<string[]>("yt_remove_videos", { playlistId, videoIds });
 }
 
-export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {
-  return (await invoke<string | null>("yt_create_playlist", { title, videoIds })) ?? undefined;
+export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";
+
+export async function createPlaylist(
+  title: string,
+  videoIds: string[],
+  privacy?: PlaylistPrivacy,
+): Promise<string | undefined> {
+  return (await invoke<string | null>("yt_create_playlist", { title, videoIds, privacy })) ?? undefined;
 }
 
 export async function deletePlaylist(playlistId: string): Promise<void> {

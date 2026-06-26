@@ -26,10 +26,14 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** latest public release is `desktop-v0.3.2`. `main` also has a post-release UI
-  fix (`6a0515f`) that clamps long playlist names so they cannot widen the sidebar and adds a
-  Get Info-style Playlist Info modal from double-click / right-click in both the sidebar and Manage
-  Playlists. That fix is **pushed but not released** until the next desktop tag.
+- **Current state:** latest public release is `desktop-v0.3.2`. `main` has post-release work that is
+  **pushed but not released** until the next desktop tag: a UI fix (`6a0515f`) that clamps long
+  playlist names and adds a Get Info-style Playlist Info modal (sidebar + Manage Playlists), plus an
+  account-mismatch / sidebar-load pass — configurable queue visibility (Settings; default UNLISTED so
+  links open across accounts), a surfaced signed-in account, and proactive sidebar track-loading on
+  Manage-close + a launch top-up.
+  See `dev-docs/STATUS.md` for the full list, **including a ⚠ live-verify note** on the unlisted
+  queue create (raw account-touching write) before the next tag.
 - **Code:** `desktop/electron/` is the Node main process — `youtubei.js` lives in `yt.ts`, IPC in
   `main.ts`/`backend.ts`, native sign-in in `auth.ts` + `login-helper/`; `desktop/src/` is the React
   renderer (`App.tsx` controller, `lib/`, `components/`).

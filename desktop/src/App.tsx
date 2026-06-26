@@ -10,6 +10,7 @@ import {
   signIn,
   trySilentSignIn,
   signOut,
+  getAccountInfo,
   getLibraryPlaylists,
   fetchTracksForPlaylists,
   combineFromCache,
@@ -24,6 +25,8 @@ import {
   type Playlist,
   type Track,
   type CombinedSong,
+  type AccountInfo,
+  type PlaylistPrivacy,
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
@@ -78,6 +81,7 @@ type UiState = {
   checkUpdates: boolean;
   autoRefreshOnLaunch: boolean;
   playlistSort: PlaylistSort;
+  queuePrivacy: PlaylistPrivacy;
 };
 const UI_KEY = "ytm.ui";
 function loadUi(): UiState {
@@ -92,6 +96,7 @@ function loadUi(): UiState {
     checkUpdates: true,
     autoRefreshOnLaunch: true,
     playlistSort: "name",
+    queuePrivacy: "UNLISTED",
   };
   try {
     const raw = localStorage.getItem(UI_KEY);
@@ -106,6 +111,7 @@ function App() {
   const [status, setStatus] = useState("Starting…");
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [cache, setCache] = useState<LibraryCache>({ ...EMPTY_CACHE });
   const [selected, setSelected] = useState<Set<string>>(() => new Set(ui0.selected));
   const [sortKey, setSortKey] = useState<SortKey>(ui0.sortKey);
@@ -155,6 +161,7 @@ function App() {
   const [autoDeleteQueues, setAutoDeleteQueues] = useState(ui0.autoDeleteQueues);
   const [checkUpdates, setCheckUpdates] = useState(ui0.checkUpdates);
   const [autoRefreshOnLaunch, setAutoRefreshOnLaunch] = useState(ui0.autoRefreshOnLaunch);
+  const [queuePrivacy, setQueuePrivacy] = useState<PlaylistPrivacy>(ui0.queuePrivacy);
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
@@ -377,8 +384,10 @@ function App() {
   }
 
   // "Play in YouTube Music": YouTube Music has no streaming API, so we recreate the workaround —
-  // build a private temporary playlist from the songs and open it on music.youtube.com to play.
-  // The temp playlist is tracked so it can be cleaned up later (Queues panel).
+  // build a temporary playlist from the songs and open it on music.youtube.com to play. Its privacy
+  // follows the "Queue visibility" setting (default UNLISTED): unlisted/public links open even when
+  // the user's browser is signed into a different Google account than the app, or signed out, whereas
+  // a private queue shows a blank page there. The temp playlist is tracked for cleanup (Queues panel).
   async function playInYouTube(videoIds: string[], title: string) {
     if (videoIds.length === 0) return;
     // A single song needs no queue — just open the song directly.
@@ -389,7 +398,7 @@ function App() {
     setBusy(true);
     setStatus(`Building queue “${title}”…`);
     try {
-      const newId = await createPlaylist(title, videoIds);
+      const newId = await createPlaylist(title, videoIds, queuePrivacy);
       if (newId) {
         const c = cacheRef.current;
         persist({
@@ -468,6 +477,7 @@ function App() {
     try {
       await signIn();
       setSignedIn(true);
+      void getAccountInfo().then(setAccount).catch(() => setAccount(null));
       setBusy(false);
       if (cacheRef.current.playlists.length === 0) await refreshPlaylists();
       else setStatus(`${cacheRef.current.playlists.length} playlists`);
@@ -535,12 +545,12 @@ function App() {
     try {
       localStorage.setItem(
         UI_KEY,
-        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort }),
+        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy }),
       );
     } catch {
       /* ignore */
     }
-  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort]);
+  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
   // (sort/filter/search) so a range isn't computed across two different orderings.
@@ -655,13 +665,31 @@ function App() {
         const names = await trySilentSignIn();
         if (names) {
           setSignedIn(true);
+          void getAccountInfo().then(setAccount).catch(() => setAccount(null));
           setStatus(
             `${cached.playlists.length} playlists (cached)` +
               (cached.tempPlaylists.length ? ` · ${cached.tempPlaylists.length} leftover queue(s) — see “Queues”` : ""),
           );
           // Auto-refresh the playlist list on launch (Settings; default on). The list fetch is
           // cheap (1-3 requests), and an empty cache always refreshes regardless.
-          if (cached.playlists.length === 0 || ui0.autoRefreshOnLaunch) await refreshPlaylists();
+          if (cached.playlists.length === 0 || ui0.autoRefreshOnLaunch) {
+            await refreshPlaylists();
+            // Launch top-up: fetch tracks for sidebar (shown) playlists whose cache is missing or
+            // stale, so song counts are present on open instead of an empty "not cached" dot.
+            // Deliberately conservative — sidebar-only, stale-only, low concurrency, and no timer
+            // (no background polling) — to keep API traffic, and the app's ToS exposure, minimal.
+            const c = cacheRef.current;
+            const cutoff = Date.now() - STALE_MS;
+            const staleShown = c.shown
+              .map((id) => c.playlists.find((p) => p.id === id))
+              .filter((p): p is Playlist => !!p && (!c.tracksByPlaylist[p.id] || !c.updatedAt[p.id] || c.updatedAt[p.id] < cutoff));
+            if (staleShown.length) {
+              staleShown.forEach((p) => autoTried.current.add(p.id));
+              // Fire-and-forget: let boot finish and the signed-in UI show immediately; the top-up
+              // runs in the background (runUpdate owns its own busy/status and error handling).
+              void runUpdate(staleShown, 2);
+            }
+          }
         } else {
           setStatus("Not signed in");
         }
@@ -731,14 +759,14 @@ function App() {
     [cache.playlists, selected],
   );
 
-  async function runUpdate(list: Playlist[]) {
+  async function runUpdate(list: Playlist[], concurrency = 4) {
     if (list.length === 0) return;
     setBusy(true);
     setStatus(`Updating 0/${list.length}…`);
     try {
       const { tracksByPlaylist, editableIds, notFoundIds, failures } = await fetchTracksForPlaylists(
         list,
-        4,
+        concurrency,
         (done, total) => setStatus(`Updating ${done}/${total}…`),
       );
       const now = Date.now();
@@ -861,6 +889,22 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlaylists, signedIn, busy]);
+
+  // Closing "Manage playlists" loads tracks for any sidebar playlist that's never been fetched, so
+  // its song count shows immediately instead of an empty "not cached" dot. Deferred to window-close
+  // (rather than firing on each checkbox) so toggling a playlist on and back off — a misclick —
+  // never triggers a fetch. autoTried caps each playlist at one automatic attempt per session.
+  function closeManage() {
+    setShowManage(false);
+    const c = cacheRef.current;
+    const toLoad = c.shown
+      .map((id) => c.playlists.find((p) => p.id === id))
+      .filter((p): p is Playlist => !!p && !c.tracksByPlaylist[p.id] && !autoTried.current.has(p.id));
+    if (toLoad.length) {
+      toLoad.forEach((p) => autoTried.current.add(p.id));
+      void runUpdate(toLoad, 2);
+    }
+  }
 
   const editable = useMemo(() => new Set(cache.editable), [cache.editable]);
   const selectedTracks = useMemo(
@@ -1524,7 +1568,7 @@ function App() {
       )}
 
       {showManage && (
-        <Overlay title="Manage playlists" onClose={() => setShowManage(false)}>
+        <Overlay title="Manage playlists" onClose={closeManage}>
           <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 6px" }}>Add a playlist</p>
           <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 6px" }}>
             Paste any public YouTube / YouTube Music playlist link (or its id). It's added read-only
@@ -2019,8 +2063,34 @@ function App() {
             <input type="checkbox" checked={autoRefreshOnLaunch} onChange={(e) => setAutoRefreshOnLaunch(e.currentTarget.checked)} />
             Refresh the playlist list automatically on launch
           </label>
+          <label className="setting" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1 }}>“Play in YouTube Music” queue visibility</span>
+            <select
+              className="small"
+              value={queuePrivacy}
+              onChange={(e) => setQueuePrivacy(e.currentTarget.value as PlaylistPrivacy)}
+              style={{ padding: "1px 4px", fontSize: 12 }}
+            >
+              <option value="UNLISTED">Unlisted</option>
+              <option value="PUBLIC">Public</option>
+              <option value="PRIVATE">Private</option>
+            </select>
+          </label>
+          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 0", paddingLeft: 2 }}>
+            {queuePrivacy === "PRIVATE"
+              ? "Private queues open only in a browser signed into this account — a different account (or signed out) sees a blank page."
+              : queuePrivacy === "PUBLIC"
+                ? "Public queues open in any browser and may appear on your channel and in search."
+                : "Unlisted queues open in any browser via the link, but aren't listed on your channel or in search. Recommended."}
+          </p>
           <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13 }}>Signed in to YouTube Music</span>
+            <span style={{ fontSize: 13 }}>
+              {account ? (
+                <>Signed in as <strong>{account.name}</strong>{account.handle ? ` · ${account.handle}` : ""}</>
+              ) : (
+                "Signed in to YouTube Music"
+              )}
+            </span>
             <span style={{ flex: 1 }} />
             <button
               className="danger"
@@ -2029,6 +2099,7 @@ function App() {
                 setShowSettings(false);
                 await signOut();
                 setSignedIn(false);
+                setAccount(null);
                 // Wipe local state so the next account (or sign-in) starts clean — otherwise the
                 // previous account's playlists/tracks linger in memory and get re-saved to disk.
                 persist({ ...EMPTY_CACHE });
@@ -2051,8 +2122,20 @@ function App() {
       {showTemp && (
         <Overlay title="Temporary playlists (queues)" onClose={() => setShowTemp(false)}>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Private playlists created by “Play in YouTube Music”. They live on your account until you
-            delete them here.
+            {queuePrivacy === "PRIVATE" ? (
+              <>
+                Private playlists created by “Play in YouTube Music”. They only open in a browser
+                signed into{account ? <> <strong>{account.name}</strong></> : " this account"} — change
+                “Queue visibility” in Settings if links open blank elsewhere.
+              </>
+            ) : (
+              <>
+                {queuePrivacy === "PUBLIC" ? "Public" : "Unlisted"} playlists created by “Play in
+                YouTube Music” — the link opens in any browser, even one signed into a different
+                account{account ? <> than <strong>{account.name}</strong></> : ""} or signed out.
+              </>
+            )}{" "}
+            They live on your account until you delete them here.
           </p>
           {cache.tempPlaylists.length === 0 ? (
             <p className="empty">No queues.</p>

@@ -72,7 +72,7 @@ export function registerBackend(deps: BackendDeps): void {
   registerCommand("yt_get_playlist_tracks", (a) => yt.getPlaylistTracks(String(a.playlistId)));
   registerCommand("yt_add_videos", (a) => yt.addVideos(String(a.playlistId), a.videoIds as string[]));
   registerCommand("yt_remove_videos", (a) => yt.removeVideos(String(a.playlistId), a.videoIds as string[]));
-  registerCommand("yt_create_playlist", (a) => yt.createPlaylist(String(a.title), a.videoIds as string[]));
+  registerCommand("yt_create_playlist", (a) => yt.createPlaylist(String(a.title), a.videoIds as string[], a.privacy as yt.PlaylistPrivacy | undefined));
   registerCommand("yt_delete_playlist", (a) => yt.deletePlaylist(String(a.playlistId)));
   registerCommand("yt_search", (a) => yt.searchYouTubeMusicSongs(String(a.query)));
   registerCommand("yt_account_info", () => yt.getAccountInfo());

@@ -487,9 +487,43 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
   return [...resolved.keys()];
 }
 
-export async function createPlaylist(title: string, videoIds: string[]): Promise<string | undefined> {
-  const res = await requireClient().playlist.create(title, videoIds);
-  return res.playlist_id;
+export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";
+
+export async function createPlaylist(
+  title: string,
+  videoIds: string[],
+  privacy: PlaylistPrivacy = "PRIVATE",
+): Promise<string | undefined> {
+  // youtubei.js's playlist.create() always makes a PRIVATE playlist and exposes no privacy option.
+  // For anything else we hit the raw /playlist/create endpoint with privacyStatus. Queues are
+  // created UNLISTED so the link opens in any browser — even one signed into a different Google
+  // account, or signed out — instead of a blank "private playlist" page. The proven helper stays
+  // the path for PRIVATE so the common create/transfer flows are unchanged.
+  if (privacy === "PRIVATE") {
+    const res = await requireClient().playlist.create(title, videoIds);
+    return res.playlist_id;
+  }
+  try {
+    const actions = requireClient().actions as unknown as {
+      execute(endpoint: string, args: Record<string, unknown>): Promise<{ data?: { playlistId?: string } }>;
+    };
+    const res = await actions.execute("/playlist/create", {
+      title,
+      videoIds,
+      privacyStatus: privacy,
+      parse: false,
+    });
+    if (res?.data?.playlistId) return res.data.playlistId;
+    // Some responses may not surface the id where we expect — fall through to the proven helper.
+    throw new Error("create returned no playlistId");
+  } catch (err) {
+    // If the raw privacy-aware create is ever rejected (e.g. the endpoint stops accepting the extra
+    // field), don't break the feature — fall back to a standard (private) playlist so playback still
+    // works. The only downside is the cross-account "blank page" case the unlisted setting avoids.
+    console.warn(`Unlisted playlist create failed, falling back to private: ${err instanceof Error ? err.message : String(err)}`);
+    const res = await requireClient().playlist.create(title, videoIds);
+    return res.playlist_id;
+  }
 }
 
 export async function deletePlaylist(playlistId: string): Promise<void> {
@@ -528,10 +562,23 @@ export async function searchYouTubeMusicSongs(query: string): Promise<MatchCandi
   return out;
 }
 
-export async function getAccountInfo(): Promise<string> {
+export type AccountInfo = { name: string; handle?: string };
+
+export async function getAccountInfo(): Promise<AccountInfo> {
   const info = await requireClient().account.getInfo();
   const contents = info as unknown as {
-    contents?: { contents?: Array<{ account_name?: { text?: string } }> };
+    contents?: {
+      contents?: Array<{
+        is_selected?: boolean;
+        account_name?: { text?: string };
+        channel_handle?: { text?: string };
+      }>;
+    };
   };
-  return contents?.contents?.contents?.[0]?.account_name?.text ?? "Signed in";
+  const items = contents?.contents?.contents ?? [];
+  // YouTube can return several accounts (multi-login); pick the active one, not just the first.
+  const item = items.find((a) => a?.is_selected) ?? items[0];
+  const name = item?.account_name?.text?.trim() || "Signed in";
+  const handle = item?.channel_handle?.text?.trim() || undefined;
+  return { name, handle };
 }

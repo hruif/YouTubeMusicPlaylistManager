@@ -3,7 +3,7 @@
 Living board of what's planned, in progress, and shipped. Update this file as part of any
 feature or bug change. See `CONTRIBUTING.md` for the debug-first → release workflow.
 
-_Last updated: 2026-06-25_
+_Last updated: 2026-06-26_
 
 ## In progress — debug-gated (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS`)
 
@@ -246,6 +246,31 @@ for architecture/layout.
     sidebar and Manage Playlists rows now support double-click / right-click Playlist Info with a
     compact Get Info-style modal for source, ownership, cache counts, last refresh, removed/unmatched
     counts, and first/last track snapshots.
+  - **Pushed to `main`, not released yet — account-mismatch & sidebar-load pass:**
+    - **Queue/temp playlists now default to UNLISTED** instead of private, so "Play in YouTube
+      Music" links open in the user's default browser even when it's signed into a *different*
+      Google account than the app (or signed out) — previously that showed a blank "private
+      playlist" page. Visibility is a **Settings → "Queue visibility"** choice
+      (Unlisted / Public / Private; persisted as `queuePrivacy`, default Unlisted). youtubei.js
+      exposes no privacy option, so `createPlaylist(title, ids, privacy)` hits the raw
+      `/playlist/create` endpoint with `privacyStatus` for non-private creates and **falls back to
+      the proven private create** if that's ever rejected (so Play never breaks). Real
+      created/transferred playlists are always PRIVATE (unaffected by the setting). ⚠ **Live-verify
+      before release** (raw endpoint, account-touching write — not exercised in this environment):
+      create a queue at each visibility, confirm Unlisted/Public open for a signed-out /
+      different-account browser, and confirm normal create-from-selection and Spotify transfer
+      playlists remain private.
+    - **Signed-in account is now surfaced** (`getAccountInfo` returns `{ name, handle }`, picking the
+      `is_selected` account): Settings shows "Signed in as <name> · @handle" and the Queues panel
+      notes the link opens in any account — so a user can notice an app-vs-browser account mismatch.
+      (Auto-detecting the browser's account isn't possible/desirable — it needs the same cookie-store
+      access the project rejected on trust grounds; see Known bugs.)
+    - **Sidebar playlists load their tracks proactively** so a freshly-shown playlist shows its song
+      count instead of an empty "not cached" dot. Loading is deferred to **closing Manage Playlists**
+      (a toggle-on-then-off misclick never fetches) and a **launch top-up** refreshes only
+      sidebar/shown playlists that are missing or stale (>7d), at low concurrency, gated on the
+      existing "refresh on launch" setting. Deliberately conservative (no background polling) to keep
+      API traffic / ToS exposure low.
   - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
     `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
     it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the
