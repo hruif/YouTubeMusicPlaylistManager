@@ -14,6 +14,159 @@ export type MatchCandidate = { videoId: string; title: string; artist: string };
 
 let client: Innertube | null = null;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function textFromMusicValue(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value.text === "string") return value.text;
+  if (typeof value.simpleText === "string") return value.simpleText;
+  if (Array.isArray(value.runs)) return value.runs.map((run: { text?: string }) => run.text ?? "").join("");
+  return "";
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function flexColumnText(item: any, index: number): string {
+  const parsedColumn = item?.flex_columns?.[index];
+  const rawColumn = item?.flexColumns?.[index]?.musicResponsiveListItemFlexColumnRenderer;
+  return textFromMusicValue(parsedColumn?.title ?? parsedColumn?.text ?? rawColumn?.text ?? rawColumn?.title);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function firstByKey(node: any, key: string): any | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = firstByKey(child, key);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (node[key]) return node[key];
+  for (const childKey in node) {
+    const found = firstByKey(node[childKey], key);
+    if (found) return found;
+  }
+  return null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function collectVideoIds(node: any, into: string[] = []): string[] {
+  if (!node || typeof node !== "object") return into;
+  if (Array.isArray(node)) {
+    for (const child of node) collectVideoIds(child, into);
+    return into;
+  }
+  if (typeof node.videoId === "string") into.push(node.videoId);
+  for (const key in node) collectVideoIds(node[key], into);
+  return into;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractVideoId(item: any): string | undefined {
+  return (
+    item?.id ||
+    item?.playlistItemData?.videoId ||
+    item?.endpoint?.payload?.videoId ||
+    item?.title?.endpoint?.payload?.videoId ||
+    item?.flex_columns?.[0]?.title?.endpoint?.payload?.videoId ||
+    item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId ||
+    item?.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.endpoint?.payload?.videoId ||
+    collectVideoIds(item)[0]
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractArtist(item: any): string {
+  const artists =
+    (item?.artists ?? []).map((a: { name?: string }) => a?.name).filter(Boolean).join(", ") ||
+    (item?.authors ?? []).map((a: { name?: string }) => a?.name).filter(Boolean).join(", ");
+  return (
+    artists ||
+    textFromMusicValue(item?.subtitle) ||
+    flexColumnText(item, 1) ||
+    ""
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractThumb(item: any): string | undefined {
+  const thumbs =
+    item?.thumbnail?.contents ??
+    item?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ??
+    item?.thumbnail?.thumbnails ??
+    item?.thumbnails ??
+    [];
+  return thumbs[0]?.url;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function extractTrackFromPlaylistItem(rawItem: any): Track | null {
+  const item = rawItem?.musicResponsiveListItemRenderer ?? rawItem;
+  if (!item || item?.type === "ContinuationItem") return null;
+  const videoId = extractVideoId(item);
+  const title = textFromMusicValue(item?.title) || flexColumnText(item, 0) || item?.name || "";
+  if (!videoId || !title) return null;
+  return { videoId, title, artist: extractArtist(item), thumb: extractThumb(item) };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findPlaylistRowList(node: any): any[] | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    if (node.some((el) => el?.musicResponsiveListItemRenderer)) return node;
+    for (const child of node) {
+      const found = findPlaylistRowList(child);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const key in node) {
+    const found = findPlaylistRowList(node[key]);
+    if (found) return found;
+  }
+  return null;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function collectPlaylistRows(root: any): any[] {
+  return (findPlaylistRowList(root) ?? [])
+    .map((item) => item?.musicResponsiveListItemRenderer)
+    .filter(Boolean);
+}
+
+// The continuation token for the playlist songs specifically: the trailing continuation item in
+// the same list as the song rows, not the page-level related/suggestions continuation.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function nextPlaylistSongsToken(root: any): string | null {
+  let token: string | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const visit = (node: any): void => {
+    if (token || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      if (node.some((el) => el?.musicResponsiveListItemRenderer)) {
+        for (const el of node) {
+          const t = el?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+          if (t) { token = t; return; }
+        }
+      }
+      for (const el of node) { visit(el); if (token) return; }
+      return;
+    }
+    for (const key in node) { visit(node[key]); if (token) return; }
+  };
+  visit(root);
+  return token;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rawPlaylistTitle(root: any): string {
+  const header =
+    firstByKey(root, "musicResponsiveHeaderRenderer") ??
+    firstByKey(root, "musicEditablePlaylistDetailHeaderRenderer") ??
+    firstByKey(root, "musicDetailHeaderRenderer");
+  return textFromMusicValue(header?.title);
+}
+
 // youtubei.js authenticates by reading the literal `SAPISID` cookie; on .youtube.com it's often only
 // present as `__Secure-3PAPISID` (same value), so alias it when missing.
 export function normalizeCookie(cookie: string): string {
@@ -127,6 +280,7 @@ function normalizePlaylistId(playlistId: string): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isPlaylistEditable(playlist: any): boolean {
   if (playlist?.header?.type === "MusicEditablePlaylistDetailHeader") return true;
+  if (firstByKey(playlist, "musicEditablePlaylistDetailHeaderRenderer")) return true;
   try {
     const found = playlist?.page?.contents_memo?.getType(YTNodes.MusicEditablePlaylistDetailHeader);
     return !!found?.length;
@@ -181,33 +335,30 @@ export async function getLibraryPlaylists(): Promise<Playlist[]> {
 export async function getPlaylistTracks(
   playlistId: string,
 ): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let playlist: any = await requireClient().music.getPlaylist(playlistId);
-  const editable = isPlaylistEditable(playlist);
-  const h = playlist?.header?.title;
-  const title: string = (typeof h === "string" ? h : h?.text) ?? "";
+  const actions = requireClient().actions as unknown as {
+    execute(endpoint: string, args: Record<string, unknown>): Promise<{ data?: unknown }>;
+  };
+  const browseId = `VL${normalizePlaylistId(playlistId)}`;
   const out: Track[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const take = (items: any[] | undefined): void => {
-    for (const item of items ?? []) {
-      const videoId: string | undefined = item?.id;
-      const t = typeof item?.title === "string" ? item.title : item?.title?.text;
-      if (!videoId || !t) continue;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const artist =
-        (item?.artists ?? []).map((a: any) => a?.name).filter(Boolean).join(", ") ||
-        (typeof item?.subtitle === "string" ? item.subtitle : item?.subtitle?.text) ||
-        "";
-      const thumbs = item?.thumbnail?.contents ?? item?.thumbnails ?? [];
-      const thumb: string | undefined = thumbs[0]?.url;
-      out.push({ videoId, title: t, artist, thumb });
+  const take = (root: any): void => {
+    for (const row of collectPlaylistRows(root)) {
+      const track = extractTrackFromPlaylistItem(row);
+      if (track) out.push(track);
     }
   };
-  take(playlist.items);
+  let res = await actions.execute("/browse", { browseId, client: "YTMUSIC", parse: false });
+  const editable = isPlaylistEditable(res?.data);
+  const title = rawPlaylistTitle(res?.data);
+  take(res?.data);
+  let token = nextPlaylistSongsToken(res?.data);
   let guard = 0;
-  while (playlist?.has_continuation && guard++ < 50) {
-    playlist = await playlist.getContinuation();
-    take(playlist.items);
+  while (token && guard++ < 60) {
+    res = await actions.execute("/browse", { continuation: token, client: "YTMUSIC", parse: false });
+    take(res?.data);
+    const next = nextPlaylistSongsToken(res?.data);
+    if (next === token) break;
+    token = next;
   }
   return { tracks: out, editable, title };
 }
@@ -369,15 +520,10 @@ export async function searchYouTubeMusicSongs(query: string): Promise<MatchCandi
   const items: any[] = res?.songs?.contents ?? res?.contents?.find?.((c: any) => c?.contents)?.contents ?? [];
   const out: MatchCandidate[] = [];
   for (const item of items) {
-    const videoId: string | undefined = item?.id;
-    const title = typeof item?.title === "string" ? item.title : item?.title?.text;
+    const videoId = extractVideoId(item);
+    const title = textFromMusicValue(item?.title) || flexColumnText(item, 0);
     if (!videoId || !title) continue;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const artist =
-      (item?.artists ?? []).map((a: any) => a?.name).filter(Boolean).join(", ") ||
-      (typeof item?.subtitle === "string" ? item.subtitle : item?.subtitle?.text) ||
-      "";
-    out.push({ videoId, title, artist });
+    out.push({ videoId, title, artist: extractArtist(item) });
   }
   return out;
 }

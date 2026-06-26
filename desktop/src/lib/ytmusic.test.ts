@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId } from "./ytmusic";
 // These moved to the Electron main process (they operate on youtubei.js internals).
-import { normalizeCookie, isPlaylistEditable } from "../../electron/yt";
+import { normalizeCookie, isPlaylistEditable, extractTrackFromPlaylistItem } from "../../electron/yt";
 
 const cand = (videoId: string, title: string, artist: string) => ({ videoId, title, artist });
 
@@ -106,5 +106,70 @@ describe("isPlaylistEditable (ownership detection)", () => {
   });
   it("false (no throw) when the page is absent", () => {
     expect(isPlaylistEditable({ header: { type: "MusicResponsiveHeader" } })).toBe(false);
+  });
+  it("true when the raw response contains an editable playlist header renderer", () => {
+    expect(isPlaylistEditable({ contents: [{ musicEditablePlaylistDetailHeaderRenderer: {} }] })).toBe(true);
+  });
+});
+
+describe("extractTrackFromPlaylistItem", () => {
+  it("uses authors when youtubei.js does not expose artists", () => {
+    const track = extractTrackFromPlaylistItem({
+      id: "QQC4PKXIWyA",
+      title: "アンノウン・マザーグース　歌ってみた－遊",
+      authors: [{ name: "Yuu Miyashita" }],
+    });
+    expect(track).toMatchObject({
+      videoId: "QQC4PKXIWyA",
+      title: "アンノウン・マザーグース　歌ってみた－遊",
+      artist: "Yuu Miyashita",
+    });
+  });
+
+  it("falls back to the second flex column for song artists", () => {
+    const track = extractTrackFromPlaylistItem({
+      title: { text: "Theme Of Bayonetta 2 - Tomorrow Is Mine", endpoint: { payload: { videoId: "ScUZhX9mVEk" } } },
+      artists: [],
+      flex_columns: [
+        { title: { text: "Theme Of Bayonetta 2 - Tomorrow Is Mine" } },
+        { title: { text: "Keeley Bumford" } },
+      ],
+    });
+    expect(track).toMatchObject({
+      videoId: "ScUZhX9mVEk",
+      title: "Theme Of Bayonetta 2 - Tomorrow Is Mine",
+      artist: "Keeley Bumford",
+    });
+  });
+
+  it("extracts raw browse rows before youtubei.js drops ids from unknown item types", () => {
+    const track = extractTrackFromPlaylistItem({
+      musicResponsiveListItemRenderer: {
+        flexColumns: [
+          {
+            musicResponsiveListItemFlexColumnRenderer: {
+              text: {
+                runs: [
+                  {
+                    text: "Simple And Clean",
+                    navigationEndpoint: { watchEndpoint: { videoId: "B1nDzB1P8GM" } },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            musicResponsiveListItemFlexColumnRenderer: {
+              text: { runs: [{ text: "Hikaru Utada" }] },
+            },
+          },
+        ],
+      },
+    });
+    expect(track).toMatchObject({
+      videoId: "B1nDzB1P8GM",
+      title: "Simple And Clean",
+      artist: "Hikaru Utada",
+    });
   });
 });
