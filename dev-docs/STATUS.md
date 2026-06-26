@@ -185,7 +185,7 @@ for architecture/layout.
   React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
   sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
   keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
-  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.3`, universal `.dmg`);
+  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.4`, universal `.dmg`);
   the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
   `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
   historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
@@ -273,7 +273,7 @@ for architecture/layout.
       API traffic / ToS exposure low.
     - **Dependency fix:** bumped `vite` to `^7.3.6` + an `esbuild ^0.28.1` override to clear a
       dev-server-only esbuild advisory (GHSA-g7r4-m6w7-qqqr); not present in the shipped app.
-  - **Pushed to `main`, not released yet — clean-update pass (for the next tag, 0.3.4):**
+  - **Released in `desktop-v0.3.4` — clean-update pass:**
     - **In-place updater (unsigned, macOS).** No Apple Developer ID → can't use electron-updater /
       Squirrel (those require a valid signature). Instead `electron/updater.ts` downloads the new
       build's zipped `.app` (new `zip` target in `electron-builder.yml`), `ditto`-extracts it, strips
@@ -284,9 +284,11 @@ for architecture/layout.
       packaged app on a release that ships the zip, else fall back to the manual `.dmg`. Trust: only
       downloads/executes from `github.com`/`githubusercontent.com` over HTTPS. Falls back to revealing
       the new app in Finder if the install dir isn't user-writable (needs admin). ⚠ **Live-verify on
-      an installed copy before release** (the self-swap can't run in dev or from a read-only image and
-      wasn't exercised when written). Bootstrap caveat: 0.3.3 still has the notify-only updater, so
-      0.3.3→0.3.4 is still a manual reinstall; 0.3.4→onward is in-place.
+      an installed copy before cutting 0.3.5** — the self-swap can't run in dev or from a read-only
+      image and wasn't exercised when written, and it first *runs* on a 0.3.4→0.3.5 update (0.3.3's
+      updater was notify-only, so 0.3.3→0.3.4 is the last manual reinstall; that install does auto-fix
+      the cache, and 0.3.4→onward is in-place). Test locally: install 0.3.4, build a throwaway 0.3.5
+      with its `…-mac.zip`, and confirm "Update & restart" relaunches as 0.3.5 with no drag/Gatekeeper.
     - **Cache schema versioning + migration.** `cache.ts` now stamps a `CACHE_VERSION`; on launch, a
       cache written by an older schema has its **cached tracks dropped and re-fetched** with the
       current parser (keyed metadata — custom names, archives, sidebar selection — is preserved), and
@@ -306,7 +308,7 @@ for architecture/layout.
     in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  Cutover done: the Electron app (`desktop-v0.3.3`) is the featured download; the Python app is the
+  Cutover done: the Electron app (`desktop-v0.3.4`) is the featured download; the Python app is the
   legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.

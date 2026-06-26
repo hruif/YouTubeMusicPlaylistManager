@@ -119,7 +119,7 @@ the release bundle, collide (same group).
 ## Project layout
 
 > This file documents the **Python** app. The native **Electron (React/TS)** rewrite lives in
-> **`desktop/`** and is now the primary download (release `desktop-v0.3.3`) — its own docs are
+> **`desktop/`** and is now the primary download (release `desktop-v0.3.4`) — its own docs are
 > `desktop/README.md` and `desktop/BUILD.md`; see the desktop entry in `dev-docs/STATUS.md`. Build
 > artifacts there (`desktop/node_modules`, `desktop/dist`, `desktop/electron-dist`, `desktop/release`)
 > are gitignored.
