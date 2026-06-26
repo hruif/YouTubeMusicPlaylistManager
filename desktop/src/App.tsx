@@ -5,6 +5,9 @@ import {
   onCloseRequested,
   closeWindow,
   deferClose,
+  isElectron,
+  installUpdate,
+  onUpdateProgress,
 } from "./lib/native";
 import {
   signIn,
@@ -30,7 +33,7 @@ import {
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
-import { checkForUpdate, checkForUpdateStrict, getCurrentVersion } from "./lib/update";
+import { checkForUpdate, checkForUpdateStrict, getCurrentVersion, type UpdateInfo } from "./lib/update";
 import { STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
 import { Overlay } from "./components/Overlay";
 import { SongList } from "./components/SongList";
@@ -164,9 +167,11 @@ function App() {
   const [queuePrivacy, setQueuePrivacy] = useState<PlaylistPrivacy>(ui0.queuePrivacy);
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
   const [exitPrompt, setExitPrompt] = useState(false);
-  const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [checkingForUpdates, setCheckingForUpdates] = useState(false);
   const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null);
+  // In-place install progress: null = idle, otherwise a status string ("Downloading… 42%").
+  const [installingUpdate, setInstallingUpdate] = useState<string | null>(null);
   const currentVersion = getCurrentVersion();
   // True until the initial silent sign-in settles, so the welcome screen shows "Signing in…" for a
   // returning user instead of flashing a "Sign in" prompt that immediately flips to their library.
@@ -193,13 +198,37 @@ function App() {
       setUpdate(next);
       setUpdateCheckMessage(
         next
-          ? `Version ${next.version} is available. Download the update, then replace the installed app.`
+          ? canInstallInPlace(next)
+            ? `Version ${next.version} is available — "Update & restart" installs it in place.`
+            : `Version ${next.version} is available. Download the update, then replace the installed app.`
           : `You are up to date on version ${currentVersion}.`,
       );
     } catch (err) {
       setUpdateCheckMessage(`Could not check for updates: ${errText(err)}`);
     } finally {
       setCheckingForUpdates(false);
+    }
+  }
+
+  // In-place install is available only in the packaged Electron app and only for releases that ship
+  // the zipped-.app asset (older releases have just the .dmg → manual download).
+  const canInstallInPlace = (u: UpdateInfo | null): u is UpdateInfo & { zipUrl: string } =>
+    isElectron && !!u?.zipUrl;
+
+  async function installInPlace() {
+    if (!canInstallInPlace(update) || installingUpdate !== null) return;
+    setInstallingUpdate("Starting…");
+    const off = onUpdateProgress((pct) =>
+      setInstallingUpdate(pct < 100 ? `Downloading… ${pct}%` : "Installing, the app will restart…"),
+    );
+    try {
+      // Resolves as the app is quitting to swap the bundle and relaunch; if it returns without
+      // quitting, something is off — surface it and let the user fall back to a manual download.
+      await installUpdate(update.zipUrl);
+    } catch (err) {
+      off();
+      setInstallingUpdate(null);
+      fail(`Update failed: ${errText(err)}. You can download it manually instead.`);
     }
   }
 
@@ -658,7 +687,7 @@ function App() {
     if (started.current) return; // guard React StrictMode's double-invoke in dev
     started.current = true;
     (async () => {
-      const cached = await loadCache();
+      const { cache: cached, migrated } = await loadCache();
       setCache(cached);
       setStatus("Signing in…");
       try {
@@ -671,8 +700,9 @@ function App() {
               (cached.tempPlaylists.length ? ` · ${cached.tempPlaylists.length} leftover queue(s) — see “Queues”` : ""),
           );
           // Auto-refresh the playlist list on launch (Settings; default on). The list fetch is
-          // cheap (1-3 requests), and an empty cache always refreshes regardless.
-          if (cached.playlists.length === 0 || ui0.autoRefreshOnLaunch) {
+          // cheap (1-3 requests); an empty cache, or a one-time post-update cache migration (which
+          // cleared the cached tracks), always refreshes regardless of the setting.
+          if (cached.playlists.length === 0 || ui0.autoRefreshOnLaunch || migrated) {
             await refreshPlaylists();
             // Launch top-up: fetch tracks for sidebar (shown) playlists whose cache is missing or
             // stale, so song counts are present on open instead of an empty "not cached" dot.
@@ -1425,9 +1455,22 @@ function App() {
     <main className="app">
       {update && (
         <div className="update-bar">
-          <span>A newer version ({update.version}) is available.</span>
-          <button className="small" onClick={() => openUrl(update.url)}>Download update</button>
-          <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
+          {installingUpdate !== null ? (
+            <span>{installingUpdate}</span>
+          ) : canInstallInPlace(update) ? (
+            <>
+              <span>A newer version ({update.version}) is available.</span>
+              <button className="small" onClick={installInPlace}>Update &amp; restart</button>
+              <button className="small" onClick={() => openUrl(update.url)}>Download manually</button>
+              <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
+            </>
+          ) : (
+            <>
+              <span>A newer version ({update.version}) is available.</span>
+              <button className="small" onClick={() => openUrl(update.url)}>Download update</button>
+              <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
+            </>
+          )}
         </div>
       )}
       <header className="toolbar">
@@ -2043,7 +2086,12 @@ function App() {
               <button disabled={checkingForUpdates} onClick={checkUpdatesNow}>
                 {checkingForUpdates ? "Checking..." : "Check for updates"}
               </button>
-              {update && <button className="small" onClick={() => openUrl(update.url)}>Download update</button>}
+              {update && canInstallInPlace(update) && (
+                <button className="small" disabled={installingUpdate !== null} onClick={installInPlace}>
+                  {installingUpdate !== null ? installingUpdate : "Update & restart"}
+                </button>
+              )}
+              {update && <button className="small" onClick={() => openUrl(update.url)}>Download manually</button>}
             </div>
             {updateCheckMessage && <p className="settings-note">{updateCheckMessage}</p>}
             <label className="setting">

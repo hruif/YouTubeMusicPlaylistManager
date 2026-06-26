@@ -39,4 +39,22 @@ describe("findLatestUpdate", () => {
 
     expect(update).toEqual({ version: "0.3.2", url: "https://example.test/release/0.3.2" });
   });
+
+  it("surfaces the zipped-.app asset for the in-place updater (alongside the dmg)", () => {
+    const update = findLatestUpdate(
+      [
+        {
+          tag_name: "desktop-v0.4.0",
+          html_url: "https://example.test/release/0.4.0",
+          assets: [
+            { name: "YouTube.Music.Manager-0.4.0-universal.dmg", browser_download_url: "https://example.test/app.dmg" },
+            { name: "YouTube.Music.Manager-0.4.0-universal-mac.zip", browser_download_url: "https://example.test/app.zip" },
+          ],
+        },
+      ],
+      "0.3.3",
+    );
+
+    expect(update).toEqual({ version: "0.4.0", url: "https://example.test/app.dmg", zipUrl: "https://example.test/app.zip" });
+  });
 });

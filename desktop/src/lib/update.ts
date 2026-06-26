@@ -6,7 +6,7 @@ import pkg from "../../package.json";
 const RELEASES_API = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases?per_page=30";
 const TAG_PREFIX = "desktop-v";
 
-export type UpdateInfo = { version: string; url: string };
+export type UpdateInfo = { version: string; url: string; zipUrl?: string };
 type ReleaseAsset = { name?: string; browser_download_url?: string };
 type Release = {
   tag_name?: string;
@@ -46,17 +46,26 @@ function downloadUrlForRelease(release: Release): string {
   return dmg?.browser_download_url ?? release.html_url ?? "";
 }
 
+// The zipped .app the in-place updater downloads (electron-builder's `zip` target, e.g.
+// "…-universal-mac.zip"). Absent on releases built before the zip target was added → undefined,
+// which makes the UI fall back to the manual .dmg download.
+function zipUrlForRelease(release: Release): string | undefined {
+  const zip = (release.assets ?? []).find((a) => /mac\.zip$/i.test(a.name ?? ""));
+  return zip?.browser_download_url;
+}
+
 export function findLatestUpdate(releases: Release[], currentVersion: string): UpdateInfo | null {
   const current = parseVersion(currentVersion);
-  let best: { version: string; url: string; nums: number[] } | null = null;
+  let best: { version: string; url: string; zipUrl?: string; nums: number[] } | null = null;
   for (const r of releases) {
     if (r.draft || r.prerelease || !r.tag_name?.startsWith(TAG_PREFIX)) continue;
     const version = r.tag_name.slice(TAG_PREFIX.length);
     const nums = parseVersion(version);
     if (!nums.length) continue;
-    if (!best || isNewer(nums, best.nums)) best = { version, url: downloadUrlForRelease(r), nums };
+    if (!best || isNewer(nums, best.nums))
+      best = { version, url: downloadUrlForRelease(r), zipUrl: zipUrlForRelease(r), nums };
   }
-  if (best && isNewer(best.nums, current)) return { version: best.version, url: best.url };
+  if (best && isNewer(best.nums, current)) return { version: best.version, url: best.url, zipUrl: best.zipUrl };
   return null;
 }
 

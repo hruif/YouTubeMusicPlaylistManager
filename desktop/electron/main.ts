@@ -7,6 +7,7 @@ import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from "ele
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { registerBackend } from "./backend";
+import { stageUpdate } from "./updater";
 
 // Distinct app name + dock icon so this is easy to tell apart from other Electron apps (esp. in dev,
 // where the dock would otherwise show the generic Electron icon).
@@ -130,6 +131,20 @@ ipcMain.handle("window:allow-close-and-quit", () => {
 // The renderer is showing the exit-cleanup prompt and needs the user to decide — cancel the force-
 // quit safety timer so we wait for them instead of quitting out from under the prompt.
 ipcMain.handle("window:defer-close", () => clearCloseTimer());
+// In-place update: download + stage the new build, then swap the bundle and relaunch. Errors
+// propagate to the renderer (which keeps the app running and offers the manual download).
+ipcMain.handle("update:install", async (_e, zipUrl: string) => {
+  const staged = await stageUpdate(String(zipUrl), (pct) =>
+    mainWindow?.webContents.send("update:progress", pct),
+  );
+  // This is a deliberate restart — skip the exit-cleanup prompt and the force-quit safety timer.
+  allowClose = true;
+  clearCloseTimer();
+  staged.swapAndRelaunch();
+  // Give the detached helper a beat to start watching our PID before we exit.
+  setTimeout(() => app.quit(), 250);
+  return true;
+});
 ipcMain.handle("open-external", (_e, url: string) => {
   // Only ever hand the OS a web URL — never file://, custom schemes, etc.
   try {

@@ -44,8 +44,21 @@ in `electron-builder.yml` (`mac.identity`) and configure electron-builder notari
 
 ## Distribution / updates
 
-- Ship the `.dmg`. The GitHub Pages site (`docs/`) and `releases/latest` point at it; the download
-  button resolves the latest release's `.dmg`.
-- Cut a release with `gh release create desktop-v<version> "release/…-universal.dmg" --target main
-  --latest` (see the repo root README's "Publish the download page" section).
-- The in-app update checker compares the running version against the latest GitHub release.
+- `npm run electron:build` produces **two** mac artifacts in `release/` (see `electron-builder.yml`
+  `mac.target`): the `…-universal.dmg` (the download) **and** a `…-universal-mac.zip` (the zipped
+  `.app` the in-app updater swaps in place). **Attach both** to every release.
+- The GitHub Pages site (`docs/`) and `releases/latest` point at the `.dmg`; the download button
+  resolves the latest release's `.dmg`.
+- Cut a release with both assets:
+  ```bash
+  gh release create desktop-v<version> \
+    "release/…-universal.dmg" "release/…-universal-mac.zip" --target main --latest
+  ```
+- **In-app updates (`electron/updater.ts`).** The checker compares the running version against the
+  latest non-prerelease `desktop-v*` release. When running the packaged app on a release that ships
+  the `…-mac.zip`, the banner/Settings offer **"Update & restart"**: it downloads the zip, strips the
+  Gatekeeper quarantine, and a detached helper swaps the bundle in place + relaunches — no
+  drag/re-approve. Unsigned, so this is a custom swap (not Squirrel/electron-updater, which need a
+  Developer ID). Falls back to the manual `.dmg` if the release has no zip (pre-0.3.4), if not running
+  the installed app, or if the install dir needs admin. **Test the in-place path on an actual
+  installed copy** before relying on it — it can't run in dev or from the read-only `.dmg` mount.

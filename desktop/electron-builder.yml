@@ -34,6 +34,8 @@ mac:
   target:
     - target: dmg
       arch: universal # one DMG that runs on Apple Silicon + Intel
+    - target: zip
+      arch: universal # zipped .app — the in-app updater downloads this to swap the bundle in place
   # Unsigned for the beta (same as the Tauri build); set an identity later to sign/notarize.
   identity: null
 

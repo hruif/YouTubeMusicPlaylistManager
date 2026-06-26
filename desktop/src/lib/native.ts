@@ -16,6 +16,8 @@ type ElectronAPI = {
   deferClose: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   onCloseRequested: (cb: () => void) => () => void;
+  installUpdate: (zipUrl: string) => Promise<boolean>;
+  onUpdateProgress: (cb: (pct: number) => void) => () => void;
 };
 
 const electron = (globalThis as unknown as { electronAPI?: ElectronAPI }).electronAPI;
@@ -70,4 +72,17 @@ export async function deferClose(): Promise<void> {
 export async function openExternal(url: string): Promise<void> {
   if (isElectron) return electron!.openExternal(url);
   await tauriOpenUrl(url);
+}
+
+// In-place update (Electron only): download the new build and swap the bundle, then relaunch.
+// Resolves as the app is quitting; rejects (so the UI can fall back to a manual download) on failure.
+export async function installUpdate(zipUrl: string): Promise<boolean> {
+  if (!isElectron) throw new Error("In-place update is not supported in this build.");
+  return electron!.installUpdate(zipUrl);
+}
+
+// Subscribe to download/install progress (0–100). No-op (returns a no-op unsubscribe) off Electron.
+export function onUpdateProgress(cb: (pct: number) => void): () => void {
+  if (!isElectron) return () => {};
+  return electron!.onUpdateProgress(cb);
 }

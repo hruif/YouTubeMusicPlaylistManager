@@ -19,6 +19,12 @@ const api = {
     ipcRenderer.on("close-requested", listener);
     return () => ipcRenderer.removeListener("close-requested", listener);
   },
+  installUpdate: (zipUrl: string): Promise<boolean> => ipcRenderer.invoke("update:install", zipUrl),
+  onUpdateProgress: (cb: (pct: number) => void): (() => void) => {
+    const listener = (_e: unknown, pct: number) => cb(pct);
+    ipcRenderer.on("update:progress", listener);
+    return () => ipcRenderer.removeListener("update:progress", listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("electronAPI", api);

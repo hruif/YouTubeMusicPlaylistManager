@@ -9,7 +9,14 @@ import type { Playlist, Track } from "./ytmusic";
 // can be recreated. (YouTube's delete is permanent and has no undo.)
 export type DeletedPlaylist = { id: string; title: string; tracks: Track[]; deletedAt: number };
 
+// Cache schema version. Bump when a change to how tracks are parsed/stored means existing cached
+// data must be re-fetched to be correct (old parsed rows can't be transformed in place — they have
+// to be re-pulled with the current parser). loadCache() drops the cached tracks on any upgrade.
+// History: v1 forces a re-fetch so the 0.3.1 artist-fallback parse reaches caches written earlier.
+export const CACHE_VERSION = 1;
+
 export type LibraryCache = {
+  version: number;
   playlists: Playlist[];
   tracksByPlaylist: Record<string, Track[]>;
   updatedAt: Record<string, number>; // playlist id -> last-fetched epoch ms
@@ -24,6 +31,7 @@ export type LibraryCache = {
 };
 
 export const EMPTY_CACHE: LibraryCache = {
+  version: CACHE_VERSION,
   playlists: [],
   tracksByPlaylist: {},
   updatedAt: {},
@@ -37,12 +45,15 @@ export const EMPTY_CACHE: LibraryCache = {
   tempPlaylists: [],
 };
 
-export async function loadCache(): Promise<LibraryCache> {
+// Returns the cache plus whether an upgrade migration ran, so the app can force a one-time refresh
+// after an update even if the user disabled auto-refresh-on-launch.
+export async function loadCache(): Promise<{ cache: LibraryCache; migrated: boolean }> {
   const raw = await invoke<string | null>("read_cache");
-  if (!raw) return { ...EMPTY_CACHE };
+  if (!raw) return { cache: { ...EMPTY_CACHE }, migrated: false };
   try {
     const parsed = JSON.parse(raw) as Partial<LibraryCache>;
-    return {
+    const cache: LibraryCache = {
+      version: CACHE_VERSION,
       playlists: parsed.playlists ?? [],
       tracksByPlaylist: parsed.tracksByPlaylist ?? {},
       updatedAt: parsed.updatedAt ?? {},
@@ -55,8 +66,19 @@ export async function loadCache(): Promise<LibraryCache> {
       removedSongs: parsed.removedSongs ?? {},
       tempPlaylists: parsed.tempPlaylists ?? [],
     };
+    // Schema upgrade: drop cached tracks so they're re-fetched with the current parser. The stored
+    // rows reflect whatever parser wrote them, so an improved parse (e.g. the 0.3.1 artist fallback)
+    // can only reach them via a re-fetch. Keyed metadata (custom names, removed/unmatched archives,
+    // deleted playlists, sidebar selection) is schema-stable and preserved. One-time, post-update.
+    const prevVersion = parsed.version ?? 0;
+    const migrated = prevVersion < CACHE_VERSION;
+    if (migrated) {
+      cache.tracksByPlaylist = {};
+      cache.updatedAt = {};
+    }
+    return { cache, migrated };
   } catch {
-    return { ...EMPTY_CACHE };
+    return { cache: { ...EMPTY_CACHE }, migrated: false };
   }
 }
 
