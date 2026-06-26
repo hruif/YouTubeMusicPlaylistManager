@@ -3,7 +3,7 @@
 Living board of what's planned, in progress, and shipped. Update this file as part of any
 feature or bug change. See `CONTRIBUTING.md` for the debug-first → release workflow.
 
-_Last updated: 2026-06-17_
+_Last updated: 2026-06-25_
 
 ## In progress — debug-gated (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS`)
 
@@ -185,7 +185,7 @@ for architecture/layout.
   React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
   sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
   keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
-  Swift helper sidecar. Now the **primary download** (release `desktop-v0.3.0`, universal `.dmg`);
+  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.2`, universal `.dmg`);
   the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
   `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
   historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
@@ -226,13 +226,26 @@ for architecture/layout.
     writes — no clobber/corruption); `tokio` sleeps; remove-repeats partial-failure, Spotify
     pagination, shift-select, and transfer dedupe/retry fixes; Vitest tests + `desktop-ci` for the
     matcher/cache logic; **in-app update checker** (checks for newer `desktop-v*` releases → banner).
-    Latest release: **`desktop-v0.2.0`**.
   - **Released in `desktop-v0.3.0` (also the Tauri→Electron re-platform):** single-instance lock; App.tsx
     split into modules + memoized rows; **"Play in YouTube Music" queue** (private temp playlist from
     selected songs/playlists, opened to play) + a "Queues" manager with **startup reminder + quit-time
     cleanup prompt** (or auto-delete via a setting); **add any public playlist by URL**; a **Settings
     screen** (show-real-titles, auto-delete queues, check-updates); disabled WebView autocorrect.
     Parity with the Python app's core is now essentially complete.
+  - **Released in `desktop-v0.3.1`:** YouTube Music playlist import now reads raw playlist rows
+    instead of the parsed youtubei.js wrapper when necessary, preserving video IDs and restoring
+    artist fallbacks for video-style rows. A reported playlist that displayed 192 tracks in YouTube
+    Music imported 190 usable rows; the missing two were unavailable/private/deleted rows not exposed
+    by the raw response.
+  - **Released in `desktop-v0.3.2`:** Settings shows the app version and includes a manual
+    "Check for updates" button. The update checker now uses the packaged desktop version, ignores
+    prereleases, and points prompts at the direct `.dmg` asset. Caveat: `desktop-v0.3.1` itself may
+    not see `0.3.2` because its Electron build still used the old Tauri version API; `0.3.2` may need
+    one manual install, then future update prompts should work.
+  - **Pushed to `main`, not released yet:** long playlist names no longer widen the left sidebar;
+    sidebar and Manage Playlists rows now support double-click / right-click Playlist Info with a
+    compact Get Info-style modal for source, ownership, cache counts, last refresh, removed/unmatched
+    counts, and first/last track snapshots.
   - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
     `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
     it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the
@@ -245,7 +258,7 @@ for architecture/layout.
     in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  Cutover done: the Electron app (`desktop-v0.3.0`) is the featured download; the Python app is the
+  Cutover done: the Electron app (`desktop-v0.3.2`) is the featured download; the Python app is the
   legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.

@@ -8,7 +8,7 @@ Project download page: https://hruif.github.io/YouTubeMusicPlaylistManager/
 
 > **Now a native desktop app.** The recommended version is a from-scratch native app in
 > [`desktop/`](desktop/) — current release
-> [`desktop-v0.3.0`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest).
+> [`desktop-v0.3.2`](https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest).
 > It signs in **in-app** (no header copying), edits playlists, and imports from Spotify, with smooth
 > resizing on a Chromium runtime. Ships as a universal `.dmg` (Apple Silicon + Intel); it's
 > unsigned, so use **Open Anyway** on first launch. See [`desktop/README.md`](desktop/README.md) and

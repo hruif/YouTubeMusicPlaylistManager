@@ -13,10 +13,10 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
   feature to release or cutting a build.
 
 ## Project layout (quick)
-- **Two coexisting apps:** the original **Python/Tkinter** app at the root (described below), and the
+- **Two coexisting apps:** the original **Python/Tkinter** app at the root (legacy fallback), and the
   native **Electron (React/TS)** rewrite in [`desktop/`](../desktop/), now the primary download
-  (release `desktop-v0.3.0`, universal `.dmg`). See the **Desktop app** section just below for it;
-  the Python-specific rules in the rest of this handoff are for the root app.
+  (latest public release `desktop-v0.3.2`, universal `.dmg`). See the **Desktop app** section just
+  below for it; the Python-specific rules in the rest of this handoff are for the root app.
 - `main.py` (entry point) is the only code file at the root; all application code is under `app/`
   — `app/ui.py` (controller), `app/app_*` (core/config), `app/views/`, `app/services/`.
 - Tests live in `tests/` (`pytest -q`). In-repo dev docs live in `dev-docs/`; `docs/` is the
@@ -26,15 +26,22 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
+- **Current state:** latest public release is `desktop-v0.3.2`. `main` also has a post-release UI
+  fix (`6a0515f`) that clamps long playlist names so they cannot widen the sidebar and adds a
+  Get Info-style Playlist Info modal from double-click / right-click in both the sidebar and Manage
+  Playlists. That fix is **pushed but not released** until the next desktop tag.
 - **Code:** `desktop/electron/` is the Node main process — `youtubei.js` lives in `yt.ts`, IPC in
   `main.ts`/`backend.ts`, native sign-in in `auth.ts` + `login-helper/`; `desktop/src/` is the React
   renderer (`App.tsx` controller, `lib/`, `components/`).
 - **Run/build/test (from `desktop/`):** `npm run electron:dev` (dev), `npm run electron:build`
-  (universal `.dmg` via electron-builder, output in `release/`), `npx vitest run` (matcher/cache unit
-  tests) + `npx tsc --noEmit`.
+  (universal `.dmg` via electron-builder, output in `release/`), `npm run test` (Vitest) +
+  `npm run typecheck`.
 - **Sign-in is macOS-only by design:** a native Swift WKWebView helper, because Google blocks
   embedded Chromium. A Linux WebKitGTK port is being validated (`login-helper/login_linux_spike.py`,
   STATUS backlog); Windows would need a manual cookie-paste fallback.
+- **Update checker:** `desktop-v0.3.2` fixed the checker to use `desktop/package.json` as the
+  current version and to target the direct `.dmg` asset. Builds before `0.3.2` may need one manual
+  install because the old Electron checker still called Tauri's version API.
 - **Same rules apply:** run the tests/typecheck before committing, end AI commits with the
   `Co-Authored-By:` trailer, and keep `dev-docs/STATUS.md` + the desktop docs in sync with any
   behavior / build / version change. Never commit captured auth/session files.
@@ -44,7 +51,8 @@ The shipped app is the Electron rewrite in `desktop/`; **its own docs are the so
   `PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS` gate first, then migrate to release once verified. Bug
   fixes, refactors, safety hardening, tests, and docs go **straight to release**. (Mechanics +
   the migration checklist are in `CONTRIBUTING.md`.)
-- **Tests:** run `pytest -q` before committing; add tests for new pure logic.
+- **Tests:** for Python/root changes run `pytest -q`; for desktop changes run `npm run test` and
+  `npm run typecheck` from `desktop/`. Add tests for new pure logic.
 - **Run from source with the debug UI:**
   ```bash
   PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS=1 python3 main.py
