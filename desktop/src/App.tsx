@@ -26,7 +26,7 @@ import {
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
 import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
-import { checkForUpdate } from "./lib/update";
+import { checkForUpdate, checkForUpdateStrict, getCurrentVersion } from "./lib/update";
 import { STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
 import { Overlay } from "./components/Overlay";
 import { SongList } from "./components/SongList";
@@ -129,6 +129,9 @@ function App() {
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<{ version: string; url: string } | null>(null);
+  const [checkingForUpdates, setCheckingForUpdates] = useState(false);
+  const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null);
+  const currentVersion = getCurrentVersion();
   // True until the initial silent sign-in settles, so the welcome screen shows "Signing in…" for a
   // returning user instead of flashing a "Sign in" prompt that immediately flips to their library.
   const [booting, setBooting] = useState(true);
@@ -145,6 +148,24 @@ function App() {
     setError(message);
   }
   const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  async function checkUpdatesNow() {
+    setCheckingForUpdates(true);
+    setUpdateCheckMessage("Checking for updates...");
+    try {
+      const next = await checkForUpdateStrict();
+      setUpdate(next);
+      setUpdateCheckMessage(
+        next
+          ? `Version ${next.version} is available. Download the update, then replace the installed app.`
+          : `You are up to date on version ${currentVersion}.`,
+      );
+    } catch (err) {
+      setUpdateCheckMessage(`Could not check for updates: ${errText(err)}`);
+    } finally {
+      setCheckingForUpdates(false);
+    }
+  }
 
   async function readSpotify() {
     setSpotifyResult(null);
@@ -1299,7 +1320,7 @@ function App() {
       {update && (
         <div className="update-bar">
           <span>A newer version ({update.version}) is available.</span>
-          <button className="small" onClick={() => openUrl(update.url)}>Download</button>
+          <button className="small" onClick={() => openUrl(update.url)}>Download update</button>
           <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
         </div>
       )}
@@ -1863,6 +1884,23 @@ function App() {
 
       {showSettings && (
         <Overlay title="Settings" onClose={() => setShowSettings(false)}>
+          <div className="settings-section">
+            <div className="settings-row">
+              <div className="settings-copy">
+                <strong>App version</strong>
+                <span>YouTube Music Manager {currentVersion}</span>
+              </div>
+              <button disabled={checkingForUpdates} onClick={checkUpdatesNow}>
+                {checkingForUpdates ? "Checking..." : "Check for updates"}
+              </button>
+              {update && <button className="small" onClick={() => openUrl(update.url)}>Download update</button>}
+            </div>
+            {updateCheckMessage && <p className="settings-note">{updateCheckMessage}</p>}
+            <label className="setting">
+              <input type="checkbox" checked={checkUpdates} onChange={(e) => setCheckUpdates(e.currentTarget.checked)} />
+              Check for updates on startup
+            </label>
+          </div>
           <label className="setting">
             <input type="checkbox" checked={replaceNames} onChange={(e) => setReplaceNames(e.currentTarget.checked)} />
             Replace real titles with custom names (otherwise show both)
@@ -1874,10 +1912,6 @@ function App() {
           <label className="setting">
             <input type="checkbox" checked={autoRefreshOnLaunch} onChange={(e) => setAutoRefreshOnLaunch(e.currentTarget.checked)} />
             Refresh the playlist list automatically on launch
-          </label>
-          <label className="setting">
-            <input type="checkbox" checked={checkUpdates} onChange={(e) => setCheckUpdates(e.currentTarget.checked)} />
-            Check for updates on startup
           </label>
           <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 13 }}>Signed in to YouTube Music</span>
