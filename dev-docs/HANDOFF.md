@@ -15,7 +15,7 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Project layout (quick)
 - **Two coexisting apps:** the original **Python/Tkinter** app at the root (legacy fallback), and the
   native **Electron (React/TS)** rewrite in [`desktop/`](../desktop/), now the primary download
-  (latest public release `desktop-v0.3.2`, universal `.dmg`). See the **Desktop app** section just
+  (latest public release `desktop-v0.3.3`, universal `.dmg`). See the **Desktop app** section just
   below for it; the Python-specific rules in the rest of this handoff are for the root app.
 - `main.py` (entry point) is the only code file at the root; all application code is under `app/`
   — `app/ui.py` (controller), `app/app_*` (core/config), `app/views/`, `app/services/`.
@@ -26,14 +26,12 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** latest public release is `desktop-v0.3.2`. `main` has post-release work that is
-  **pushed but not released** until the next desktop tag: a UI fix (`6a0515f`) that clamps long
-  playlist names and adds a Get Info-style Playlist Info modal (sidebar + Manage Playlists), plus an
-  account-mismatch / sidebar-load pass — configurable queue visibility (Settings; default UNLISTED so
-  links open across accounts), a surfaced signed-in account, and proactive sidebar track-loading on
-  Manage-close + a launch top-up.
-  See `dev-docs/STATUS.md` for the full list, **including a ⚠ live-verify note** on the unlisted
-  queue create (raw account-touching write) before the next tag.
+- **Current state:** latest public release is `desktop-v0.3.3`. It added the Get Info-style Playlist
+  Info modal + sidebar name clamp (`6a0515f`) and an account-mismatch / sidebar-load pass:
+  configurable queue visibility (Settings; default UNLISTED so links open across accounts), a
+  surfaced signed-in account, and proactive sidebar track-loading on Manage-close + a launch top-up.
+  See `dev-docs/STATUS.md` for the full list, **including a ⚠ still-to-live-verify note** on the
+  unlisted queue create (raw account-touching write; the private-create fallback bounds the risk).
 - **Code:** `desktop/electron/` is the Node main process — `youtubei.js` lives in `yt.ts`, IPC in
   `main.ts`/`backend.ts`, native sign-in in `auth.ts` + `login-helper/`; `desktop/src/` is the React
   renderer (`App.tsx` controller, `lib/`, `components/`).

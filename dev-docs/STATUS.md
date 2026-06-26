@@ -185,7 +185,7 @@ for architecture/layout.
   React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
   sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
   keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
-  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.2`, universal `.dmg`);
+  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.3`, universal `.dmg`);
   the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
   `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
   historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
@@ -242,11 +242,10 @@ for architecture/layout.
     prereleases, and points prompts at the direct `.dmg` asset. Caveat: `desktop-v0.3.1` itself may
     not see `0.3.2` because its Electron build still used the old Tauri version API; `0.3.2` may need
     one manual install, then future update prompts should work.
-  - **Pushed to `main`, not released yet:** long playlist names no longer widen the left sidebar;
+  - **Released in `desktop-v0.3.3`:** long playlist names no longer widen the left sidebar;
     sidebar and Manage Playlists rows now support double-click / right-click Playlist Info with a
     compact Get Info-style modal for source, ownership, cache counts, last refresh, removed/unmatched
-    counts, and first/last track snapshots.
-  - **Pushed to `main`, not released yet — account-mismatch & sidebar-load pass:**
+    counts, and first/last track snapshots. Also an **account-mismatch & sidebar-load pass:**
     - **Queue/temp playlists now default to UNLISTED** instead of private, so "Play in YouTube
       Music" links open in the user's default browser even when it's signed into a *different*
       Google account than the app (or signed out) — previously that showed a blank "private
@@ -255,11 +254,12 @@ for architecture/layout.
       exposes no privacy option, so `createPlaylist(title, ids, privacy)` hits the raw
       `/playlist/create` endpoint with `privacyStatus` for non-private creates and **falls back to
       the proven private create** if that's ever rejected (so Play never breaks). Real
-      created/transferred playlists are always PRIVATE (unaffected by the setting). ⚠ **Live-verify
-      before release** (raw endpoint, account-touching write — not exercised in this environment):
-      create a queue at each visibility, confirm Unlisted/Public open for a signed-out /
-      different-account browser, and confirm normal create-from-selection and Spotify transfer
-      playlists remain private.
+      created/transferred playlists are always PRIVATE (unaffected by the setting). ⚠ **Still to
+      live-verify** (raw endpoint, account-touching write — not exercised when written): create a
+      queue at each visibility, confirm Unlisted/Public open for a signed-out / different-account
+      browser, and confirm create-from-selection and Spotify transfer playlists remain private. The
+      private-create fallback bounds the risk (worst case degrades to a private queue, the prior
+      behavior).
     - **Signed-in account is now surfaced** (`getAccountInfo` returns `{ name, handle }`, picking the
       `is_selected` account): Settings shows "Signed in as <name> · @handle" and the Queues panel
       notes the link opens in any account — so a user can notice an app-vs-browser account mismatch.
@@ -271,6 +271,8 @@ for architecture/layout.
       sidebar/shown playlists that are missing or stale (>7d), at low concurrency, gated on the
       existing "refresh on launch" setting. Deliberately conservative (no background polling) to keep
       API traffic / ToS exposure low.
+    - **Dependency fix:** bumped `vite` to `^7.3.6` + an `esbuild ^0.28.1` override to clear a
+      dev-server-only esbuild advisory (GHSA-g7r4-m6w7-qqqr); not present in the shipped app.
   - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
     `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
     it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the
@@ -283,7 +285,7 @@ for architecture/layout.
     in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  Cutover done: the Electron app (`desktop-v0.3.2`) is the featured download; the Python app is the
+  Cutover done: the Electron app (`desktop-v0.3.3`) is the featured download; the Python app is the
   legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.

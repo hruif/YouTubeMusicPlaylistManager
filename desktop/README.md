@@ -1,7 +1,7 @@
 # YouTube Music Manager — native desktop app
 
 The native rewrite of [YouTube Music Playlist Manager](../README.md), built with **Electron** +
-**React/TypeScript** (Vite). It's the recommended download — current release `desktop-v0.3.2`, a
+**React/TypeScript** (Vite). It's the recommended download — current release `desktop-v0.3.3`, a
 universal macOS `.dmg`. The original Python app still works but is no longer the primary download.
 
 ## What it does
