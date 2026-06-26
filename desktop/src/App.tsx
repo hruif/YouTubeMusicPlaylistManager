@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   invoke,
   openExternal as openUrl,
@@ -22,6 +22,7 @@ import {
   searchYouTubeMusicSongs,
   bestYoutubeMatch,
   type Playlist,
+  type Track,
   type CombinedSong,
 } from "./lib/ytmusic";
 import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
@@ -37,6 +38,33 @@ import "./App.css";
 
 type SortKey = "title" | "artist" | "count";
 type PlaylistSort = "name" | "updated" | "count";
+
+function InfoSection({ title }: { title: string }) {
+  return <div className="info-section">{title}</div>;
+}
+
+function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="info-row">
+      <div className="info-label">{label}</div>
+      <div className="info-value">{children}</div>
+    </div>
+  );
+}
+
+function uniqueTrackCount(tracks: Track[]): number {
+  return new Set(tracks.map((t) => t.videoId)).size;
+}
+
+function timestampLabel(timestamp: number | undefined): string {
+  if (!timestamp) return "Never";
+  return `${new Date(timestamp).toLocaleString()} (${relativeAge(timestamp)})`;
+}
+
+function trackSummary(track: Track | undefined): string {
+  if (!track) return "None";
+  return track.artist ? `${track.title} - ${track.artist}` : track.title;
+}
 
 // --- small persisted UI state (selection/sort/filter) in localStorage (tiny, frequent writes) ---
 type UiState = {
@@ -88,6 +116,7 @@ function App() {
   const [showManage, setShowManage] = useState(false);
   const [manageQuery, setManageQuery] = useState("");
   const [detail, setDetail] = useState<CombinedSong | null>(null);
+  const [playlistDetail, setPlaylistDetail] = useState<Playlist | null>(null);
   const [customDraft, setCustomDraft] = useState("");
   const [detailAddTarget, setDetailAddTarget] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -458,6 +487,38 @@ function App() {
     const x = Math.min(e.clientX, window.innerWidth - 196);
     const y = Math.min(e.clientY, Math.max(8, window.innerHeight - estHeight - 8));
     setMenu({ x, y, items });
+  }
+
+  function openPlaylistDetailFromRow(e: React.MouseEvent, playlist: Playlist) {
+    const target = e.target as HTMLElement;
+    if (target.closest("button,input,select")) return;
+    e.preventDefault();
+    setPlaylistDetail(playlist);
+  }
+
+  function playlistMenuItems(playlist: Playlist, location: "sidebar" | "manage") {
+    const removedCount = cache.removedSongs[playlist.id]?.length ?? 0;
+    const unmatchedCount = cache.unmatched[playlist.id]?.length ?? 0;
+    return [
+      { label: "Playlist details", onClick: () => setPlaylistDetail(playlist) },
+      { label: "Export to CSV…", onClick: () => exportPlaylist(playlist) },
+      ...(location === "sidebar" ? [{ label: "Remove repeats", onClick: () => removeRepeats(playlist) }] : []),
+      ...(removedCount ? [{ label: `Removed songs (${removedCount})`, onClick: () => setShowRemoved(playlist.id) }] : []),
+      ...(unmatchedCount ? [{ label: `Unmatched from Spotify (${unmatchedCount})`, onClick: () => setShowUnmatched(playlist.id) }] : []),
+      location === "sidebar"
+        ? { label: "Remove from sidebar", onClick: () => setPlaylistShown(playlist.id, false) }
+        : shown.has(playlist.id)
+          ? { label: "Remove from sidebar", onClick: () => setPlaylistShown(playlist.id, false) }
+          : { label: "Show in sidebar", onClick: () => setPlaylistShown(playlist.id, true) },
+      { label: "Open in YouTube Music", onClick: () => openPlaylist(playlist.id) },
+      ...(location === "manage"
+        ? [
+            cache.external.includes(playlist.id)
+              ? { label: "Remove from list", onClick: () => removeFromCache(playlist.id) }
+              : { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(playlist); } },
+          ]
+        : []),
+    ];
   }
 
   // Suppress the WebView's default right-click menu (reload/inspect) so we can use our own. Dismissal
@@ -1195,7 +1256,7 @@ function App() {
   // Any modal open? (Delete-key removal is suppressed while one is, so it can't fire in the
   // background.) confirm/deleteTarget/exitPrompt/error are checked first as the most-nested.
   const anyModalOpen =
-    !!menu || !!error || !!confirm || !!deleteTarget || exitPrompt || !!detail || addPicker || removePicker ||
+    !!menu || !!error || !!confirm || !!deleteTarget || exitPrompt || !!detail || !!playlistDetail || addPicker || removePicker ||
     createOpen || !!showUnmatched || !!showRemoved || spotifyOpen || showTemp || showDeleted || showSettings || showManage;
 
   // Esc: dismiss the most-nested overlay (returns true if it closed something).
@@ -1206,6 +1267,7 @@ function App() {
     if (deleteTarget) return setDeleteTarget(null), setDeleteText(""), true;
     if (exitPrompt) return setExitPrompt(false), true;
     if (detail) return setDetail(null), true;
+    if (playlistDetail) return setPlaylistDetail(null), true;
     if (addPicker) return setAddPicker(false), true;
     if (removePicker) return setRemovePicker(false), true;
     if (createOpen) return setCreateOpen(false), true;
@@ -1367,20 +1429,8 @@ function App() {
                   <div
                     key={p.id}
                     className="pl-row"
-                    onContextMenu={(e) =>
-                      openMenu(e, [
-                        { label: "Remove repeats", onClick: () => removeRepeats(p) },
-                        { label: "Export to CSV…", onClick: () => exportPlaylist(p) },
-                        ...(cache.removedSongs[p.id]?.length
-                          ? [{ label: `Removed songs (${cache.removedSongs[p.id].length})`, onClick: () => setShowRemoved(p.id) }]
-                          : []),
-                        ...(cache.unmatched[p.id]?.length
-                          ? [{ label: `Unmatched from Spotify (${cache.unmatched[p.id].length})`, onClick: () => setShowUnmatched(p.id) }]
-                          : []),
-                        { label: "Remove from sidebar", onClick: () => setPlaylistShown(p.id, false) },
-                        { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
-                      ])
-                    }
+                    onDoubleClick={(e) => openPlaylistDetailFromRow(e, p)}
+                    onContextMenu={(e) => openMenu(e, playlistMenuItems(p, "sidebar"))}
                   >
                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} />
                     <span className="pl-title" onClick={() => toggleSelected(p.id)}>{p.title}</span>
@@ -1523,7 +1573,7 @@ function App() {
             </button>
           </div>
           <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Check the playlists you want in the sidebar. Right-click one for export, open, or delete.
+            Check the playlists you want in the sidebar. Double-click for details, or right-click for more actions.
             {` ${shown.size} of ${cache.playlists.length} shown.`}
           </p>
           <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
@@ -1537,17 +1587,8 @@ function App() {
               <label
                 key={p.id}
                 className="pl-row"
-                onContextMenu={(e) =>
-                  openMenu(e, [
-                    { label: "Export to CSV…", onClick: () => exportPlaylist(p) },
-                    { label: "Open in YouTube Music", onClick: () => openPlaylist(p.id) },
-                    // URL-added public playlists aren't yours to delete — offer to remove them from
-                    // the app instead. Library playlists are your own, so they get the real delete.
-                    cache.external.includes(p.id)
-                      ? { label: "Remove from list", onClick: () => removeFromCache(p.id) }
-                      : { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(p); } },
-                  ])
-                }
+                onDoubleClick={(e) => openPlaylistDetailFromRow(e, p)}
+                onContextMenu={(e) => openMenu(e, playlistMenuItems(p, "manage"))}
               >
                 <input type="checkbox" checked={shown.has(p.id)} onChange={(e) => setPlaylistShown(p.id, e.currentTarget.checked)} />
                 <span className="pl-title">{p.title}</span>
@@ -1556,6 +1597,71 @@ function App() {
           </div>
         </Overlay>
       )}
+
+      {playlistDetail && (() => {
+        const p = cache.playlists.find((x) => x.id === playlistDetail.id) ?? playlistDetail;
+        const tracks = cache.tracksByPlaylist[p.id] ?? [];
+        const hasCachedTracks = Boolean(cache.tracksByPlaylist[p.id]);
+        const removed = cache.removedSongs[p.id] ?? [];
+        const unmatched = cache.unmatched[p.id] ?? [];
+        const isExternal = cache.external.includes(p.id);
+        const inSidebar = shown.has(p.id);
+        const queue = cache.tempPlaylists.find((t) => t.id === p.id);
+        const ownedText = editable.has(p.id)
+          ? "Yes"
+          : isExternal
+            ? "No - added by URL"
+            : hasCachedTracks
+              ? "No or not detected"
+              : "Unknown until refreshed";
+        return (
+          <Overlay title="Playlist Info" onClose={() => setPlaylistDetail(null)}>
+            <div className="info-actions">
+              <button className="small" onClick={() => openPlaylist(p.id)}>Open in YouTube Music</button>
+              <button className="small" onClick={() => exportPlaylist(p)}>Export CSV</button>
+              <button className="small" onClick={() => setPlaylistShown(p.id, !inSidebar)}>
+                {inSidebar ? "Remove from sidebar" : "Show in sidebar"}
+              </button>
+              {editable.has(p.id) && (
+                <button className="small" disabled={busy || !hasCachedTracks} onClick={() => removeRepeats(p)}>
+                  Remove repeats
+                </button>
+              )}
+              {removed.length > 0 && <button className="small" onClick={() => setShowRemoved(p.id)}>Removed songs</button>}
+              {unmatched.length > 0 && <button className="small" onClick={() => setShowUnmatched(p.id)}>Unmatched</button>}
+            </div>
+            <div style={{ maxHeight: "62vh", overflow: "auto", paddingRight: 4 }}>
+              <InfoSection title="General" />
+              <InfoRow label="Name">{p.title}</InfoRow>
+              <InfoRow label="Source">{isExternal ? "YouTube Music (added by URL)" : "YouTube Music library"}</InfoRow>
+              <InfoRow label="Owned by you">{ownedText}</InfoRow>
+              <InfoRow label="In sidebar">{inSidebar ? "Yes" : "No"}</InfoRow>
+              <InfoRow label="Selected">{selected.has(p.id) ? "Yes" : "No"}</InfoRow>
+              <InfoRow label="Playlist ID"><code>{p.id}</code></InfoRow>
+              <InfoRow label="Playlist link">
+                <button className="small" onClick={() => openPlaylist(p.id)}>Open</button>
+              </InfoRow>
+              {queue && <InfoRow label="Temporary queue">Created {timestampLabel(queue.createdAt)}</InfoRow>}
+
+              <InfoSection title="Cached Data" />
+              <InfoRow label="Cached tracks">{hasCachedTracks ? tracks.length : "Not loaded"}</InfoRow>
+              <InfoRow label="Unique tracks">{hasCachedTracks ? uniqueTrackCount(tracks) : "Not loaded"}</InfoRow>
+              <InfoRow label="Last refreshed">{timestampLabel(cache.updatedAt[p.id])}</InfoRow>
+              <InfoRow label="Cache status">{isStale(p.id) ? "Needs refresh" : "Current"}</InfoRow>
+              <InfoRow label="Removed archive">{removed.length}</InfoRow>
+              <InfoRow label="Unmatched songs">{unmatched.length}</InfoRow>
+
+              {tracks.length > 0 && (
+                <>
+                  <InfoSection title="Track Snapshot" />
+                  <InfoRow label="First track">{trackSummary(tracks[0])}</InfoRow>
+                  <InfoRow label="Last track">{trackSummary(tracks[tracks.length - 1])}</InfoRow>
+                </>
+              )}
+            </div>
+          </Overlay>
+        );
+      })()}
 
       {detail && (
         <Overlay title={detail.title} onClose={() => setDetail(null)}>
