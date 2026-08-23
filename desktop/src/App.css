@@ -272,7 +272,6 @@ select {
   gap: 5px;
   white-space: nowrap;
 }
-
 /* No accidental text selection in the chrome (WKWebView needs the -webkit- prefix);
    re-enable it inside inputs and modals so the video id etc. can still be copied. */
 .app {
@@ -287,7 +286,7 @@ input,
 
 .song-head {
   display: grid;
-  grid-template-columns: 45% 33% 22%;
+  grid-template-columns: 42% 28% 30%;
   padding: 7px 10px;
   font-weight: 600;
   font-size: 12.5px;
@@ -300,6 +299,9 @@ input,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.song-head .col.static {
+  cursor: default;
 }
 .song-scroll {
   flex: 1 1 auto;
@@ -333,7 +335,7 @@ input,
   right: 0;
   height: 30px;
   display: grid;
-  grid-template-columns: 45% 33% 22%;
+  grid-template-columns: 42% 28% 30%;
   align-items: center;
   padding: 0 10px;
   font-size: 13px;

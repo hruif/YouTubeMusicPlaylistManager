@@ -16,6 +16,7 @@ import {
   getAccountInfo,
   getLibraryPlaylists,
   fetchTracksForPlaylists,
+  applyFetchedPlaylistTitles,
   combineFromCache,
   addVideos,
   removeVideos,
@@ -42,7 +43,7 @@ import "./App.css";
 // Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
 // selection/sort, search (Cmd+F), hide playlists, details with external links.
 
-type SortKey = "title" | "artist" | "count";
+type SortKey = "title" | "artist";
 type PlaylistSort = "name" | "updated" | "count";
 
 function InfoSection({ title }: { title: string }) {
@@ -85,6 +86,7 @@ type UiState = {
   autoRefreshOnLaunch: boolean;
   playlistSort: PlaylistSort;
   queuePrivacy: PlaylistPrivacy;
+  showAllSidebarMemberships: boolean;
 };
 const UI_KEY = "ytm.ui";
 function loadUi(): UiState {
@@ -100,10 +102,16 @@ function loadUi(): UiState {
     autoRefreshOnLaunch: true,
     playlistSort: "name",
     queuePrivacy: "UNLISTED",
+    showAllSidebarMemberships: true,
   };
   try {
     const raw = localStorage.getItem(UI_KEY);
-    return raw ? { ...base, ...(JSON.parse(raw) as Partial<UiState>) } : base;
+    if (!raw) return base;
+    const parsed = JSON.parse(raw) as Partial<UiState> & { sortKey?: string };
+    const state = { ...base, ...parsed } as UiState;
+    // Playlist-count sorting existed in older builds; migrate it to the predictable title sort.
+    if (parsed.sortKey !== "title" && parsed.sortKey !== "artist") state.sortKey = "title";
+    return state;
   } catch {
     return base;
   }
@@ -166,6 +174,7 @@ function App() {
   const [autoRefreshOnLaunch, setAutoRefreshOnLaunch] = useState(ui0.autoRefreshOnLaunch);
   const [queuePrivacy, setQueuePrivacy] = useState<PlaylistPrivacy>(ui0.queuePrivacy);
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
+  const [showAllSidebarMemberships, setShowAllSidebarMemberships] = useState(ui0.showAllSidebarMemberships);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [checkingForUpdates, setCheckingForUpdates] = useState(false);
@@ -574,18 +583,18 @@ function App() {
     try {
       localStorage.setItem(
         UI_KEY,
-        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy }),
+        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, showAllSidebarMemberships }),
       );
     } catch {
       /* ignore */
     }
-  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy]);
+  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, showAllSidebarMemberships]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
   // (sort/filter/search) so a range isn't computed across two different orderings.
   useEffect(() => {
     lastSongIndex.current = null;
-  }, [sortKey, sortAsc, query, dupOnly, unavailableOnly]);
+  }, [sortKey, sortAsc, query, dupOnly, unavailableOnly, showAllSidebarMemberships]);
 
   // Keyboard: Esc dismisses the menu / topmost modal; Cmd+F search; Cmd+A select all; Delete removes
   // the selected songs. Esc works even while typing; the rest are ignored inside text inputs.
@@ -630,9 +639,12 @@ function App() {
       const { tracks, editable, title } = await getPlaylistTracks(id);
       const name = title || "Playlist";
       const c = cacheRef.current;
+      const existing = c.playlists.some((p) => p.id === id);
       persist({
         ...c,
-        playlists: c.playlists.some((p) => p.id === id) ? c.playlists : [{ id, title: name }, ...c.playlists],
+        playlists: existing
+          ? c.playlists.map((p) => (p.id === id && p.title !== name ? { ...p, title: name } : p))
+          : [{ id, title: name }, ...c.playlists],
         tracksByPlaylist: { ...c.tracksByPlaylist, [id]: tracks },
         updatedAt: { ...c.updatedAt, [id]: Date.now() },
         editable: editable ? [...new Set([...c.editable, id])] : c.editable,
@@ -794,7 +806,7 @@ function App() {
     setBusy(true);
     setStatus(`Updating 0/${list.length}…`);
     try {
-      const { tracksByPlaylist, editableIds, notFoundIds, failures } = await fetchTracksForPlaylists(
+      const { tracksByPlaylist, titlesByPlaylist, editableIds, notFoundIds, failures } = await fetchTracksForPlaylists(
         list,
         concurrency,
         (done, total) => setStatus(`Updating ${done}/${total}…`),
@@ -827,6 +839,7 @@ function App() {
 
       let next: LibraryCache = {
         ...cacheRef.current,
+        playlists: applyFetchedPlaylistTitles(cacheRef.current.playlists, titlesByPlaylist),
         tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, ...tracksByPlaylist },
         updatedAt,
         editable: [...new Set([...cacheRef.current.editable, ...editableIds])],
@@ -887,8 +900,13 @@ function App() {
   }
 
   const songs = useMemo(
-    () => combineFromCache(selectedPlaylists, cache.tracksByPlaylist),
-    [selectedPlaylists, cache.tracksByPlaylist],
+    () =>
+      combineFromCache(
+        selectedPlaylists,
+        cache.tracksByPlaylist,
+        showAllSidebarMemberships ? visiblePlaylists : selectedPlaylists,
+      ),
+    [selectedPlaylists, visiblePlaylists, showAllSidebarMemberships, cache.tracksByPlaylist],
   );
 
   // Keep the song selection in sync with the songs that actually exist. Deselecting a playlist or a
@@ -1319,8 +1337,7 @@ function App() {
     copy.sort((a, b) => {
       let cmp = 0;
       if (sortKey === "title") cmp = a.title.localeCompare(b.title);
-      else if (sortKey === "artist") cmp = a.artist.localeCompare(b.artist);
-      else cmp = a.playlists.length - b.playlists.length;
+      else cmp = a.artist.localeCompare(b.artist);
       return sortAsc ? cmp : -cmp;
     });
     return copy;
@@ -1559,7 +1576,7 @@ function App() {
             <div className="searchbar">
               <input spellCheck={false} autoCorrect="off" autoCapitalize="off" ref={searchRef} className="search" placeholder="Search songs…  (⌘F)" value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
               {query && <button className="small" onClick={() => setQuery("")}>clear</button>}
-              <label className="toggle">
+              <label className="toggle" title={`Show songs found in more than one ${showAllSidebarMemberships ? "sidebar" : "selected"} playlist`}>
                 <input type="checkbox" checked={dupOnly} onChange={(e) => setDupOnly(e.currentTarget.checked)} />
                 in &gt;1 playlist
               </label>
@@ -1573,7 +1590,9 @@ function App() {
             <div className="song-head">
               <div className="col" onClick={() => sortBy("title")}>Title{arrow("title")}</div>
               <div className="col" onClick={() => sortBy("artist")}>Artist{arrow("artist")}</div>
-              <div className="col" onClick={() => sortBy("count")}>In playlists{arrow("count")}</div>
+              <div className="col static" title={`Playlist membership across ${showAllSidebarMemberships ? "all cached sidebar playlists" : "the selected playlists"}`}>
+                In playlists
+              </div>
             </div>
             <SongList
               songs={visibleSongs}
@@ -2130,6 +2149,18 @@ function App() {
               : queuePrivacy === "PUBLIC"
                 ? "Public queues open in any browser and may appear on your channel and in search."
                 : "Unlisted queues open in any browser via the link, but aren't listed on your channel or in search. Recommended."}
+          </p>
+          <InfoSection title="Advanced" />
+          <label className="setting">
+            <input
+              type="checkbox"
+              checked={showAllSidebarMemberships}
+              onChange={(e) => setShowAllSidebarMemberships(e.currentTarget.checked)}
+            />
+            Show each song's membership across all sidebar playlists
+          </label>
+          <p className="settings-note" style={{ marginTop: -3 }}>
+            Songs still come only from selected playlists. Turn this off to limit playlist labels and the duplicate filter to the selection.
           </p>
           <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 13 }}>

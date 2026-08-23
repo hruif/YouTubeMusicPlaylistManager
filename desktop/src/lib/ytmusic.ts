@@ -89,11 +89,13 @@ export async function fetchTracksForPlaylists(
   onDone?: (done: number, total: number, playlist: Playlist, ok: boolean) => void,
 ): Promise<{
   tracksByPlaylist: Record<string, Track[]>;
+  titlesByPlaylist: Record<string, string>;
   editableIds: string[];
   notFoundIds: string[];
   failures: Playlist[];
 }> {
   const tracksByPlaylist: Record<string, Track[]> = {};
+  const titlesByPlaylist: Record<string, string> = {};
   const editableIds: string[] = [];
   const notFoundIds: string[] = []; // playlists YouTube reports as gone (HTTP 404)
   const failures: Playlist[] = [];
@@ -103,8 +105,9 @@ export async function fetchTracksForPlaylists(
     while (next < playlists.length) {
       const playlist = playlists[next++];
       try {
-        const { tracks, editable } = await getPlaylistTracks(playlist.id);
+        const { tracks, editable, title } = await getPlaylistTracks(playlist.id);
         tracksByPlaylist[playlist.id] = tracks;
+        if (title) titlesByPlaylist[playlist.id] = title;
         if (editable) editableIds.push(playlist.id);
         onDone?.(++done, playlists.length, playlist, true);
       } catch (err) {
@@ -119,7 +122,18 @@ export async function fetchTracksForPlaylists(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, playlists.length) }, () => worker()),
   );
-  return { tracksByPlaylist, editableIds, notFoundIds, failures };
+  return { tracksByPlaylist, titlesByPlaylist, editableIds, notFoundIds, failures };
+}
+
+/** Apply authoritative titles returned while fetching playlist contents (including URL imports). */
+export function applyFetchedPlaylistTitles(
+  playlists: Playlist[],
+  titlesByPlaylist: Record<string, string>,
+): Playlist[] {
+  return playlists.map((playlist) => {
+    const title = titlesByPlaylist[playlist.id]?.trim();
+    return title && title !== playlist.title ? { ...playlist, title } : playlist;
+  });
 }
 
 /**
@@ -129,21 +143,28 @@ export async function fetchTracksForPlaylists(
 export function combineFromCache(
   selected: Playlist[],
   tracksByPlaylist: Record<string, Track[]>,
+  membershipPlaylists: Playlist[] = selected,
 ): CombinedSong[] {
-  // Membership is deduped by playlist *id*, not title: two playlists that happen to share a title
-  // still count as two, and a song listed twice within one playlist doesn't inflate the count. The
-  // displayed `playlists` array holds titles (resolved per id).
+  // The rows always come from `selected`; membership can optionally be calculated over a broader
+  // cached scope (for example every playlist shown in the sidebar). Membership is deduped by
+  // playlist *id*, not title, so duplicate playlist names still count independently.
   const byVideo = new Map<string, CombinedSong & { _ids: Set<string> }>();
   for (const playlist of selected) {
     for (const track of tracksByPlaylist[playlist.id] ?? []) {
+      if (!byVideo.has(track.videoId)) {
+        byVideo.set(track.videoId, { ...track, playlists: [], _ids: new Set() });
+      }
+    }
+  }
+  const membershipById = new Map(
+    [...selected, ...membershipPlaylists].map((playlist) => [playlist.id, playlist]),
+  );
+  for (const playlist of membershipById.values()) {
+    for (const track of tracksByPlaylist[playlist.id] ?? []) {
       const existing = byVideo.get(track.videoId);
-      if (existing) {
-        if (!existing._ids.has(playlist.id)) {
-          existing._ids.add(playlist.id);
-          existing.playlists.push(playlist.title);
-        }
-      } else {
-        byVideo.set(track.videoId, { ...track, playlists: [playlist.title], _ids: new Set([playlist.id]) });
+      if (existing && !existing._ids.has(playlist.id)) {
+        existing._ids.add(playlist.id);
+        existing.playlists.push(playlist.title);
       }
     }
   }

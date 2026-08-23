@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ROW_H } from "../lib/format";
+import { formatPlaylistNames, ROW_H } from "../lib/format";
 import type { CombinedSong } from "../lib/ytmusic";
 
 type Props = {
@@ -58,7 +58,7 @@ export const SongRow = memo(function SongRow({ song, index, zebra, selected, cus
       </div>
       <div className="cell muted">{song.artist}</div>
       <div className="cell muted" title={song.playlists.join(", ")}>
-        {song.playlists.length === 1 ? song.playlists[0] : `${song.playlists.length} playlists`}
+        {formatPlaylistNames(song.playlists)}
       </div>
     </div>
   );

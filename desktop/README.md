@@ -9,7 +9,8 @@ universal macOS `.dmg`. The original Python app still works but is no longer the
   no more copying browser headers. The session is stored encrypted at rest (macOS Keychain via
   Electron `safeStorage`).
 - **Library** — your full YouTube Music playlists (including private), cached locally for instant,
-  virtualized browsing; combined sortable song view, search, custom names, hide unwanted playlists.
+  virtualized browsing; combined song view sortable by title or artist, compact cross-sidebar
+  playlist membership, search, custom names, and the ability to hide unwanted playlists.
 - **Edit your playlists** — add / remove / create / delete / remove-repeats, optimistic with revert
   and a hardened, recoverable delete.
 - **Spotify → YouTube** — import a public Spotify playlist (no setup) and transfer it via conservative

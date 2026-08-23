@@ -3,12 +3,23 @@
 Living board of what's planned, in progress, and shipped. Update this file as part of any
 feature or bug change. See `CONTRIBUTING.md` for the debug-first → release workflow.
 
-_Last updated: 2026-06-26_
+_Last updated: 2026-07-11_
 
 ## In progress — debug-gated (`PLAYLIST_MANAGER_SHOW_QUEUE_ACTIONS`)
 
 - _Nothing is currently gated._ The flag and `_show_youtube_queue_actions()` remain as the
   reusable gating mechanism for the next experimental feature (see `CONTRIBUTING.md`).
+
+## Unreleased — desktop app
+
+- **Clearer cross-playlist membership.** Combined-song rows list up to two playlist names plus
+  `(+N more)` instead of a numeric-only count. Membership is calculated across every cached
+  playlist shown in the sidebar by default, while the song rows themselves still come only from
+  selected playlists. An Advanced setting can limit membership and duplicate filtering to the
+  selection. The membership column is informational; only Title and Artist remain sortable.
+- **Playlist-title synchronization.** The library refresh already adopts title changes for saved
+  library playlists. Track refreshes now also apply YouTube's current title, covering public
+  playlists added by URL; re-adding a URL updates its cached title immediately.
 
 ## Released — always on (normal and debug builds)
 
@@ -198,7 +209,7 @@ for architecture/layout.
     live write confirmation was completed during the later edit/queue feature work.)
   - **Phase 1 — DONE.** YT Music library API (names, full list, private playlists); cache-driven
     (library cached as JSON in the app data dir — instant browsing, network only on explicit
-    "Update", concurrent + resilient fetch, pooled HTTP client); virtualized combined sortable song
+    "Update", concurrent + resilient fetch, pooled HTTP client); virtualized combined song
     view with thumbnails + per-song details; song search (⌘F) + ">1 playlist" filter; multi-select;
     hide playlists ("Manage playlists" + hover-×); staleness indicators + "Update stale"; persisted
     selection/sort; custom right-click menus; light/dark design pass. Deferred: background auto-update.
@@ -310,6 +321,9 @@ for architecture/layout.
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
   Cutover done: the Electron app (`desktop-v0.3.4`) is the featured download; the Python app is the
   legacy fallback.
+- [ ] **Playlist naming controls (desktop).** Consider account-backed rename for owned YouTube
+  playlists, plus local custom playlist names/aliases for disambiguation without changing YouTube.
+  Keep the real title visible in Playlist Info, following the custom-song-name precedent.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
 - ~~Guided in-app browser-header extraction to reduce manual copy/paste friction.~~ **Not

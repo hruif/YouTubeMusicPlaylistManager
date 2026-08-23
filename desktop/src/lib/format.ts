@@ -16,3 +16,12 @@ export function relativeAge(ms?: number): string {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+
+/** Compact playlist membership for song rows; the full list remains available in the tooltip. */
+export function formatPlaylistNames(playlists: string[], maxVisible = 2): string {
+  if (playlists.length === 0) return "None";
+  const visibleCount = Math.max(1, maxVisible);
+  const visible = playlists.slice(0, visibleCount).join(", ");
+  const remaining = playlists.length - visibleCount;
+  return remaining > 0 ? `${visible} (+${remaining} more)` : visible;
+}

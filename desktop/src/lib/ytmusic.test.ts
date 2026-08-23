@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId } from "./ytmusic";
+import { applyFetchedPlaylistTitles, bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId } from "./ytmusic";
 // These moved to the Electron main process (they operate on youtubei.js internals).
 import { normalizeCookie, isPlaylistEditable, extractTrackFromPlaylistItem } from "../../electron/yt";
 
@@ -47,6 +47,48 @@ describe("combineFromCache", () => {
   });
   it("ignores selected playlists with no cached tracks", () => {
     expect(combineFromCache([{ id: "A", title: "PA" }], {})).toEqual([]);
+  });
+  it("can calculate membership from a broader playlist scope without adding its songs", () => {
+    const selected = [{ id: "A", title: "Selected" }];
+    const sidebar = [
+      ...selected,
+      { id: "B", title: "Also here" },
+      { id: "C", title: "Unrelated" },
+    ];
+    const byPlaylist = {
+      A: [t("shared"), t("selected-only")],
+      B: [t("shared"), t("sidebar-only")],
+      C: [t("other")],
+    };
+
+    const out = combineFromCache(selected, byPlaylist, sidebar);
+    expect(out.map((s) => s.videoId).sort()).toEqual(["selected-only", "shared"]);
+    expect(out.find((s) => s.videoId === "shared")?.playlists).toEqual(["Selected", "Also here"]);
+    expect(out.find((s) => s.videoId === "selected-only")?.playlists).toEqual(["Selected"]);
+  });
+  it("always includes selected-playlist membership when the extra scope omits it", () => {
+    const selected = [{ id: "A", title: "Selected" }];
+    const out = combineFromCache(selected, { A: [t("x")] }, []);
+    expect(out[0].playlists).toEqual(["Selected"]);
+  });
+});
+
+describe("applyFetchedPlaylistTitles", () => {
+  it("updates renamed playlists and leaves playlists without a fetched title unchanged", () => {
+    const playlists = [
+      { id: "A", title: "Old name" },
+      { id: "B", title: "Keep me" },
+    ];
+    expect(applyFetchedPlaylistTitles(playlists, { A: "New name" })).toEqual([
+      { id: "A", title: "New name" },
+      { id: "B", title: "Keep me" },
+    ]);
+  });
+
+  it("ignores blank fetched titles", () => {
+    expect(applyFetchedPlaylistTitles([{ id: "A", title: "Known" }], { A: "  " })).toEqual([
+      { id: "A", title: "Known" },
+    ]);
   });
 });
 
