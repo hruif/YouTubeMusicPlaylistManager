@@ -15,7 +15,7 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Project layout (quick)
 - **Two coexisting apps:** the original **Python/Tkinter** app at the root (legacy fallback), and the
   native **Electron (React/TS)** rewrite in [`desktop/`](../desktop/), now the primary download
-  (latest public release `desktop-v0.3.4`, universal `.dmg`). See the **Desktop app** section just
+  (latest public release `desktop-v0.3.5`, universal `.dmg`). See the **Desktop app** section just
   below for it; the Python-specific rules in the rest of this handoff are for the root app.
 - `main.py` (entry point) is the only code file at the root; all application code is under `app/`
   — `app/ui.py` (controller), `app/app_*` (core/config), `app/views/`, `app/services/`.
@@ -26,10 +26,12 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** latest public release is `desktop-v0.3.4`, a clean-update pass: an **in-place
-  updater** (downloads the new build's zipped `.app`, swaps the bundle, relaunches — "Update &
-  restart", no drag/Gatekeeper; unsigned custom swap, not Squirrel) and **cache schema versioning**
-  that auto-re-fetches tracks after an upgrade (fixes "missing artists until refresh"). 0.3.3 added
+- **Current state:** `desktop-v0.3.5` fixes **Remove repeats** on YouTube Music: delete only extra
+  playlist entries, retain the first copy and its position, and refresh from the account with
+  bounded retries for delayed browse results. The confirmation counts extra copies and puts its
+  note on a new line. 0.3.4 introduced an **in-place updater** (downloads the new build's zipped
+  `.app`, swaps the bundle, relaunches — "Update & restart"; unsigned custom swap, not Squirrel)
+  and **cache schema versioning** that re-fetches tracks after a parser upgrade. 0.3.3 added
   configurable queue visibility, the surfaced signed-in account, sidebar track-loading, and the
   Playlist Info modal (`6a0515f`). See `dev-docs/STATUS.md` for the full list and **two ⚠ live-verify
   notes**: the unlisted queue create (raw account-touching write) and the in-place self-swap (first

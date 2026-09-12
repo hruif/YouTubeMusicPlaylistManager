@@ -1,9 +1,50 @@
-import { describe, it, expect } from "vitest";
-import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId } from "./ytmusic";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId, getPlaylistTracksAfterRepeatRemoval } from "./ytmusic";
+import { invoke } from "./native";
+vi.mock("./native", () => ({ invoke: vi.fn() }));
 // These moved to the Electron main process (they operate on youtubei.js internals).
 import { normalizeCookie, isPlaylistEditable, extractTrackFromPlaylistItem } from "../../electron/yt";
 
 const cand = (videoId: string, title: string, artist: string) => ({ videoId, title, artist });
+
+describe("playlist refresh after repeat removal", () => {
+  const invokeMock = vi.mocked(invoke);
+  const playlist = (ids: string[]) => ({
+    tracks: ids.map((id) => cand(id, id, "artist")), editable: true, title: "check",
+  });
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("waits for YouTube's stale browse responses to settle without repeating the edit", async () => {
+    invokeMock.mockResolvedValueOnce(playlist(["A", "B", "A", "A"]))
+      .mockResolvedValueOnce(playlist(["A", "B", "A"]))
+      .mockResolvedValueOnce(playlist(["A", "B"]));
+    const pending = getPlaylistTracksAfterRepeatRemoval("PLcheck", ["A"]);
+    await vi.runAllTimersAsync();
+    expect((await pending).tracks.map((track) => track.videoId)).toEqual(["A", "B"]);
+    expect(invokeMock.mock.calls).toEqual(Array(3).fill(["yt_get_playlist_tracks", { playlistId: "PLcheck" }]));
+  });
+
+  it("returns immediately when the confirmed songs no longer repeat", async () => {
+    invokeMock.mockResolvedValue(playlist(["A", "B", "B"]));
+    await getPlaylistTracksAfterRepeatRemoval("PLcheck", ["A"]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds retries and returns remaining repeats so the UI reports the incomplete removal", async () => {
+    invokeMock.mockResolvedValue(playlist(["A", "A"]));
+    const pending = getPlaylistTracksAfterRepeatRemoval("PLcheck", ["A"]);
+    await vi.runAllTimersAsync();
+    expect((await pending).tracks).toHaveLength(2);
+    expect(invokeMock).toHaveBeenCalledTimes(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe("bestYoutubeMatch (conservative Spotify→YT matcher)", () => {
   it("matches when one title's tokens ⊆ the other and an artist word overlaps", () => {

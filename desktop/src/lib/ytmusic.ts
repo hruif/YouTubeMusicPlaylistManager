@@ -57,6 +57,26 @@ export async function removeRepeatedVideos(playlistId: string, videoIds: string[
   return invoke<number>("yt_remove_repeated_videos", { playlistId, videoIds });
 }
 
+// YouTube can acknowledge an edit before its browse response reflects it. Retry only the read;
+// replaying the removal could act on entries the user changed while the edit was settling.
+export async function getPlaylistTracksAfterRepeatRemoval(playlistId: string, videoIds: string[]) {
+  const wanted = new Set(videoIds);
+  let result = await getPlaylistTracks(playlistId);
+  for (const delay of [500, 1500, 3000]) {
+    const seen = new Set<string>();
+    const stillRepeated = result.tracks.some(({ videoId }) => {
+      if (!wanted.has(videoId)) return false;
+      if (seen.has(videoId)) return true;
+      seen.add(videoId);
+      return false;
+    });
+    if (!stillRepeated) break;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    result = await getPlaylistTracks(playlistId);
+  }
+  return result;
+}
+
 export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";
 
 export async function createPlaylist(

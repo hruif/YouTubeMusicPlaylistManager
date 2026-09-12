@@ -296,17 +296,26 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
-  - **Remove repeats fix — implemented (2026-09-11, unreleased).** The desktop action previously
+  - **Desktop 0.3.5 — release candidate verified locally (2026-09-11).** Publishing the
+    repeat-removal fix to the live desktop update channel is authorized. The universal DMG and
+    update ZIP are built. The final package passed the live repeat-removal check: an owned private
+    test playlist went from five entries to two in both the app and YouTube Music, retaining the
+    original first-copy order, with a successful status message and the note on its own line.
+    The temporary playlist was deleted after the check. **43 focused tests and desktop typecheck
+    passed** (`npm run test -- electron/yt.test.ts src/lib/ytmusic.test.ts src/lib/update.test.ts`,
+    `npm run typecheck`). Next checkpoint: stage the release assets, exercise the installed 0.3.4
+    updater, then promote 0.3.5 to Latest. Publication is pending; GitHub Actions stays skipped.
+  - **Remove repeats fix — implemented and live-verified (2026-09-11).** The desktop action previously
     removed one occurrence per video and immediately re-added it, leaving the account unchanged
     while de-duplicating only the cache. A dedicated edit now removes each extra entry by its
     `playlistSetVideoId`, across all song pages, keeping the first copy in place. The app reads the
     live playlist before confirmation and after editing so a stale/incorrect cache cannot hide
     repeats; incomplete pagination, missing entry IDs, and rejected edits fail visibly. The dialog
-    counts extra copies and puts the corrected order-preservation note on a new line. **Local
-    verification:** `npm run test -- electron/yt.test.ts src/lib/ytmusic.test.ts` passed (36 tests),
-    including paginated account-state regression, partial reads, and rejected writes;
-    `npm run typecheck` passed. **Not built / not tested against a live account.** Next checkpoint:
-    exercise Remove repeats on an owned playlist with repeated songs before packaging a release.
+    counts extra copies and puts the corrected order-preservation note on a new line. Live testing
+    also exposed delayed browse consistency after acknowledged edits; the app now retries only
+    the refresh, with bounded delays, before reporting remaining repeats. Tests cover paginated
+    removals, incomplete reads, rejected writes, and stale browse responses. See the release
+    checkpoint above for the final package's verification evidence.
   - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
     `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
     it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the

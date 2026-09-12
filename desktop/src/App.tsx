@@ -23,6 +23,7 @@ import {
   createPlaylist,
   deletePlaylist,
   getPlaylistTracks,
+  getPlaylistTracksAfterRepeatRemoval,
   parseYouTubePlaylistId,
   searchYouTubeMusicSongs,
   bestYoutubeMatch,
@@ -1258,8 +1259,10 @@ function App() {
   async function removeRepeats(p: Playlist) {
     if (busy) return;
     // Read YouTube first: older versions could hide repeats in the cache without removing them.
-    const refreshTracks = async () => {
-      const { tracks } = await getPlaylistTracks(p.id);
+    const refreshTracks = async (removedVideoIds?: string[]) => {
+      const { tracks } = removedVideoIds
+        ? await getPlaylistTracksAfterRepeatRemoval(p.id, removedVideoIds)
+        : await getPlaylistTracks(p.id);
       persist({
         ...cacheRef.current,
         tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks },
@@ -1294,7 +1297,7 @@ function App() {
         setStatus(`Removing repeats in ${p.title}…`);
         try {
           const removedCount = await removeRepeatedVideos(p.id, repeated);
-          const currentTracks = await refreshTracks();
+          const currentTracks = await refreshTracks(repeated);
           const remainingCounts = new Map<string, number>();
           for (const t of currentTracks) remainingCounts.set(t.videoId, (remainingCounts.get(t.videoId) ?? 0) + 1);
           const remaining = repeated.reduce((total, id) => total + Math.max(0, (remainingCounts.get(id) ?? 0) - 1), 0);

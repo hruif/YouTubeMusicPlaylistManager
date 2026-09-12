@@ -1,7 +1,7 @@
 # YouTube Music Manager — native desktop app
 
 The native rewrite of [YouTube Music Playlist Manager](../README.md), built with **Electron** +
-**React/TypeScript** (Vite). It's the recommended download — current release `desktop-v0.3.4`, a
+**React/TypeScript** (Vite). It's the recommended download — current release `desktop-v0.3.5`, a
 universal macOS `.dmg`. The original Python app still works but is no longer the primary download.
 
 ## What it does
@@ -12,7 +12,8 @@ universal macOS `.dmg`. The original Python app still works but is no longer the
   virtualized browsing; combined sortable song view, search, custom names, hide unwanted playlists.
 - **Edit your playlists** — add / remove / create / delete, with a recoverable delete. **Remove
   repeats** checks YouTube Music for extra copies, keeps the first copy in its original position,
-  and refreshes the playlist from your account after removal.
+  and refreshes the playlist from your account after removal, allowing a few seconds for YouTube's
+  browse results to catch up with the edit.
 - **Spotify → YouTube** — import a public Spotify playlist (no setup) and transfer it via conservative
   title+artist matching; unmatched songs are saved for manual follow-up.
 - **Local extras** — CSV export, removed-songs archive, best-effort unavailable filter.
