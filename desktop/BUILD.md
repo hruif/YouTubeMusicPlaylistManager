@@ -62,3 +62,7 @@ in `electron-builder.yml` (`mac.identity`) and configure electron-builder notari
   Developer ID). Falls back to the manual `.dmg` if the release has no zip (pre-0.3.4), if not running
   the installed app, or if the install dir needs admin. **Test the in-place path on an actual
   installed copy** before relying on it — it can't run in dev or from the read-only `.dmg` mount.
+- **Verified 2026-09-11:** the installed 0.3.4 app downloaded the staged 0.3.5 release ZIP through
+  its `installUpdate` bridge, replaced `/Applications/YouTube Music Manager.app`, and relaunched
+  as 0.3.5. Settings confirmed the version and signed-in account; the library and selections
+  were preserved. This exercised the installed updater before promoting the release to Latest.

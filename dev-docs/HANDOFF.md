@@ -33,9 +33,10 @@ The shipped app is the Electron rewrite in `desktop/`; **its own docs are the so
   `.app`, swaps the bundle, relaunches — "Update & restart"; unsigned custom swap, not Squirrel)
   and **cache schema versioning** that re-fetches tracks after a parser upgrade. 0.3.3 added
   configurable queue visibility, the surfaced signed-in account, sidebar track-loading, and the
-  Playlist Info modal (`6a0515f`). See `dev-docs/STATUS.md` for the full list and **two ⚠ live-verify
-  notes**: the unlisted queue create (raw account-touching write) and the in-place self-swap (first
-  runs on a 0.3.4→0.3.5 update — verify before cutting 0.3.5).
+  Playlist Info modal (`6a0515f`). The installed **0.3.4→0.3.5 in-place update was verified on
+  2026-09-11** using the staged release ZIP through the app's updater bridge; it relaunched as
+  0.3.5 with the signed-in account, library, and selections preserved. See `dev-docs/STATUS.md`
+  for the full list and the remaining **⚠ live-verify note** for unlisted queue creation.
 - **Code:** `desktop/electron/` is the Node main process — `youtubei.js` lives in `yt.ts`, IPC in
   `main.ts`/`backend.ts`, native sign-in in `auth.ts` + `login-helper/`; `desktop/src/` is the React
   renderer (`App.tsx` controller, `lib/`, `components/`).

@@ -185,7 +185,7 @@ for architecture/layout.
   React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
   sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
   keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
-  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.4`, universal `.dmg`);
+  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.5`, universal `.dmg`);
   the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
   `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
   historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
@@ -283,12 +283,12 @@ for architecture/layout.
       (`UpdateInfo.zipUrl`); the banner/Settings show in-place install + progress when running the
       packaged app on a release that ships the zip, else fall back to the manual `.dmg`. Trust: only
       downloads/executes from `github.com`/`githubusercontent.com` over HTTPS. Falls back to revealing
-      the new app in Finder if the install dir isn't user-writable (needs admin). ⚠ **Live-verify on
-      an installed copy before cutting 0.3.5** — the self-swap can't run in dev or from a read-only
-      image and wasn't exercised when written, and it first *runs* on a 0.3.4→0.3.5 update (0.3.3's
-      updater was notify-only, so 0.3.3→0.3.4 is the last manual reinstall; that install does auto-fix
-      the cache, and 0.3.4→onward is in-place). Test locally: install 0.3.4, build a throwaway 0.3.5
-      with its `…-mac.zip`, and confirm "Update & restart" relaunches as 0.3.5 with no drag/Gatekeeper.
+      the new app in Finder if the install dir isn't user-writable (needs admin). **Live-verified
+      on 2026-09-11:** the installed 0.3.4 app's `installUpdate` bridge downloaded the staged
+      0.3.5 GitHub release ZIP, replaced the app in `/Applications`, and relaunched as 0.3.5.
+      Settings confirmed the version and signed-in account; the library and selections were
+      preserved. No manual bundle replacement was needed. The 0.3.3 updater was notify-only,
+      so 0.3.3→0.3.4 remains the last required manual reinstall.
     - **Cache schema versioning + migration.** `cache.ts` now stamps a `CACHE_VERSION`; on launch, a
       cache written by an older schema has its **cached tracks dropped and re-fetched** with the
       current parser (keyed metadata — custom names, archives, sidebar selection — is preserved), and
@@ -296,15 +296,18 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
-  - **Desktop 0.3.5 — release candidate verified locally (2026-09-11).** Publishing the
-    repeat-removal fix to the live desktop update channel is authorized. The universal DMG and
-    update ZIP are built. The final package passed the live repeat-removal check: an owned private
+  - **Released in `desktop-v0.3.5` (2026-09-11).** The universal DMG and updater ZIP are published
+    on GitHub, and 0.3.5 is confirmed as **Latest** on the live desktop update channel. Both
+    uploaded asset SHA-256 digests match the local build. The final package passed the live
+    repeat-removal check: an owned private
     test playlist went from five entries to two in both the app and YouTube Music, retaining the
     original first-copy order, with a successful status message and the note on its own line.
     The temporary playlist was deleted after the check. **43 focused tests and desktop typecheck
     passed** (`npm run test -- electron/yt.test.ts src/lib/ytmusic.test.ts src/lib/update.test.ts`,
-    `npm run typecheck`). Next checkpoint: stage the release assets, exercise the installed 0.3.4
-    updater, then promote 0.3.5 to Latest. Publication is pending; GitHub Actions stays skipped.
+    `npm run typecheck`). The installed 0.3.4→0.3.5 updater check passed against the staged ZIP
+    before promotion (see above). The DMG upload succeeded using small TLS records after repeated
+    connection failures with the regular upload clients. Builds and checks ran locally; GitHub
+    Actions stayed skipped. Release publication and its verification gates are complete.
   - **Remove repeats fix — implemented and live-verified (2026-09-11).** The desktop action previously
     removed one occurrence per video and immediately re-added it, leaving the account unchanged
     while de-duplicating only the cache. A dedicated edit now removes each extra entry by its
@@ -328,7 +331,7 @@ for architecture/layout.
     in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  Cutover done: the Electron app (`desktop-v0.3.4`) is the featured download; the Python app is the
+  Cutover done: the Electron app (`desktop-v0.3.5`) is the featured download; the Python app is the
   legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
