@@ -10,8 +10,9 @@ universal macOS `.dmg`. The original Python app still works but is no longer the
   Electron `safeStorage`).
 - **Library** — your full YouTube Music playlists (including private), cached locally for instant,
   virtualized browsing; combined sortable song view, search, custom names, hide unwanted playlists.
-- **Edit your playlists** — add / remove / create / delete / remove-repeats, optimistic with revert
-  and a hardened, recoverable delete.
+- **Edit your playlists** — add / remove / create / delete, with a recoverable delete. **Remove
+  repeats** checks YouTube Music for extra copies, keeps the first copy in its original position,
+  and refreshes the playlist from your account after removal.
 - **Spotify → YouTube** — import a public Spotify playlist (no setup) and transfer it via conservative
   title+artist matching; unmatched songs are saved for manual follow-up.
 - **Local extras** — CSV export, removed-songs archive, best-effort unavailable filter.

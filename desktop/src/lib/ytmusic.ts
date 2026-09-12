@@ -52,6 +52,11 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
   return invoke<string[]>("yt_remove_videos", { playlistId, videoIds });
 }
 
+/** Keeps the first copy of each confirmed song and returns the number of extra entries removed. */
+export async function removeRepeatedVideos(playlistId: string, videoIds: string[]): Promise<number> {
+  return invoke<number>("yt_remove_repeated_videos", { playlistId, videoIds });
+}
+
 export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";
 
 export async function createPlaylist(

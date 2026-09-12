@@ -296,6 +296,17 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
+  - **Remove repeats fix — implemented (2026-09-11, unreleased).** The desktop action previously
+    removed one occurrence per video and immediately re-added it, leaving the account unchanged
+    while de-duplicating only the cache. A dedicated edit now removes each extra entry by its
+    `playlistSetVideoId`, across all song pages, keeping the first copy in place. The app reads the
+    live playlist before confirmation and after editing so a stale/incorrect cache cannot hide
+    repeats; incomplete pagination, missing entry IDs, and rejected edits fail visibly. The dialog
+    counts extra copies and puts the corrected order-preservation note on a new line. **Local
+    verification:** `npm run test -- electron/yt.test.ts src/lib/ytmusic.test.ts` passed (36 tests),
+    including paginated account-state regression, partial reads, and rejected writes;
+    `npm run typecheck` passed. **Not built / not tested against a live account.** Next checkpoint:
+    exercise Remove repeats on an owned playlist with repeated songs before packaging a release.
   - **Streaming — considered & declined (2026-06-19).** JustAnotherMusicClient streams via
     `youtubei.js` `getStreamingData()` + `format.decipher()`; technically portable here. **Not doing
     it:** it bypasses ads/Premium and the decipher step is a DMCA §1201 circumvention angle (the

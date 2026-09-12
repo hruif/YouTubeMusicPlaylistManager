@@ -332,35 +332,81 @@ export async function getLibraryPlaylists(): Promise<Playlist[]> {
   return out;
 }
 
-export async function getPlaylistTracks(
-  playlistId: string,
-): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
+async function getPlaylistRows(playlistId: string) {
   const actions = requireClient().actions as unknown as {
     execute(endpoint: string, args: Record<string, unknown>): Promise<{ data?: unknown }>;
   };
   const browseId = `VL${normalizePlaylistId(playlistId)}`;
-  const out: Track[] = [];
+  // Keep raw rows until the caller has finished: playlistItemData identifies individual copies.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const take = (root: any): void => {
-    for (const row of collectPlaylistRows(root)) {
-      const track = extractTrackFromPlaylistItem(row);
-      if (track) out.push(track);
-    }
+    rows.push(...collectPlaylistRows(root));
   };
   let res = await actions.execute("/browse", { browseId, client: "YTMUSIC", parse: false });
   const editable = isPlaylistEditable(res?.data);
   const title = rawPlaylistTitle(res?.data);
   take(res?.data);
   let token = nextPlaylistSongsToken(res?.data);
-  let guard = 0;
-  while (token && guard++ < 60) {
+  const visited = new Set<string>();
+  while (token) {
+    if (visited.has(token) || visited.size >= 60) {
+      throw new Error("Couldn't load the complete playlist. Please try again.");
+    }
+    visited.add(token);
     res = await actions.execute("/browse", { continuation: token, client: "YTMUSIC", parse: false });
     take(res?.data);
-    const next = nextPlaylistSongsToken(res?.data);
-    if (next === token) break;
-    token = next;
+    token = nextPlaylistSongsToken(res?.data);
   }
-  return { tracks: out, editable, title };
+  return { rows, editable, title };
+}
+
+export async function getPlaylistTracks(
+  playlistId: string,
+): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
+  const { rows, editable, title } = await getPlaylistRows(playlistId);
+  const tracks = rows.map(extractTrackFromPlaylistItem).filter((track): track is Track => track !== null);
+  return { tracks, editable, title };
+}
+
+// Remove only the extra playlist entries for the confirmed song IDs. A video ID identifies the
+// song, while playlistSetVideoId identifies one copy; deleting one then re-adding it leaves the
+// same number of repeats. Read every songs page before editing and keep the first entry in place.
+export async function removeRepeatedVideos(playlistId: string, videoIds: string[]): Promise<number> {
+  const pid = normalizePlaylistId(playlistId);
+  const client = requireClient();
+  const wanted = new Set(videoIds);
+  if (!wanted.size) return 0;
+  const { rows } = await getPlaylistRows(pid);
+  const seenVideos = new Set<string>();
+  const seenSlots = new Set<string>();
+  const editActions: { action: "ACTION_REMOVE_VIDEO"; setVideoId: string }[] = [];
+  for (const row of rows) {
+    const videoId = extractVideoId(row);
+    if (!videoId || !wanted.has(videoId)) continue;
+    const setVideoId = row?.playlistItemData?.playlistSetVideoId;
+    // A repeated response row for the same slot is not another copy of the song.
+    if (typeof setVideoId === "string" && setVideoId) {
+      if (seenSlots.has(setVideoId)) continue;
+      seenSlots.add(setVideoId);
+    }
+    if (seenVideos.has(videoId)) {
+      if (typeof setVideoId !== "string" || !setVideoId) {
+        throw new Error("YouTube Music didn't provide the details needed to remove every repeat. Try refreshing or signing in again.");
+      }
+      editActions.push({ action: "ACTION_REMOVE_VIDEO", setVideoId });
+    } else {
+      seenVideos.add(videoId);
+    }
+  }
+  if (!editActions.length) return 0;
+  const endpoint = new YTNodes.NavigationEndpoint({ playlistEditEndpoint: { playlistId: pid, actions: editActions } });
+  const response = await endpoint.call(client.actions, { client: "YTMUSIC", parse: false });
+  if (!response.success || response.status_code >= 400 || response.data?.status !== "STATUS_SUCCEEDED") {
+    throw new Error("YouTube Music rejected the repeat removal. Refresh the playlist and try again.");
+  }
+  return editActions.length;
 }
 
 export async function addVideos(playlistId: string, videoIds: string[]): Promise<void> {

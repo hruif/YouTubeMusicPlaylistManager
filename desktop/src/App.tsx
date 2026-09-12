@@ -19,6 +19,7 @@ import {
   combineFromCache,
   addVideos,
   removeVideos,
+  removeRepeatedVideos,
   createPlaylist,
   deletePlaylist,
   getPlaylistTracks,
@@ -1254,48 +1255,73 @@ function App() {
   }
 
   // Remove repeated songs (same video appearing more than once) within one playlist, keeping one.
-  function removeRepeats(p: Playlist) {
-    const tracks = cache.tracksByPlaylist[p.id];
-    if (!tracks) {
-      setStatus(`Load songs for “${p.title}” first to find repeats`);
+  async function removeRepeats(p: Playlist) {
+    if (busy) return;
+    // Read YouTube first: older versions could hide repeats in the cache without removing them.
+    const refreshTracks = async () => {
+      const { tracks } = await getPlaylistTracks(p.id);
+      persist({
+        ...cacheRef.current,
+        tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks },
+        updatedAt: { ...cacheRef.current.updatedAt, [p.id]: Date.now() },
+      });
+      return tracks;
+    };
+    setBusy(true);
+    setStatus(`Checking repeats in “${p.title}”…`);
+    let tracks: Track[];
+    try {
+      tracks = await refreshTracks();
+    } catch (err) {
+      fail(`Couldn't check repeats: ${errText(err)}`);
       return;
+    } finally {
+      setBusy(false);
     }
     const counts = new Map<string, number>();
     for (const t of tracks) counts.set(t.videoId, (counts.get(t.videoId) ?? 0) + 1);
     const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([id]) => id);
+    const extraCount = repeated.reduce((total, id) => total + counts.get(id)! - 1, 0);
     if (repeated.length === 0) {
       setStatus(`No repeats in “${p.title}”`);
       return;
     }
     confirmAction(
-      `Remove ${repeated.length} repeated song(s) in “${p.title}”?`,
-      "Keeps one copy of each. Note: YouTube doesn't expose per-copy ids, so de-duplicated songs are re-added once and move to the end of the playlist.",
+      `Remove ${extraCount} extra ${extraCount === 1 ? "copy" : "copies"} in “${p.title}”?`,
+      "Keeps one copy of each song.\nNote: The first copy stays in its original position on YouTube Music.",
       async () => {
-        const seen = new Set<string>();
-        const deduped = tracks.filter((t) => (seen.has(t.videoId) ? false : (seen.add(t.videoId), true)));
-        persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: deduped } });
         setBusy(true);
         setStatus(`Removing repeats in ${p.title}…`);
-        let removed = false;
         try {
-          await removeVideos(p.id, repeated); // removes ALL occurrences of each repeated id
-          removed = true;
-          await addVideos(p.id, repeated); // add one of each back
-          setStatus(`Removed repeats in ${p.title} (${repeated.length})`);
+          const removedCount = await removeRepeatedVideos(p.id, repeated);
+          const currentTracks = await refreshTracks();
+          const remainingCounts = new Map<string, number>();
+          for (const t of currentTracks) remainingCounts.set(t.videoId, (remainingCounts.get(t.videoId) ?? 0) + 1);
+          const remaining = repeated.reduce((total, id) => total + Math.max(0, (remainingCounts.get(id) ?? 0) - 1), 0);
+          if (remaining > 0) {
+            fail(`YouTube Music still shows ${remaining} extra ${remaining === 1 ? "copy" : "copies"} in “${p.title}”. The playlist has been refreshed; try removing repeats again.`);
+          } else {
+            setStatus(`Removed ${removedCount} extra ${removedCount === 1 ? "copy" : "copies"} in ${p.title}`);
+          }
         } catch (err) {
-          if (removed) {
-            // All copies were removed on YouTube but re-adding one failed → those songs are now
-            // GONE on the account; reflect that (don't revert to showing repeats) and tell the user.
-            const repSet = new Set(repeated);
+          // A failed request can still have applied some edits. Refresh the actual account state,
+          // or invalidate the snapshot so the cache cannot falsely show a successful cleanup.
+          let refreshError = "";
+          try {
+            await refreshTracks();
+          } catch {
+            const tracksByPlaylist = { ...cacheRef.current.tracksByPlaylist };
+            const updatedAt = { ...cacheRef.current.updatedAt };
+            delete tracksByPlaylist[p.id];
+            delete updatedAt[p.id];
             persist({
               ...cacheRef.current,
-              tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks.filter((t) => !repSet.has(t.videoId)) },
+              tracksByPlaylist,
+              updatedAt,
             });
-            fail(`Removed repeats in “${p.title}”, but re-adding one copy failed — those ${repeated.length} song(s) are now gone; re-add them. ${errText(err)}`);
-          } else {
-            persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [p.id]: tracks } });
-            fail(`Remove repeats failed: ${errText(err)}`);
+            refreshError = " Couldn't refresh the playlist; update it to see its current songs.";
           }
+          fail(`Couldn't complete repeat removal: ${errText(err)}${refreshError}`);
         } finally {
           setBusy(false);
         }
@@ -1853,7 +1879,7 @@ function App() {
 
       {confirm && (
         <Overlay title={confirm.title} onClose={() => setConfirm(null)}>
-          <p style={{ fontSize: 13 }}>{confirm.body}</p>
+          <p style={{ fontSize: 13, whiteSpace: "pre-line" }}>{confirm.body}</p>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             {/* Cancel is autofocused so Enter (and Esc) cancel — Enter never fires a destructive
                 confirm that has no other safeguard. */}
