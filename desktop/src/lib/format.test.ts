@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isUnavailableTitle, relativeAge } from "./format";
+import { formatDuration, isUnavailableTitle, relativeAge } from "./format";
 
 describe("isUnavailableTitle", () => {
   it("flags deleted/private/unavailable/restricted placeholders", () => {
@@ -25,5 +25,16 @@ describe("relativeAge", () => {
     expect(relativeAge(Date.now() - 5 * 60_000)).toBe("5m ago");
     expect(relativeAge(Date.now() - 3 * 3_600_000)).toBe("3h ago");
     expect(relativeAge(Date.now() - 2 * 86_400_000)).toBe("2d ago");
+  });
+});
+
+describe("formatDuration", () => {
+  it("formats minutes and hours", () => {
+    expect(formatDuration(225)).toBe("3:45");
+    expect(formatDuration(3723)).toBe("1:02:03");
+  });
+  it("is empty when unknown", () => {
+    expect(formatDuration(undefined)).toBe("");
+    expect(formatDuration(0)).toBe("");
   });
 });

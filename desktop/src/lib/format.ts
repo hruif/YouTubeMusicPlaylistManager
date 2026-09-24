@@ -16,3 +16,13 @@ export function relativeAge(ms?: number): string {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+
+// Seconds -> "3:45" / "1:02:03"; empty when unknown.
+export function formatDuration(seconds?: number): string {
+  if (!seconds || seconds <= 0) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}

@@ -18,14 +18,30 @@ type ElectronAPI = {
   onCloseRequested: (cb: () => void) => () => void;
   installUpdate: (zipUrl: string) => Promise<boolean>;
   onUpdateProgress: (cb: (pct: number) => void) => () => void;
+  onTracksProgress: (cb: (p: TracksProgress) => void) => () => void;
 };
+
+export type TracksProgress = { playlistId: string; loaded: number; total?: number };
+
+// Per-page progress while a playlist's songs load (Electron only; a no-op elsewhere).
+export function onTracksProgress(cb: (p: TracksProgress) => void): () => void {
+  return isElectron ? electron!.onTracksProgress(cb) : () => {};
+}
 
 const electron = (globalThis as unknown as { electronAPI?: ElectronAPI }).electronAPI;
 export const isElectron = Boolean(electron?.isElectron);
 
+// Electron wraps errors thrown in main as "Error invoking remote method 'invoke': Error: <message>".
+// Strip that transport prefix so the UI shows only the message the backend meant to show.
+export function cleanIpcError(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, "");
+}
+
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return isElectron
-    ? (electron!.invoke(cmd, args) as Promise<T>)
+    ? (electron!.invoke(cmd, args) as Promise<T>).catch((err: unknown) => {
+        throw err instanceof Error ? new Error(cleanIpcError(err.message)) : err;
+      })
     : tauriInvoke<T>(cmd, args as Record<string, unknown>);
 }
 

@@ -69,9 +69,18 @@ export function registerBackend(deps: BackendDeps): void {
 
   // ---- YouTube Music operations ----
   registerCommand("yt_get_library", () => yt.getLibraryPlaylists());
-  registerCommand("yt_get_playlist_tracks", (a) => yt.getPlaylistTracks(String(a.playlistId)));
+  // Streams per-page loading progress to the renderer (the sidebar's progress pies).
+  registerCommand("yt_get_playlist_tracks", (a, win) => {
+    const playlistId = String(a.playlistId);
+    return yt.getPlaylistTracks(playlistId, (loaded, total) => {
+      if (win && !win.isDestroyed()) win.webContents.send("tracks:progress", { playlistId, loaded, total });
+    });
+  });
   registerCommand("yt_add_videos", (a) => yt.addVideos(String(a.playlistId), a.videoIds as string[]));
   registerCommand("yt_remove_videos", (a) => yt.removeVideos(String(a.playlistId), a.videoIds as string[]));
+  registerCommand("yt_restore_videos", (a) =>
+    yt.restoreVideos(String(a.playlistId), a.items as { videoId: string; beforeVideoId: string | null }[]),
+  );
   registerCommand("yt_remove_repeated_videos", (a) => yt.removeRepeatedVideos(String(a.playlistId), a.videoIds as string[]));
   registerCommand("yt_create_playlist", (a) => yt.createPlaylist(String(a.title), a.videoIds as string[], a.privacy as yt.PlaylistPrivacy | undefined));
   registerCommand("yt_delete_playlist", (a) => yt.deletePlaylist(String(a.playlistId)));

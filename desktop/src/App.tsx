@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   invoke,
   openExternal as openUrl,
@@ -8,6 +8,7 @@ import {
   isElectron,
   installUpdate,
   onUpdateProgress,
+  onTracksProgress,
 } from "./lib/native";
 import {
   signIn,
@@ -24,6 +25,7 @@ import {
   deletePlaylist,
   getPlaylistTracks,
   getPlaylistTracksAfterRepeatRemoval,
+  restoreVideos,
   parseYouTubePlaylistId,
   searchYouTubeMusicSongs,
   bestYoutubeMatch,
@@ -33,134 +35,74 @@ import {
   type AccountInfo,
   type PlaylistPrivacy,
 } from "./lib/ytmusic";
-import { loadCache, saveCache, EMPTY_CACHE, type LibraryCache } from "./lib/cache";
-import { fetchSpotifyPlaylist, type SpotifyTrack } from "./lib/spotify";
+import { loadCache, saveCache, EMPTY_CACHE, type DeletedPlaylist, type LibraryCache } from "./lib/cache";
+import type { SpotifyTrack } from "./lib/spotify";
 import { checkForUpdate, checkForUpdateStrict, getCurrentVersion, type UpdateInfo } from "./lib/update";
-import { STALE_MS, isUnavailableTitle, relativeAge } from "./lib/format";
-import { Overlay } from "./components/Overlay";
-import { SongList } from "./components/SongList";
+import { STALE_MS } from "./lib/format";
+import { planRestore, visibleSongsFor } from "./lib/songs";
+import { applyTheme, loadUi, saveUi, type PlaylistSort, type SongFilters, type SortKey, type Theme } from "./lib/settings";
+import { StatusArea, Toasts, type Progress, type Toast, type ToastAction } from "./components/Feedback";
+import { HistoryMenu } from "./components/HistoryMenu";
+import { ContextMenu, menuAt, type MenuItem, type MenuState } from "./components/ContextMenu";
+import { Welcome, type SignInPhase } from "./components/Welcome";
+import { Sidebar } from "./components/Sidebar";
+import { SongPane } from "./components/SongPane";
+import { ConfirmDialog, ErrorDialog, ExitDialog, type ConfirmState } from "./components/dialogs/ConfirmDialog";
+import { CreatePlaylistDialog } from "./components/dialogs/CreatePlaylistDialog";
+import { DeletePlaylistDialog } from "./components/dialogs/DeletePlaylistDialog";
+import { PlaylistPickerDialog } from "./components/dialogs/PlaylistPickerDialog";
+import { ManagePlaylistsDialog } from "./components/dialogs/ManagePlaylistsDialog";
+import { PlaylistInfoDialog } from "./components/dialogs/PlaylistInfoDialog";
+import { SongDetailsDialog } from "./components/dialogs/SongDetailsDialog";
+import { SpotifyImportDialog, TransferResultDialog, UnmatchedDialog } from "./components/dialogs/SpotifyDialogs";
+import { RecentlyDeletedDialog, RemovedSongsDialog } from "./components/dialogs/ArchiveDialogs";
+import { QueuesDialog } from "./components/dialogs/QueuesDialog";
+import { SettingsDialog } from "./components/dialogs/SettingsDialog";
 import "./App.css";
 
-// Phase 1: read-only parity, cache-driven, polished. Virtualized song list, staleness, persisted
-// selection/sort, search (Cmd+F), hide playlists, details with external links.
-
-type SortKey = "title" | "artist" | "count";
-type PlaylistSort = "name" | "updated" | "count";
-
-function InfoSection({ title }: { title: string }) {
-  return <div className="info-section">{title}</div>;
-}
-
-function InfoRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="info-row">
-      <div className="info-label">{label}</div>
-      <div className="info-value">{children}</div>
-    </div>
-  );
-}
-
-function uniqueTrackCount(tracks: Track[]): number {
-  return new Set(tracks.map((t) => t.videoId)).size;
-}
-
-function timestampLabel(timestamp: number | undefined): string {
-  if (!timestamp) return "Never";
-  return `${new Date(timestamp).toLocaleString()} (${relativeAge(timestamp)})`;
-}
-
-function trackSummary(track: Track | undefined): string {
-  if (!track) return "None";
-  return track.artist ? `${track.title} - ${track.artist}` : track.title;
-}
-
-// --- small persisted UI state (selection/sort/filter) in localStorage (tiny, frequent writes) ---
-type UiState = {
-  selected: string[];
-  sortKey: SortKey;
-  sortAsc: boolean;
-  dupOnly: boolean;
-  unavailableOnly: boolean;
-  replaceNames: boolean;
-  autoDeleteQueues: boolean;
-  checkUpdates: boolean;
-  autoRefreshOnLaunch: boolean;
-  playlistSort: PlaylistSort;
-  queuePrivacy: PlaylistPrivacy;
-};
-const UI_KEY = "ytm.ui";
-function loadUi(): UiState {
-  const base: UiState = {
-    selected: [],
-    sortKey: "title",
-    sortAsc: true,
-    dupOnly: false,
-    unavailableOnly: false,
-    replaceNames: false,
-    autoDeleteQueues: false,
-    checkUpdates: true,
-    autoRefreshOnLaunch: true,
-    playlistSort: "name",
-    queuePrivacy: "UNLISTED",
-  };
-  try {
-    const raw = localStorage.getItem(UI_KEY);
-    return raw ? { ...base, ...(JSON.parse(raw) as Partial<UiState>) } : base;
-  } catch {
-    return base;
-  }
-}
+// A song's own fields, without the combined-view playlist membership.
+const trackOf = ({ playlists: _playlists, ...track }: CombinedSong): Track => track;
 
 function App() {
   const ui0 = useRef(loadUi()).current;
-  const [status, setStatus] = useState("Starting…");
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [loading, setLoading] = useState<Record<string, { loaded: number; total?: number }>>({}); // per-playlist song loading
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [signInPhase, setSignInPhase] = useState<SignInPhase>("booting");
+  const [signInError, setSignInError] = useState<string | null>(null);
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [cache, setCache] = useState<LibraryCache>({ ...EMPTY_CACHE });
   const [selected, setSelected] = useState<Set<string>>(() => new Set(ui0.selected));
   const [sortKey, setSortKey] = useState<SortKey>(ui0.sortKey);
   const [sortAsc, setSortAsc] = useState(ui0.sortAsc);
-  const [dupOnly, setDupOnly] = useState(ui0.dupOnly);
-  const [unavailableOnly, setUnavailableOnly] = useState(ui0.unavailableOnly);
+  const [filters, setFilters] = useState<SongFilters>(ui0.filters);
   const [query, setQuery] = useState("");
   const [showManage, setShowManage] = useState(false);
-  const [manageQuery, setManageQuery] = useState("");
   const [detail, setDetail] = useState<CombinedSong | null>(null);
   const [playlistDetail, setPlaylistDetail] = useState<Playlist | null>(null);
-  const [customDraft, setCustomDraft] = useState("");
-  const [detailAddTarget, setDetailAddTarget] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void }[] } | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [selectedSongs, setSelectedSongs] = useState<Set<string>>(new Set());
-  const visibleSongsRef = useRef<CombinedSong[]>([]); // latest visible songs, for the Cmd+A handler
-  // Refs updated every render so the once-mounted keydown listener sees current state. closeTopmost
-  // dismisses the menu / topmost modal (Escape); deleteSelected removes the selected songs (Delete).
-  const closeTopmostRef = useRef<() => boolean>(() => false);
-  const deleteSelectedRef = useRef<() => void>(() => {});
+  const [activeIndex, setActiveIndex] = useState<number | null>(null); // keyboard cursor in visibleSongs
+  // Refs updated every render so the once-mounted keydown listener sees current state.
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const lastSongIndex = useRef<number | null>(null);
   const lastClick = useRef<{ id: string; t: number } | null>(null);
   const [addPicker, setAddPicker] = useState(false);
-  const [addQuery, setAddQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [newName, setNewName] = useState("");
   const [removePicker, setRemovePicker] = useState(false);
-  const [confirm, setConfirm] = useState<{ title: string; body: string; onConfirm: () => void } | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null);
-  const [deleteText, setDeleteText] = useState("");
   const [showDeleted, setShowDeleted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; retry?: () => void } | null>(null);
+  const [errorDetails, setErrorDetails] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
-  const [spotifyUrl, setSpotifyUrl] = useState("");
-  const [spotifyResult, setSpotifyResult] = useState<{ title: string; tracks: SpotifyTrack[] } | null>(null);
-  const [spotifyLoading, setSpotifyLoading] = useState(false);
-  const [spotifyProgress, setSpotifyProgress] = useState("");
-  const [spotifyName, setSpotifyName] = useState("");
   const [transferResult, setTransferResult] = useState<{ name: string; matched: number; unmatched: SpotifyTrack[] } | null>(null);
   const [showUnmatched, setShowUnmatched] = useState<string | null>(null);
   const [showRemoved, setShowRemoved] = useState<string | null>(null);
   const [showTemp, setShowTemp] = useState(false);
-  const [addUrl, setAddUrl] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [replaceNames, setReplaceNames] = useState(ui0.replaceNames);
   const [autoDeleteQueues, setAutoDeleteQueues] = useState(ui0.autoDeleteQueues);
@@ -168,6 +110,7 @@ function App() {
   const [autoRefreshOnLaunch, setAutoRefreshOnLaunch] = useState(ui0.autoRefreshOnLaunch);
   const [queuePrivacy, setQueuePrivacy] = useState<PlaylistPrivacy>(ui0.queuePrivacy);
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
+  const [theme, setTheme] = useState<Theme>(ui0.theme);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [checkingForUpdates, setCheckingForUpdates] = useState(false);
@@ -175,9 +118,6 @@ function App() {
   // In-place install progress: null = idle, otherwise a status string ("Downloading… 42%").
   const [installingUpdate, setInstallingUpdate] = useState<string | null>(null);
   const currentVersion = getCurrentVersion();
-  // True until the initial silent sign-in settles, so the welcome screen shows "Signing in…" for a
-  // returning user instead of flashing a "Sign in" prompt that immediately flips to their library.
-  const [booting, setBooting] = useState(true);
 
   // Check for a newer release once on startup (best-effort), unless disabled in Settings.
   useEffect(() => {
@@ -185,11 +125,33 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Report a failure: status line + a popup so it's obvious something went wrong.
-  function fail(message: string) {
-    setStatus(message);
-    setError(message);
+  // Feedback, in three kinds:
+  // - progress: what's running now (header, with a bar when the amount of work is known);
+  // - notify: the outcome of something you did (a toast that fades on its own);
+  // - fail: an error. It stays in the header, with Retry when the action can safely be repeated,
+  //   until you dismiss it or start something else (see the busy effect below).
+  function showProgress(label: string, done?: number, total?: number) {
+    setProgress({ label, done, total });
   }
+  const toastId = useRef(0);
+  function notify(message: string, action?: ToastAction): number {
+    const id = ++toastId.current;
+    setToasts((prev) => [...prev.slice(-2), { id, message, action }]);
+    return id;
+  }
+  function dismissToast(id: number) {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    if (undoRef.current?.toastId === id) undoRef.current = null;
+  }
+  function fail(message: string, retry?: () => void) {
+    setError({ message, retry });
+  }
+  // Starting new work clears the last error (it was about the previous action) and, once the work
+  // finishes, the progress readout.
+  useEffect(() => {
+    if (busy) setError(null);
+    else setProgress(null);
+  }, [busy]);
   const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
   async function checkUpdatesNow() {
@@ -234,36 +196,14 @@ function App() {
     }
   }
 
-  async function readSpotify() {
-    setSpotifyResult(null);
-    setSpotifyLoading(true);
-    setSpotifyProgress("Connecting to Spotify…");
-    try {
-      const r = await fetchSpotifyPlaylist(spotifyUrl, (loaded, total) =>
-        setSpotifyProgress(`Loaded ${loaded}/${total || "?"}…`),
-      );
-      setSpotifyResult(r);
-      setSpotifyName(r.title);
-      setSpotifyProgress(`${r.tracks.length} tracks`);
-    } catch (err) {
-      setSpotifyProgress("");
-      fail(`Spotify import failed: ${errText(err)}`);
-    } finally {
-      setSpotifyLoading(false);
-    }
-  }
-
   const ytSearchUrl = (q: string) => `https://music.youtube.com/search?q=${encodeURIComponent(q)}`;
 
   // Transfer a read Spotify playlist to a new YouTube Music playlist: match each track conservatively,
   // create from confident matches, persist the unmatched ones for manual follow-up.
-  async function transferSpotify() {
-    if (!spotifyResult) return;
-    const name = spotifyName.trim() || spotifyResult.title;
-    const tracks = spotifyResult.tracks;
+  async function transferSpotify(name: string, tracks: SpotifyTrack[]) {
     setSpotifyOpen(false);
     setBusy(true);
-    setStatus(`Matching 0/${tracks.length} on YouTube Music…`);
+    showProgress("Matching songs on YouTube Music", 0, tracks.length);
     try {
       const matches: ({ videoId: string; title: string; artist: string } | null)[] = new Array(tracks.length).fill(null);
       const searchCache = new Map<string, Awaited<ReturnType<typeof searchYouTubeMusicSongs>>>();
@@ -290,7 +230,7 @@ function App() {
             /* leave unmatched */
           }
           done += 1;
-          setStatus(`Matching ${done}/${tracks.length} on YouTube Music…`);
+          showProgress("Matching songs on YouTube Music", done, tracks.length);
         }
       };
       await Promise.all(Array.from({ length: Math.min(6, tracks.length) }, () => worker()));
@@ -311,7 +251,7 @@ function App() {
         fail("No songs could be confidently matched on YouTube Music.");
         return;
       }
-      setStatus(`Creating “${name}” with ${matchedIds.length} songs…`);
+      showProgress(`Creating “${name}” with ${matchedIds.length} songs`);
       const newId = await createPlaylist(name, matchedIds);
       if (newId) {
         persist({
@@ -327,7 +267,7 @@ function App() {
         await refreshPlaylists();
       }
       setTransferResult({ name, matched: matchedIds.length, unmatched });
-      setStatus(`Transferred “${name}”: ${matchedIds.length} added, ${unmatched.length} unmatched`);
+      notify(`Transferred “${name}”: ${matchedIds.length} added, ${unmatched.length} unmatched`);
     } catch (err) {
       fail(`Transfer failed: ${errText(err)}`);
     } finally {
@@ -371,7 +311,7 @@ function App() {
     const next = { ...cacheRef.current, tempPlaylists: remaining };
     persist(next);
     await saveCache(next);
-    if (failed) setStatus(`Couldn't delete ${failed} queue(s) — they remain on your account.`);
+    if (failed) fail(`Couldn't delete ${failed} queue${failed === 1 ? "" : "s"}. They're still on your account.`);
   }
   useEffect(() => {
     // The window is held open until we call closeWindow() (Tauri: preventDefault+destroy; Electron:
@@ -400,15 +340,13 @@ function App() {
 
   function openDetails(s: CombinedSong) {
     setDetail(s);
-    setCustomDraft(cacheRef.current.customNames[s.videoId] ?? "");
-    setDetailAddTarget("");
   }
   // Stable indirection so the memoized-row callbacks don't depend on openDetails' identity.
   const openDetailsRef = useRef(openDetails);
   openDetailsRef.current = openDetails;
   function commitCustomName(videoId: string, value: string) {
     const v = value.trim();
-    const next = { ...cache.customNames };
+    const next = { ...cacheRef.current.customNames };
     if (v) next[videoId] = v;
     else delete next[videoId];
     persist({ ...cacheRef.current, customNames: next });
@@ -427,7 +365,7 @@ function App() {
       return;
     }
     setBusy(true);
-    setStatus(`Building queue “${title}”…`);
+    showProgress(`Building queue “${title}”`);
     try {
       const newId = await createPlaylist(title, videoIds, queuePrivacy);
       if (newId) {
@@ -443,12 +381,12 @@ function App() {
         });
         // YouTube needs a moment to index a brand-new playlist; opening immediately often shows a
         // blank page. A short wait makes the opened page actually show the songs.
-        setStatus(`Building queue “${title}”…`);
+        showProgress(`Building queue “${title}”`);
         await new Promise((r) => setTimeout(r, 1500));
         await openPlaylist(newId);
-        setStatus(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
+        notify(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
       } else {
-        setStatus("Created the queue, but couldn't get its id to open it.");
+        fail("Created the queue, but couldn't open it. Find it under Queues.");
       }
     } catch (err) {
       fail(`Couldn't build the queue: ${errText(err)}`);
@@ -459,13 +397,13 @@ function App() {
 
   function deleteTemp(id: string) {
     setBusy(true);
-    setStatus("Deleting queue…");
+    showProgress("Deleting queue");
     deletePlaylist(id)
       .then(() => {
         persist({ ...cacheRef.current, tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => t.id !== id) });
-        setStatus("Deleted queue");
+        notify("Deleted queue");
       })
-      .catch((err) => fail(`Couldn't delete the queue: ${errText(err)}`))
+      .catch((err) => fail(`Couldn't delete the queue: ${errText(err)}`, () => deleteTemp(id)))
       .finally(() => setBusy(false));
   }
 
@@ -499,35 +437,32 @@ function App() {
       s.delete(id);
       return s;
     });
-    setStatus("Removed from your list");
+    notify("Removed from your list");
   }
 
+  // Interactive sign-in. Progress and failure show inline on the welcome screen, not in a popup.
   async function doSignIn() {
-    setBusy(true);
-    setStatus("Signing in…");
+    setSignInPhase("waiting");
+    setSignInError(null);
     try {
       await signIn();
       setSignedIn(true);
+      setSignInPhase("idle");
       void getAccountInfo().then(setAccount).catch(() => setAccount(null));
-      setBusy(false);
       if (cacheRef.current.playlists.length === 0) await refreshPlaylists();
-      else setStatus(`${cacheRef.current.playlists.length} playlists`);
+
     } catch (err) {
-      fail(`Sign-in failed: ${errText(err)}`);
-      setBusy(false);
+      setSignInError(errText(err));
+      setSignInPhase("failed");
     }
   }
 
   const openSong = (videoId: string) => void openUrl(`https://music.youtube.com/watch?v=${videoId}`);
   const openPlaylist = (id: string) => void openUrl(`https://music.youtube.com/playlist?list=${id}`);
-  function openMenu(e: React.MouseEvent, items: { label: string; onClick: () => void }[]) {
+  function openMenu(e: React.MouseEvent, items: MenuItem[]) {
     e.preventDefault();
     e.stopPropagation();
-    // Clamp so the menu stays on-screen: flip up if it would overflow the bottom edge.
-    const estHeight = items.length * 30 + 8;
-    const x = Math.min(e.clientX, window.innerWidth - 196);
-    const y = Math.min(e.clientY, Math.max(8, window.innerHeight - estHeight - 8));
-    setMenu({ x, y, items });
+    setMenu(menuAt(e, items));
   }
 
   function openPlaylistDetailFromRow(e: React.MouseEvent, playlist: Playlist) {
@@ -556,7 +491,7 @@ function App() {
         ? [
             cache.external.includes(playlist.id)
               ? { label: "Remove from list", onClick: () => removeFromCache(playlist.id) }
-              : { label: "Delete playlist…", onClick: () => { setDeleteText(""); setDeleteTarget(playlist); } },
+              : { label: "Delete playlist…", onClick: () => setDeleteTarget(playlist) },
           ]
         : []),
     ];
@@ -573,45 +508,31 @@ function App() {
 
   // Persist UI state on change.
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        UI_KEY,
-        JSON.stringify({ selected: [...selected], sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy }),
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [selected, sortKey, sortAsc, dupOnly, unavailableOnly, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy]);
+    saveUi({ selected: [...selected], sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme });
+  }, [selected, sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme]);
+  useEffect(() => applyTheme(theme), [theme]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
   // (sort/filter/search) so a range isn't computed across two different orderings.
   useEffect(() => {
     lastSongIndex.current = null;
-  }, [sortKey, sortAsc, query, dupOnly, unavailableOnly]);
+    setActiveIndex(null);
+  }, [sortKey, sortAsc, query, filters]);
 
-  // Keyboard: Esc dismisses the menu / topmost modal; Cmd+F search; Cmd+A select all; Delete removes
-  // the selected songs. Esc works even while typing; the rest are ignored inside text inputs.
+  // Per-page loading progress for the sidebar's pies. Only playlists runUpdate is loading are
+  // tracked, so other fetches (export, repeat checks) don't flash a pie.
+  useEffect(
+    () =>
+      onTracksProgress(({ playlistId, loaded, total }) =>
+        setLoading((prev) => (prev[playlistId] ? { ...prev, [playlistId]: { loaded, total } } : prev)),
+      ),
+    [],
+  );
+
+  // Keyboard shortcuts (listed in Settings). The listener mounts once and calls keyHandlerRef,
+  // which is reassigned every render so it always sees current state.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (closeTopmostRef.current()) e.preventDefault();
-        return;
-      }
-      const el = document.activeElement as HTMLElement | null;
-      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
-        e.preventDefault();
-        setSelectedSongs(new Set(visibleSongsRef.current.map((s) => s.videoId)));
-      } else if (e.key === "Delete" || e.key === "Backspace") {
-        e.preventDefault();
-        deleteSelectedRef.current();
-      }
-    };
+    const onKey = (e: KeyboardEvent) => keyHandlerRef.current(e);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -625,9 +546,8 @@ function App() {
       return;
     }
     setShowManage(false);
-    setAddUrl("");
     setBusy(true);
-    setStatus("Loading playlist…");
+    showProgress("Loading playlist");
     try {
       const { tracks, editable, title } = await getPlaylistTracks(id);
       const name = title || "Playlist";
@@ -644,17 +564,18 @@ function App() {
         external: [...new Set([...c.external, id])],
       });
       setSelected(new Set([id]));
-      setStatus(`Added “${name}” (${tracks.length} songs)`);
+      notify(`Added “${name}” (${tracks.length} songs)`);
     } catch (err) {
-      fail(`Couldn't add that playlist: ${errText(err)}`);
+      fail(`Couldn't add that playlist: ${errText(err)}`, () => addPublicPlaylist(input));
     } finally {
       setBusy(false);
     }
   }
 
-  async function refreshPlaylists() {
+  // `announce`: confirm with a toast (a user-requested refresh), vs. silent (launch, sign-in).
+  async function refreshPlaylists(announce = false) {
     setBusy(true);
-    setStatus("Refreshing playlist list…");
+    showProgress("Refreshing playlist list");
     try {
       const library = await getLibraryPlaylists();
       const c = cacheRef.current; // latest, AFTER the await
@@ -676,9 +597,9 @@ function App() {
         external: c.external.filter((id) => liveIds.has(id)),
         tempPlaylists: c.tempPlaylists.filter((t) => liveIds.has(t.id) || t.createdAt > grace),
       });
-      setStatus(`${playlists.length} playlists`);
+      if (announce) notify(`Found ${playlists.length} playlists`);
     } catch (err) {
-      fail(`Failed to refresh playlists: ${errText(err)}`);
+      fail(`Couldn't refresh your playlists: ${errText(err)}`, () => refreshPlaylists(announce));
     } finally {
       setBusy(false);
     }
@@ -691,16 +612,14 @@ function App() {
     (async () => {
       const { cache: cached, migrated } = await loadCache();
       setCache(cached);
-      setStatus("Signing in…");
       try {
         const names = await trySilentSignIn();
         if (names) {
           setSignedIn(true);
+          setSignInPhase("idle");
           void getAccountInfo().then(setAccount).catch(() => setAccount(null));
-          setStatus(
-            `${cached.playlists.length} playlists (cached)` +
-              (cached.tempPlaylists.length ? ` · ${cached.tempPlaylists.length} leftover queue(s) — see “Queues”` : ""),
-          );
+          if (cached.tempPlaylists.length)
+            notify(`${cached.tempPlaylists.length} leftover queue${cached.tempPlaylists.length === 1 ? "" : "s"} from last time. Find ${cached.tempPlaylists.length === 1 ? "it" : "them"} under the clock button.`);
           // Auto-refresh the playlist list on launch (Settings; default on). The list fetch is
           // cheap (1-3 requests); an empty cache, or a one-time post-update cache migration (which
           // cleared the cached tracks), always refreshes regardless of the setting.
@@ -723,12 +642,11 @@ function App() {
             }
           }
         } else {
-          setStatus("Not signed in");
+          setSignInPhase("idle");
         }
       } catch (err) {
-        setStatus(`Sign-in failed: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        setBooting(false);
+        setSignInError(`Couldn't sign in automatically: ${errText(err)}`);
+        setSignInPhase("failed");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -791,15 +709,28 @@ function App() {
     [cache.playlists, selected],
   );
 
-  async function runUpdate(list: Playlist[], concurrency = 4) {
+  // `announce`: confirm with a toast (an explicit refresh), vs. silent (auto-loading on select).
+  async function runUpdate(list: Playlist[], concurrency = 4, announce = false) {
     if (list.length === 0) return;
     setBusy(true);
-    setStatus(`Updating 0/${list.length}…`);
+    showProgress("Loading songs", 0, list.length);
+    setLoading((prev) => {
+      const next = { ...prev };
+      for (const p of list) next[p.id] = next[p.id] ?? { loaded: 0 };
+      return next;
+    });
     try {
       const { tracksByPlaylist, editableIds, notFoundIds, failures } = await fetchTracksForPlaylists(
         list,
         concurrency,
-        (done, total) => setStatus(`Updating ${done}/${total}…`),
+        (done, total, playlist) => {
+          showProgress("Loading songs", done, total);
+          setLoading((prev) => {
+            const next = { ...prev };
+            delete next[playlist.id];
+            return next;
+          });
+        },
       );
       const now = Date.now();
       const updatedAt = { ...cacheRef.current.updatedAt };
@@ -876,14 +807,25 @@ function App() {
       persist(next);
       const n = Object.keys(tracksByPlaylist).length;
       const extras = [
-        notFoundIds.length ? `removed ${notFoundIds.length} deleted` : "",
-        removedCount ? `archived ${removedCount} removed song(s)` : "",
-        failures.length ? `${failures.length} failed (retry)` : "",
+        notFoundIds.length ? `${notFoundIds.length} deleted elsewhere` : "",
+        removedCount ? `${removedCount} song${removedCount === 1 ? "" : "s"} removed since last time` : "",
       ].filter(Boolean);
-      setStatus(`Updated ${n} playlist(s)${extras.length ? ` · ${extras.join(" · ")}` : ""}`);
+      if (failures.length) {
+        fail(
+          `Couldn't load ${failures.length === 1 ? `“${failures[0].title}”` : `${failures.length} playlists`}.`,
+          () => runUpdate(failures, concurrency, announce),
+        );
+      } else if (announce || extras.length) {
+        notify(`Refreshed ${n} playlist${n === 1 ? "" : "s"}${extras.length ? ` · ${extras.join(" · ")}` : ""}`);
+      }
     } catch (err) {
-      fail(`Update failed: ${errText(err)}`);
+      fail(`Couldn't load songs: ${errText(err)}`, () => runUpdate(list, concurrency, announce));
     } finally {
+      setLoading((prev) => {
+        const next = { ...prev };
+        for (const p of list) delete next[p.id];
+        return next;
+      });
       setBusy(false);
     }
   }
@@ -947,10 +889,10 @@ function App() {
   // detected up front, so editable-detected ones sort first and the add attempt reports rejection.
   // Only playlists in the sidebar that we can actually modify (owned) — no point listing read-only
   // ones you can't add to.
-  const addTargets = useMemo(() => {
-    const q = addQuery.trim().toLowerCase();
-    return visiblePlaylists.filter((p) => editable.has(p.id) && p.title.toLowerCase().includes(q));
-  }, [visiblePlaylists, editable, addQuery]);
+  const addTargets = useMemo(
+    () => visiblePlaylists.filter((p) => editable.has(p.id)),
+    [visiblePlaylists, editable],
+  );
 
   // Add the selected songs to a playlist you own — optimistic, reverting on error.
   async function addSelectedTo(target: Playlist) {
@@ -959,9 +901,9 @@ function App() {
     const have = new Set(existing.map((t) => t.videoId));
     const toAdd = selectedTracks
       .filter((t) => !have.has(t.videoId))
-      .map(({ videoId, title, artist, thumb }) => ({ videoId, title, artist, thumb }));
+      .map(trackOf);
     if (toAdd.length === 0) {
-      setStatus(`All selected songs are already in ${target.title}`);
+      notify(`All selected songs are already in ${target.title}`);
       return;
     }
     persist({
@@ -969,7 +911,7 @@ function App() {
       tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: [...existing, ...toAdd] },
     });
     setBusy(true);
-    setStatus(`Adding ${toAdd.length} to ${target.title}…`);
+    showProgress(`Adding ${toAdd.length} to ${target.title}`);
     try {
       await addVideos(target.id, toAdd.map((t) => t.videoId));
       // Adding a song back un-removes it: drop it from this playlist's "recently removed" archive.
@@ -982,7 +924,7 @@ function App() {
           removedSongs: { ...cacheRef.current.removedSongs, [target.id]: newRemoved },
         });
       }
-      setStatus(`Added ${toAdd.length} to ${target.title}`);
+      notifyWithUndo(`Added ${toAdd.length} to ${target.title}`, () => undoAdd(target, toAdd.map((t) => t.videoId)));
     } catch (err) {
       persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
       fail(`Add failed: ${errText(err)}`);
@@ -992,14 +934,11 @@ function App() {
   }
 
   // Create a new playlist from the selected songs.
-  async function createFromSelection() {
-    const name = newName.trim();
-    if (!name) return;
-    const tracks = selectedTracks.map(({ videoId, title, artist, thumb }) => ({ videoId, title, artist, thumb }));
+  async function createFromSelection(name: string) {
+    const tracks = selectedTracks.map(trackOf);
     setCreateOpen(false);
-    setNewName("");
     setBusy(true);
-    setStatus(`Creating “${name}”…`);
+    showProgress(`Creating “${name}”`);
     try {
       const newId = await createPlaylist(name, tracks.map((t) => t.videoId));
       if (newId) {
@@ -1011,13 +950,81 @@ function App() {
           editable: [...new Set([...cacheRef.current.editable, newId])],
           shown: [...new Set([...cacheRef.current.shown, newId])], // a playlist you just made should show
         });
-        setStatus(`Created “${name}” with ${tracks.length} songs`);
+        notify(`Created “${name}” with ${tracks.length} songs`);
       } else {
-        setStatus(`Created “${name}” — refreshing list…`);
+        showProgress(`Created “${name}” — refreshing list`);
         await refreshPlaylists();
       }
     } catch (err) {
       fail(`Create failed: ${errText(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---- Undo for song edits ----
+  // Offered only in the result toast, and by ⌘Z while that toast is showing: once it fades, the
+  // chance to undo is gone (Removed songs and Recently deleted remain for later recovery).
+  const undoRef = useRef<{ toastId: number; run: () => void } | null>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  function notifyWithUndo(message: string, run: () => void) {
+    const id = notify(message, { label: "Undo", run });
+    undoRef.current = { toastId: id, run };
+  }
+  function runUndo() {
+    const undo = undoRef.current;
+    if (!undo) return;
+    dismissToast(undo.toastId);
+    undo.run();
+  }
+
+  // Undo an add: remove exactly the songs that were added (they weren't in the playlist before).
+  async function undoAdd(target: Playlist, videoIds: string[]) {
+    if (busyRef.current) return fail("Wait for the current action to finish, then try again.");
+    setBusy(true);
+    showProgress(`Undoing add to ${target.title}`);
+    try {
+      const removed = new Set(await removeVideos(target.id, videoIds));
+      const cur = cacheRef.current.tracksByPlaylist[target.id] ?? [];
+      persist({
+        ...cacheRef.current,
+        tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: cur.filter((t) => !removed.has(t.videoId)) },
+      });
+      notify(`Took ${removed.size} back out of ${target.title}`);
+    } catch (err) {
+      fail(`Couldn't undo: ${errText(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Undo a removal: put the songs back where they were. `before` is the playlist as it was before
+  // the removal; each song goes back in front of the song that followed it then.
+  async function undoRemove(target: Playlist, videoIds: string[], before: Track[]) {
+    if (busyRef.current) return fail("Wait for the current action to finish, then try again.");
+    const removed = new Set(videoIds);
+    const items = planRestore(videoIds, before);
+    setBusy(true);
+    showProgress(`Putting songs back in ${target.title}`);
+    try {
+      const inPlace = await restoreVideos(target.id, items);
+      // Re-read the playlist so the cache shows what YouTube Music actually has now.
+      const { tracks } = await getPlaylistTracks(target.id);
+      const archive = (cacheRef.current.removedSongs[target.id] ?? []).filter((r) => !(r.videoId && removed.has(r.videoId)));
+      persist({
+        ...cacheRef.current,
+        tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: tracks },
+        updatedAt: { ...cacheRef.current.updatedAt, [target.id]: Date.now() },
+        removedSongs: { ...cacheRef.current.removedSongs, [target.id]: archive },
+      });
+      notify(
+        inPlace
+          ? `Put ${items.length} back in ${target.title}`
+          : `Put ${items.length} back in ${target.title}, but at the end of the playlist`,
+      );
+    } catch (err) {
+      fail(`Couldn't undo: ${errText(err)}. Refresh the playlist to see where it stands.`);
     } finally {
       setBusy(false);
     }
@@ -1046,7 +1053,7 @@ function App() {
       "This removes them from the playlist on your YouTube Music account.",
       async () => {
         setBusy(true);
-        setStatus(`Removing ${ids.length} from ${target.title}…`);
+        showProgress(`Removing ${ids.length} from ${target.title}`);
         try {
           // Non-optimistic: update the cache to what was ACTUALLY removed (some songs may be
           // un-removable), then archive those into the playlist's "recently removed" list.
@@ -1065,10 +1072,11 @@ function App() {
             tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining },
             removedSongs: { ...cacheRef.current.removedSongs, [target.id]: [...additions, ...prevRemoved].slice(0, 500) },
           });
-          setStatus(
+          notifyWithUndo(
             removedIds.size < ids.length
               ? `Removed ${removedIds.size} of ${ids.length} from ${target.title} (some couldn't be removed)`
               : `Removed ${removedIds.size} from ${target.title}`,
+            () => undoRemove(target, [...removedIds], cur),
           );
         } catch (err) {
           fail(`Remove failed: ${errText(err)}`);
@@ -1084,16 +1092,16 @@ function App() {
   async function addOneTo(song: CombinedSong, target: Playlist) {
     const existing = cacheRef.current.tracksByPlaylist[target.id] ?? [];
     if (existing.some((t) => t.videoId === song.videoId)) {
-      setStatus(`Already in “${target.title}”`);
+      notify(`Already in “${target.title}”`);
       return;
     }
-    const track = { videoId: song.videoId, title: song.title, artist: song.artist, thumb: song.thumb };
+    const track = trackOf(song);
     persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: [...existing, track] } });
     setBusy(true);
-    setStatus(`Adding to “${target.title}”…`);
+    showProgress(`Adding to “${target.title}”`);
     try {
       await addVideos(target.id, [song.videoId]);
-      setStatus(`Added to “${target.title}”`);
+      notifyWithUndo(`Added to “${target.title}”`, () => undoAdd(target, [song.videoId]));
     } catch (err) {
       persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
       fail(`Add failed: ${errText(err)}`);
@@ -1111,10 +1119,10 @@ function App() {
         const remaining = existing.filter((t) => t.videoId !== song.videoId);
         persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: remaining } });
         setBusy(true);
-        setStatus(`Removing from “${target.title}”…`);
+        showProgress(`Removing from “${target.title}”`);
         try {
           await removeVideos(target.id, [song.videoId]);
-          setStatus(`Removed from “${target.title}”`);
+          notifyWithUndo(`Removed from “${target.title}”`, () => undoRemove(target, [song.videoId], existing));
         } catch (err) {
           persist({ ...cacheRef.current, tracksByPlaylist: { ...cacheRef.current.tracksByPlaylist, [target.id]: existing } });
           fail(`Remove failed: ${errText(err)}`);
@@ -1144,9 +1152,8 @@ function App() {
   // the song list locally first so it can be recreated. Invoked from the hardened delete modal.
   async function doDelete(p: Playlist) {
     setDeleteTarget(null);
-    setDeleteText("");
     setBusy(true);
-    setStatus(`Deleting ${p.title}…`);
+    showProgress(`Deleting ${p.title}`);
     try {
       await deletePlaylist(p.id);
       const tracks = cache.tracksByPlaylist[p.id] ?? [];
@@ -1177,7 +1184,7 @@ function App() {
         s.delete(p.id);
         return s;
       });
-      setStatus(`Deleted ${p.title} (archived ${tracks.length} songs for recovery)`);
+      notify(`Deleted “${p.title}”. You can recreate it from Recently deleted.`);
     } catch (err) {
       fail(`Delete failed: ${errText(err)}`);
     } finally {
@@ -1186,10 +1193,10 @@ function App() {
   }
 
   // Recreate a deleted playlist from the local archive.
-  async function recreateDeleted(d: { title: string; tracks: { videoId: string; title: string; artist: string; thumb?: string }[] }) {
+  async function recreateDeleted(d: DeletedPlaylist) {
     setShowDeleted(false);
     setBusy(true);
-    setStatus(`Recreating “${d.title}”…`);
+    showProgress(`Recreating “${d.title}”`);
     try {
       const newId = await createPlaylist(d.title, d.tracks.map((t) => t.videoId));
       if (newId) {
@@ -1201,9 +1208,9 @@ function App() {
           editable: [...new Set([...cacheRef.current.editable, newId])],
           shown: [...new Set([...cacheRef.current.shown, newId])], // a playlist you just made should show
         });
-        setStatus(`Recreated “${d.title}” with ${d.tracks.length} songs`);
+        notify(`Recreated “${d.title}” with ${d.tracks.length} songs`);
       } else {
-        setStatus(`Recreated “${d.title}” — refreshing list…`);
+        showProgress(`Recreated “${d.title}” — refreshing list`);
         await refreshPlaylists();
       }
     } catch (err) {
@@ -1219,7 +1226,7 @@ function App() {
     let tracks = cache.tracksByPlaylist[p.id];
     if (!tracks) {
       setBusy(true);
-      setStatus(`Loading “${p.title}” to export…`);
+      showProgress(`Loading “${p.title}” to export`);
       try {
         const r = await getPlaylistTracks(p.id);
         tracks = r.tracks;
@@ -1236,7 +1243,7 @@ function App() {
       }
     }
     if (!tracks || tracks.length === 0) {
-      setStatus(`“${p.title}” has no songs to export`);
+      notify(`“${p.title}” has no songs to export`);
       return;
     }
     const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
@@ -1249,7 +1256,7 @@ function App() {
         defaultName: `${p.title}.csv`,
         contents: rows.join("\n"),
       });
-      setStatus(saved ? `Exported “${p.title}” (${tracks.length} songs)` : "Export cancelled");
+      if (saved) notify(`Exported “${p.title}” (${tracks.length} songs)`);
     } catch (err) {
       fail(`Export failed: ${errText(err)}`);
     }
@@ -1271,12 +1278,12 @@ function App() {
       return tracks;
     };
     setBusy(true);
-    setStatus(`Checking repeats in “${p.title}”…`);
+    showProgress(`Checking repeats in “${p.title}”`);
     let tracks: Track[];
     try {
       tracks = await refreshTracks();
     } catch (err) {
-      fail(`Couldn't check repeats: ${errText(err)}`);
+      fail(`Couldn't check repeats: ${errText(err)}`, () => removeRepeats(p));
       return;
     } finally {
       setBusy(false);
@@ -1286,7 +1293,7 @@ function App() {
     const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([id]) => id);
     const extraCount = repeated.reduce((total, id) => total + counts.get(id)! - 1, 0);
     if (repeated.length === 0) {
-      setStatus(`No repeats in “${p.title}”`);
+      notify(`No repeats in “${p.title}”`);
       return;
     }
     confirmAction(
@@ -1294,7 +1301,7 @@ function App() {
       "Keeps one copy of each song.\nNote: The first copy stays in its original position on YouTube Music.",
       async () => {
         setBusy(true);
-        setStatus(`Removing repeats in ${p.title}…`);
+        showProgress(`Removing repeats in ${p.title}`);
         try {
           const removedCount = await removeRepeatedVideos(p.id, repeated);
           const currentTracks = await refreshTracks(repeated);
@@ -1304,7 +1311,7 @@ function App() {
           if (remaining > 0) {
             fail(`YouTube Music still shows ${remaining} extra ${remaining === 1 ? "copy" : "copies"} in “${p.title}”. The playlist has been refreshed; try removing repeats again.`);
           } else {
-            setStatus(`Removed ${removedCount} extra ${removedCount === 1 ? "copy" : "copies"} in ${p.title}`);
+            notify(`Removed ${removedCount} extra ${removedCount === 1 ? "copy" : "copies"} in ${p.title}`);
           }
         } catch (err) {
           // A failed request can still have applied some edits. Refresh the actual account state,
@@ -1332,42 +1339,22 @@ function App() {
     );
   }
 
-  const visibleSongs = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let filtered = songs;
-    if (q)
-      filtered = filtered.filter(
-        (s) =>
-          s.title.toLowerCase().includes(q) ||
-          s.artist.toLowerCase().includes(q) ||
-          (cache.customNames[s.videoId]?.toLowerCase().includes(q) ?? false),
-      );
-    if (dupOnly) filtered = filtered.filter((s) => s.playlists.length > 1);
-    if (unavailableOnly) filtered = filtered.filter((s) => isUnavailableTitle(s.title));
-    const copy = [...filtered];
-    copy.sort((a, b) => {
-      let cmp = 0;
-      if (sortKey === "title") cmp = a.title.localeCompare(b.title);
-      else if (sortKey === "artist") cmp = a.artist.localeCompare(b.artist);
-      else cmp = a.playlists.length - b.playlists.length;
-      return sortAsc ? cmp : -cmp;
-    });
-    return copy;
-  }, [songs, query, dupOnly, unavailableOnly, sortKey, sortAsc, cache.customNames]);
-  visibleSongsRef.current = visibleSongs;
+  const visibleSongs = useMemo(
+    () => visibleSongsFor(songs, { query, filters, sortKey, sortAsc, customNames: cache.customNames }),
+    [songs, query, filters, sortKey, sortAsc, cache.customNames],
+  );
 
-  // Any modal open? (Delete-key removal is suppressed while one is, so it can't fire in the
-  // background.) confirm/deleteTarget/exitPrompt/error are checked first as the most-nested.
+  // Any modal open? Song shortcuts are suppressed while one is, so they can't act in the background.
   const anyModalOpen =
-    !!menu || !!error || !!confirm || !!deleteTarget || exitPrompt || !!detail || !!playlistDetail || addPicker || removePicker ||
-    createOpen || !!showUnmatched || !!showRemoved || spotifyOpen || showTemp || showDeleted || showSettings || showManage;
+    !!menu || errorDetails || !!confirm || !!deleteTarget || exitPrompt || !!detail || !!playlistDetail || addPicker || removePicker ||
+    createOpen || !!showUnmatched || !!showRemoved || spotifyOpen || !!transferResult || showTemp || showDeleted || showSettings || showManage;
 
   // Esc: dismiss the most-nested overlay (returns true if it closed something).
-  closeTopmostRef.current = () => {
+  function closeTopmost(): boolean {
     if (menu) return setMenu(null), true;
-    if (error) return setError(null), true;
+    if (errorDetails) return setErrorDetails(false), true;
     if (confirm) return setConfirm(null), true; // cancel — Esc never confirms a destructive action
-    if (deleteTarget) return setDeleteTarget(null), setDeleteText(""), true;
+    if (deleteTarget) return setDeleteTarget(null), true;
     if (exitPrompt) return setExitPrompt(false), true;
     if (detail) return setDetail(null), true;
     if (playlistDetail) return setPlaylistDetail(null), true;
@@ -1376,20 +1363,98 @@ function App() {
     if (createOpen) return setCreateOpen(false), true;
     if (showUnmatched) return setShowUnmatched(null), true;
     if (showRemoved) return setShowRemoved(null), true;
+    if (transferResult) return setTransferResult(null), true;
     if (spotifyOpen) return setSpotifyOpen(false), true;
     if (showTemp) return setShowTemp(false), true;
     if (showDeleted) return setShowDeleted(false), true;
     if (showSettings) return setShowSettings(false), true;
-    if (showManage) return setShowManage(false), true;
+    if (showManage) return closeManage(), true;
+    if (error) return setError(null), true;
     return false;
-  };
+  }
 
   // Delete/Backspace: remove the selected songs. One source playlist → remove directly (with the
-  // usual confirm); several → open the picker to choose. Never while a modal is open.
-  deleteSelectedRef.current = () => {
-    if (anyModalOpen || selectedSongs.size === 0) return;
+  // usual confirm); several → open the picker to choose.
+  function deleteSelected() {
+    if (selectedSongs.size === 0) return;
     if (removeTargets.length === 1) removeSelectedFrom(removeTargets[0]);
     else if (removeTargets.length > 1) setRemovePicker(true);
+  }
+
+  // ↑/↓ move the keyboard cursor through the song list and select that song; with Shift, extend the
+  // selection from the anchor (the same anchor Shift+click uses).
+  function moveCursor(delta: number, extend: boolean) {
+    if (visibleSongs.length === 0) return;
+    const from = activeIndex ?? lastSongIndex.current;
+    const next = from === null ? (delta > 0 ? 0 : visibleSongs.length - 1) : Math.min(visibleSongs.length - 1, Math.max(0, from + delta));
+    setActiveIndex(next);
+    if (extend && lastSongIndex.current !== null) {
+      const [a, b] = [lastSongIndex.current, next].sort((x, y) => x - y);
+      setSelectedSongs(new Set(visibleSongs.slice(a, b + 1).map((s) => s.videoId)));
+    } else {
+      setSelectedSongs(new Set([visibleSongs[next].videoId]));
+      lastSongIndex.current = next;
+    }
+  }
+
+  // Keyboard shortcuts (the list shown in Settings lives in SettingsDialog's SHORTCUTS).
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    const mod = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+    if (e.key === "Escape") {
+      // Esc works even while typing: close the topmost overlay, else clear the song selection.
+      if (closeTopmost()) e.preventDefault();
+      else if (signedIn && selectedSongs.size > 0) {
+        e.preventDefault();
+        setSelectedSongs(new Set());
+        setActiveIndex(null);
+      }
+      return;
+    }
+    if (!signedIn || anyModalOpen) return;
+    if (mod && key === ",") {
+      e.preventDefault();
+      setShowSettings(true);
+      return;
+    }
+    if (mod && key === "f") {
+      e.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+      return;
+    }
+    if (mod && key === "z" && !e.shiftKey && undoRef.current) {
+      const el = document.activeElement as HTMLElement | null;
+      // Inside a text field, ⌘Z belongs to the field.
+      if (!(el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA"))) {
+        e.preventDefault();
+        runUndo();
+        return;
+      }
+    }
+    if (mod && key === "r") {
+      e.preventDefault();
+      if (!busy && selectedPlaylists.length) void runUpdate(selectedPlaylists, 4, true);
+      return;
+    }
+    const el = document.activeElement as HTMLElement | null;
+    const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+    if (typing) return;
+    // Let a focused button handle its own Enter/Space.
+    const onControl = !!el?.closest("button, a, summary");
+    if (mod && key === "a") {
+      e.preventDefault();
+      setSelectedSongs(new Set(visibleSongs.map((s) => s.videoId)));
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      deleteSelected();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveCursor(e.key === "ArrowDown" ? 1 : -1, e.shiftKey);
+    } else if (e.key === "Enter" && !onControl && activeIndex !== null && visibleSongs[activeIndex]) {
+      e.preventDefault();
+      openDetails(visibleSongs[activeIndex]);
+    }
   };
 
   function sortBy(key: SortKey) {
@@ -1399,7 +1464,6 @@ function App() {
       setSortAsc(true);
     }
   }
-  const arrow = (key: SortKey) => (sortKey === key ? (sortAsc ? " ▲" : " ▼") : "");
 
   // Song selection: plain click = select one; Cmd/Ctrl+click = toggle; Shift+click = range.
   // Double-click (same row, fast) opens details — detected manually so a click after closing a
@@ -1422,6 +1486,7 @@ function App() {
         for (let i = a; i <= b; i++) range.add(visibleSongs[i].videoId);
         setSelectedSongs(range);
       } else if (e.metaKey || e.ctrlKey) {
+        setActiveIndex(index);
         setSelectedSongs((p) => {
           const next = new Set(p);
           if (next.has(id)) next.delete(id);
@@ -1430,6 +1495,7 @@ function App() {
         });
         lastSongIndex.current = index;
       } else {
+        setActiveIndex(index);
         setSelectedSongs(new Set([id]));
         lastSongIndex.current = index;
       }
@@ -1471,869 +1537,375 @@ function App() {
   // stored title is only a fallback for the brief window before a refresh confirms the playlist).
   const titleById = useMemo(() => new Map(cache.playlists.map((p) => [p.id, p.title])), [cache.playlists]);
   const manageList = useMemo(
-    () =>
-      sortPlaylists(
-        cache.playlists.filter(
-          (p) => !tempIds.has(p.id) && p.title.toLowerCase().includes(manageQuery.trim().toLowerCase()),
-        ),
-      ),
-    [cache.playlists, tempIds, manageQuery, sortPlaylists],
+    () => sortPlaylists(cache.playlists.filter((p) => !tempIds.has(p.id))),
+    [cache.playlists, tempIds, sortPlaylists],
   );
+
+  async function signOutNow() {
+    setShowSettings(false);
+    await signOut();
+    setSignedIn(false);
+    setSignInPhase("idle");
+    setAccount(null);
+    // Wipe local state so the next account (or sign-in) starts clean — otherwise the previous
+    // account's playlists/tracks linger in memory and get re-saved to disk.
+    persist({ ...EMPTY_CACHE });
+    setSelected(new Set());
+    setSelectedSongs(new Set());
+    autoTried.current = new Set();
+  }
+
+  function deleteAllQueues() {
+    confirmAction(
+      `Delete all ${cache.tempPlaylists.length} queues?`,
+      "Permanently deletes every temporary playlist from your YouTube Music account.",
+      async () => {
+        setBusy(true);
+        const ids = cacheRef.current.tempPlaylists.map((t) => t.id);
+        const failed = new Set<string>();
+        for (const id of ids) {
+          try {
+            await deletePlaylist(id);
+          } catch {
+            failed.add(id); // keep it in the list to retry
+          }
+        }
+        // Persist once at the end, off the latest cache, keeping only the failures.
+        persist({
+          ...cacheRef.current,
+          tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => failed.has(t.id)),
+        });
+        setBusy(false);
+        notify(`Deleted ${ids.length - failed.size} queue(s)`);
+      },
+    );
+  }
+
+  const searchSong = (t: { title: string; artist: string }) => void openUrl(ytSearchUrl(`${t.title} ${t.artist}`));
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   return (
     <main className="app">
       {update && (
-        <div className="update-bar">
+        <div className="update-bar" role="status">
           {installingUpdate !== null ? (
             <span>{installingUpdate}</span>
-          ) : canInstallInPlace(update) ? (
-            <>
-              <span>A newer version ({update.version}) is available.</span>
-              <button className="small" onClick={installInPlace}>Update &amp; restart</button>
-              <button className="small" onClick={() => openUrl(update.url)}>Download manually</button>
-              <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
-            </>
           ) : (
             <>
-              <span>A newer version ({update.version}) is available.</span>
-              <button className="small" onClick={() => openUrl(update.url)}>Download update</button>
+              <span>Version {update.version} is available.</span>
+              {canInstallInPlace(update) && <button className="small" onClick={installInPlace}>Update &amp; restart</button>}
+              <button className="small" onClick={() => openUrl(update.url)}>
+                {canInstallInPlace(update) ? "Download manually" : "Download update"}
+              </button>
               <button className="small" onClick={() => setUpdate(null)}>Dismiss</button>
             </>
           )}
         </div>
       )}
-      <header className="toolbar">
-        <h1>YouTube Music Manager</h1>
-        <span className="status">{status}</span>
-        <span className="grow" />
-        <span className="actions">
-          {signedIn && cache.deleted.length > 0 && (
-            <button disabled={busy} onClick={() => setShowDeleted(true)}>Recently deleted ({cache.deleted.length})</button>
-          )}
-          {signedIn && cache.tempPlaylists.length > 0 && (
-            <button disabled={busy} onClick={() => setShowTemp(true)}>Queues ({cache.tempPlaylists.length})</button>
-          )}
-          {signedIn && <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>}
-          {signedIn && <button disabled={busy} onClick={() => setShowSettings(true)} title="Settings">⚙</button>}
-        </span>
-      </header>
 
-      {signedIn && (
-        <div className="layout">
-          <section className="sidebar">
-            <div className="sidebar-head">
-              <strong>Playlists ({visiblePlaylists.length})</strong>
-              <select
-                className="small"
-                value={playlistSort}
-                onChange={(e) => setPlaylistSort(e.currentTarget.value as PlaylistSort)}
-                title="Sort playlists"
-                style={{ padding: "1px 4px", fontSize: 12 }}
-              >
-                <option value="name">A–Z</option>
-                <option value="updated">Updated</option>
-                <option value="count">Size</option>
-              </select>
-              <button className="small" onClick={() => setSelected(new Set(visiblePlaylists.map((p) => p.id)))}>Select all</button>
-              <button className="small" onClick={() => setSelected(new Set())}>Clear</button>
-            </div>
-            <div className="panel list">
-              {visiblePlaylists.map((p) => {
-                const tracks = cache.tracksByPlaylist[p.id];
-                const stale = isStale(p.id);
-                return (
-                  <div
-                    key={p.id}
-                    className="pl-row"
-                    onDoubleClick={(e) => openPlaylistDetailFromRow(e, p)}
-                    onContextMenu={(e) => openMenu(e, playlistMenuItems(p, "sidebar"))}
-                  >
-                    <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSelected(p.id)} />
-                    <span className="pl-title" onClick={() => toggleSelected(p.id)}>{p.title}</span>
-                    {stale && <span className={`dot ${tracks ? "stale" : "none"}`} title={tracks ? `Updated ${relativeAge(cache.updatedAt[p.id])}` : "Not cached"} />}
-                    {tracks && <span className="pl-meta">{tracks.length}</span>}
-                    <button className="pl-hide" title="Remove from sidebar" onClick={() => setPlaylistShown(p.id, false)}>×</button>
-                  </div>
-                );
-              })}
-              {visiblePlaylists.length === 0 && (
-                <div className="empty" style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
-                  <span>No playlists added yet. Add the ones you want to work with.</span>
-                  <button className="small" onClick={() => setShowManage(true)}>Manage playlists</button>
-                </div>
-              )}
-            </div>
-            <button
-              disabled={busy || selectedPlaylists.length === 0}
-              title="Re-pull the latest songs for the selected playlists (e.g. after editing them elsewhere). Songs load automatically the first time you select a playlist."
-              onClick={() => runUpdate(selectedPlaylists)}
-            >
-              Refresh playlists{selectedPlaylists.length ? ` (${selectedPlaylists.length})` : ""}
-            </button>
-            <button
-              disabled={busy || songs.length === 0}
-              title="Make a temporary playlist from these songs and open it on music.youtube.com to play"
-              onClick={() =>
-                playInYouTube(
-                  songs.map((s) => s.videoId),
-                  `▶ ${selectedPlaylists.map((p) => p.title).join(", ").slice(0, 80) || "Queue"}`,
-                )
-              }
-            >
-              ▶ Play {songs.length} in YouTube Music
-            </button>
-          </section>
+      {signedIn ? (
+        <>
+          <header className="toolbar">
+            <h1>YouTube Music Playlist Manager</h1>
+            <StatusArea
+              progress={busy ? progress : null}
+              error={error}
+              onRetry={() => {
+                const retry = error?.retry;
+                setError(null);
+                retry?.();
+              }}
+              onDetails={() => setErrorDetails(true)}
+              onDismiss={() => setError(null)}
+            />
+            <span className="grow" />
+            <span className="actions">
+              <button disabled={busy} onClick={() => setShowManage(true)}>Manage playlists</button>
+              <HistoryMenu
+                queueCount={cache.tempPlaylists.length}
+                deletedCount={cache.deleted.length}
+                disabled={busy}
+                onQueues={() => setShowTemp(true)}
+                onDeleted={() => setShowDeleted(true)}
+              />
+              <button disabled={busy} onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings (⌘,)">⚙</button>
+            </span>
+          </header>
 
-          <section className="songpane">
-            <div className="searchbar">
-              <input spellCheck={false} autoCorrect="off" autoCapitalize="off" ref={searchRef} className="search" placeholder="Search songs…  (⌘F)" value={query} onChange={(e) => setQuery(e.currentTarget.value)} />
-              {query && <button className="small" onClick={() => setQuery("")}>clear</button>}
-              <label className="toggle">
-                <input type="checkbox" checked={dupOnly} onChange={(e) => setDupOnly(e.currentTarget.checked)} />
-                in &gt;1 playlist
-              </label>
-              <label className="toggle" title="Songs with a deleted/private/unavailable placeholder title (best-effort)">
-                <input type="checkbox" checked={unavailableOnly} onChange={(e) => setUnavailableOnly(e.currentTarget.checked)} />
-                unavailable
-              </label>
-              <span className="count">{visibleSongs.length} songs{selectedSongs.size ? ` · ${selectedSongs.size} selected` : ""}</span>
-            </div>
-
-            <div className="song-head">
-              <div className="col" onClick={() => sortBy("title")}>Title{arrow("title")}</div>
-              <div className="col" onClick={() => sortBy("artist")}>Artist{arrow("artist")}</div>
-              <div className="col" onClick={() => sortBy("count")}>In playlists{arrow("count")}</div>
-            </div>
-            <SongList
-              songs={visibleSongs}
-              emptyMessage={
-                songs.length === 0
-                  ? "Select a playlist to load its songs (cached after the first time)."
-                  : "No songs match."
-              }
+          <div className="layout">
+            <Sidebar
+              playlists={visiblePlaylists}
+              tracksByPlaylist={cache.tracksByPlaylist}
+              updatedAt={cache.updatedAt}
+              selected={selected}
+              playlistSort={playlistSort}
+              loading={loading}
+              isStale={isStale}
+              onSortChange={setPlaylistSort}
+              onSelectAll={() => setSelected(new Set(visiblePlaylists.map((p) => p.id)))}
+              onClear={() => setSelected(new Set())}
+              onToggle={toggleSelected}
+              onHide={(id) => setPlaylistShown(id, false)}
+              onOpenDetails={openPlaylistDetailFromRow}
+              onContextMenu={(e, p) => openMenu(e, playlistMenuItems(p, "sidebar"))}
+              onManage={() => setShowManage(true)}
+            />
+            <SongPane
+              searchRef={searchRef}
+              query={query}
+              onQueryChange={setQuery}
+              filters={filters}
+              onFiltersChange={setFilters}
+              sortKey={sortKey}
+              sortAsc={sortAsc}
+              onSort={sortBy}
+              songs={songs}
+              visibleSongs={visibleSongs}
+              playlistNames={selectedPlaylists.map((p) => p.title)}
+              busy={busy}
+              activeIndex={activeIndex}
               selectedSongs={selectedSongs}
               customNames={cache.customNames}
               replaceNames={replaceNames}
               onSongClick={onSongClick}
               onSongContextMenu={onSongContextMenu}
+              onRefresh={() => runUpdate(selectedPlaylists, 4, true)}
+              onPlayAll={() =>
+                playInYouTube(
+                  songs.map((s) => s.videoId),
+                  `▶ ${selectedPlaylists.map((p) => p.title).join(", ").slice(0, 80) || "Queue"}`,
+                )
+              }
+              onPlaySelected={() => playInYouTube([...selectedSongs], `▶ Queue — ${selectedSongs.size} songs`)}
+              onAddSelected={() => setAddPicker(true)}
+              onRemoveSelected={() => setRemovePicker(true)}
+              onNewPlaylist={() => setCreateOpen(true)}
+              onClearSelection={() => {
+                setSelectedSongs(new Set());
+                setActiveIndex(null);
+              }}
             />
-          </section>
-        </div>
-      )}
-
-      {!signedIn && (
-        <div className="welcome">
-          <img className="welcome-icon" src="/icon.png" alt="" onError={(e) => (e.currentTarget.style.display = "none")} />
-          <h2>YouTube Music Manager</h2>
-          <p className="welcome-sub">Manage your YouTube Music playlists, and import from Spotify.</p>
-          {booting ? (
-            <p className="status" style={{ minHeight: 18, fontSize: 15 }}>Signing in…</p>
-          ) : (
-            <>
-              <button className="primary big" disabled={busy} onClick={doSignIn}>
-                {busy ? "Signing in…" : "Sign in to YouTube Music"}
-              </button>
-              <p className="status" style={{ minHeight: 18 }}>{status}</p>
-            </>
-          )}
-        </div>
+          </div>
+        </>
+      ) : (
+        <Welcome phase={signInPhase} error={signInError} onSignIn={doSignIn} />
       )}
 
       {showManage && (
-        <Overlay title="Manage playlists" onClose={closeManage}>
-          <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 6px" }}>Add a playlist</p>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 6px" }}>
-            Paste any public YouTube / YouTube Music playlist link (or its id). It's added read-only
-            unless you own it.
-          </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input
-              spellCheck={false}
-              autoCorrect="off"
-              autoCapitalize="off"
-              style={{ flex: 1 }}
-              placeholder="https://music.youtube.com/playlist?list=…"
-              value={addUrl}
-              onChange={(e) => setAddUrl(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && !busy && addUrl.trim() && addPublicPlaylist(addUrl)}
-            />
-            <button className="primary" disabled={busy || !addUrl.trim()} onClick={() => addPublicPlaylist(addUrl)}>Add</button>
-            <button
-              disabled={busy}
-              onClick={() => { setShowManage(false); setSpotifyResult(null); setSpotifyProgress(""); setSpotifyOpen(true); }}
-            >
-              Import from Spotify
-            </button>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 6px", borderTop: "1px solid var(--border-subtle)", paddingTop: 14 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>Your playlists</span>
-            <select
-              className="small"
-              value={playlistSort}
-              onChange={(e) => setPlaylistSort(e.currentTarget.value as PlaylistSort)}
-              title="Sort playlists"
-              style={{ padding: "1px 4px", fontSize: 12 }}
-            >
-              <option value="name">A–Z</option>
-              <option value="updated">Updated</option>
-              <option value="count">Size</option>
-            </select>
-            <button
-              className="small"
-              disabled={busy}
-              title="Re-fetch the list of playlists from your YouTube Music account (e.g. after creating or deleting one elsewhere)"
-              onClick={() => refreshPlaylists()}
-            >
-              Refresh list
-            </button>
-          </div>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Check the playlists you want in the sidebar. Double-click for details, or right-click for more actions.
-            {` ${shown.size} of ${cache.playlists.length} shown.`}
-          </p>
-          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
-            placeholder="Filter…"
-            value={manageQuery}
-            onChange={(e) => setManageQuery(e.currentTarget.value)}
-            style={{ width: "100%", marginBottom: 8 }}
-          />
-          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            {manageList.map((p) => (
-              <label
-                key={p.id}
-                className="pl-row"
-                onDoubleClick={(e) => openPlaylistDetailFromRow(e, p)}
-                onContextMenu={(e) => openMenu(e, playlistMenuItems(p, "manage"))}
-              >
-                <input type="checkbox" checked={shown.has(p.id)} onChange={(e) => setPlaylistShown(p.id, e.currentTarget.checked)} />
-                <span className="pl-title">{p.title}</span>
-              </label>
-            ))}
-          </div>
-        </Overlay>
+        <ManagePlaylistsDialog
+          playlists={manageList}
+          totalCount={cache.playlists.length}
+          shown={shown}
+          busy={busy}
+          playlistSort={playlistSort}
+          onSortChange={setPlaylistSort}
+          onSetShown={setPlaylistShown}
+          onAddByUrl={addPublicPlaylist}
+          onRefreshList={() => refreshPlaylists()}
+          onImportSpotify={() => {
+            setShowManage(false);
+            setSpotifyOpen(true);
+          }}
+          onOpenDetails={openPlaylistDetailFromRow}
+          onContextMenu={(e, p) => openMenu(e, playlistMenuItems(p, "manage"))}
+          onClose={closeManage}
+        />
       )}
 
       {playlistDetail && (() => {
         const p = cache.playlists.find((x) => x.id === playlistDetail.id) ?? playlistDetail;
-        const tracks = cache.tracksByPlaylist[p.id] ?? [];
-        const hasCachedTracks = Boolean(cache.tracksByPlaylist[p.id]);
-        const removed = cache.removedSongs[p.id] ?? [];
-        const unmatched = cache.unmatched[p.id] ?? [];
-        const isExternal = cache.external.includes(p.id);
         const inSidebar = shown.has(p.id);
-        const queue = cache.tempPlaylists.find((t) => t.id === p.id);
-        const ownedText = editable.has(p.id)
-          ? "Yes"
-          : isExternal
-            ? "No - added by URL"
-            : hasCachedTracks
-              ? "No or not detected"
-              : "Unknown until refreshed";
         return (
-          <Overlay title="Playlist Info" onClose={() => setPlaylistDetail(null)}>
-            <div className="info-actions">
-              <button className="small" onClick={() => openPlaylist(p.id)}>Open in YouTube Music</button>
-              <button className="small" onClick={() => exportPlaylist(p)}>Export CSV</button>
-              <button className="small" onClick={() => setPlaylistShown(p.id, !inSidebar)}>
-                {inSidebar ? "Remove from sidebar" : "Show in sidebar"}
-              </button>
-              {editable.has(p.id) && (
-                <button className="small" disabled={busy || !hasCachedTracks} onClick={() => removeRepeats(p)}>
-                  Remove repeats
-                </button>
-              )}
-              {removed.length > 0 && <button className="small" onClick={() => setShowRemoved(p.id)}>Removed songs</button>}
-              {unmatched.length > 0 && <button className="small" onClick={() => setShowUnmatched(p.id)}>Unmatched</button>}
-            </div>
-            <div style={{ maxHeight: "62vh", overflow: "auto", paddingRight: 4 }}>
-              <InfoSection title="General" />
-              <InfoRow label="Name">{p.title}</InfoRow>
-              <InfoRow label="Source">{isExternal ? "YouTube Music (added by URL)" : "YouTube Music library"}</InfoRow>
-              <InfoRow label="Owned by you">{ownedText}</InfoRow>
-              <InfoRow label="In sidebar">{inSidebar ? "Yes" : "No"}</InfoRow>
-              <InfoRow label="Selected">{selected.has(p.id) ? "Yes" : "No"}</InfoRow>
-              <InfoRow label="Playlist ID"><code>{p.id}</code></InfoRow>
-              <InfoRow label="Playlist link">
-                <button className="small" onClick={() => openPlaylist(p.id)}>Open</button>
-              </InfoRow>
-              {queue && <InfoRow label="Temporary queue">Created {timestampLabel(queue.createdAt)}</InfoRow>}
-
-              <InfoSection title="Cached Data" />
-              <InfoRow label="Cached tracks">{hasCachedTracks ? tracks.length : "Not loaded"}</InfoRow>
-              <InfoRow label="Unique tracks">{hasCachedTracks ? uniqueTrackCount(tracks) : "Not loaded"}</InfoRow>
-              <InfoRow label="Last refreshed">{timestampLabel(cache.updatedAt[p.id])}</InfoRow>
-              <InfoRow label="Cache status">{isStale(p.id) ? "Needs refresh" : "Current"}</InfoRow>
-              <InfoRow label="Removed archive">{removed.length}</InfoRow>
-              <InfoRow label="Unmatched songs">{unmatched.length}</InfoRow>
-
-              {tracks.length > 0 && (
-                <>
-                  <InfoSection title="Track Snapshot" />
-                  <InfoRow label="First track">{trackSummary(tracks[0])}</InfoRow>
-                  <InfoRow label="Last track">{trackSummary(tracks[tracks.length - 1])}</InfoRow>
-                </>
-              )}
-            </div>
-          </Overlay>
+          <PlaylistInfoDialog
+            playlist={p}
+            tracks={cache.tracksByPlaylist[p.id]}
+            updatedAt={cache.updatedAt[p.id]}
+            removedCount={cache.removedSongs[p.id]?.length ?? 0}
+            unmatchedCount={cache.unmatched[p.id]?.length ?? 0}
+            owned={editable.has(p.id)}
+            external={cache.external.includes(p.id)}
+            inSidebar={inSidebar}
+            queueCreatedAt={cache.tempPlaylists.find((t) => t.id === p.id)?.createdAt}
+            busy={busy}
+            onOpen={() => openPlaylist(p.id)}
+            onExport={() => exportPlaylist(p)}
+            onToggleSidebar={() => setPlaylistShown(p.id, !inSidebar)}
+            onRemoveRepeats={() => removeRepeats(p)}
+            onShowRemoved={() => setShowRemoved(p.id)}
+            onShowUnmatched={() => setShowUnmatched(p.id)}
+            onClose={() => setPlaylistDetail(null)}
+          />
         );
       })()}
 
       {detail && (
-        <Overlay title={detail.title} onClose={() => setDetail(null)}>
-          <p style={{ margin: "4px 0" }}><strong>Artist:</strong> {detail.artist || "—"}</p>
-          <p style={{ margin: "8px 0 4px" }}><strong>Custom name</strong> (local, searchable):</p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
-              style={{ flex: 1 }}
-              placeholder="Your own name for this song…"
-              value={customDraft}
-              onChange={(e) => setCustomDraft(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && commitCustomName(detail.videoId, customDraft)}
-            />
-            <button className="primary" onClick={() => commitCustomName(detail.videoId, customDraft)}>Save</button>
-            {customDraft && <button onClick={() => { setCustomDraft(""); commitCustomName(detail.videoId, ""); }}>Clear</button>}
-          </div>
-          <p style={{ margin: "4px 0", display: "flex", gap: 8, alignItems: "center" }}>
-            <button className="small" onClick={() => openUrl(`https://music.youtube.com/watch?v=${detail.videoId}`)}>
-              Open in YouTube Music
-            </button>
-            <code style={{ color: "var(--muted)" }}>{detail.videoId}</code>
-          </p>
-          <p style={{ margin: "12px 0 4px" }}><strong>In {detailMembership.length} loaded playlist(s):</strong></p>
-          <div className="panel" style={{ maxHeight: "32vh", overflow: "auto" }}>
-            {detailMembership.length === 0 ? (
-              <p className="empty" style={{ padding: 10 }}>Not in any loaded playlist.</p>
-            ) : (
-              detailMembership.map((p) => (
-                <div key={p.id} className="pl-row">
-                  <span className="pl-title">{p.title}{editable.has(p.id) ? "" : " (read-only)"}</span>
-                  <button className="small" onClick={() => openUrl(`https://music.youtube.com/playlist?list=${p.id}`)}>open</button>
-                  {editable.has(p.id) && (
-                    <button className="small danger" disabled={busy} onClick={() => removeOneFrom(detail, p)}>remove</button>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-          <p style={{ margin: "12px 0 4px" }}><strong>Add to a playlist:</strong></p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select
-              style={{ flex: 1 }}
-              value={detailAddTarget}
-              onChange={(e) => setDetailAddTarget(e.currentTarget.value)}
-            >
-              <option value="">{detailAddTargets.length ? "Choose a playlist…" : "No editable sidebar playlists"}</option>
-              {detailAddTargets.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
-            </select>
-            <button
-              className="primary"
-              disabled={busy || !detailAddTarget}
-              onClick={() => {
-                const target = detailAddTargets.find((p) => p.id === detailAddTarget);
-                if (target) addOneTo(detail, target);
-                setDetailAddTarget("");
-              }}
-            >
-              Add
-            </button>
-          </div>
-        </Overlay>
+        <SongDetailsDialog
+          key={detail.videoId}
+          song={detail}
+          customName={cache.customNames[detail.videoId] ?? ""}
+          membership={detailMembership}
+          addTargets={detailAddTargets}
+          editable={editable}
+          busy={busy}
+          onSaveCustomName={(name) => commitCustomName(detail.videoId, name)}
+          onOpenSong={() => openSong(detail.videoId)}
+          onOpenPlaylist={openPlaylist}
+          onRemoveFrom={(p) => removeOneFrom(detail, p)}
+          onAddTo={(p) => addOneTo(detail, p)}
+          onClose={() => setDetail(null)}
+        />
       )}
 
       {addPicker && (
-        <Overlay title={`Add ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"} to…`} onClose={() => setAddPicker(false)}>
-          <p style={{ color: "var(--muted)", fontSize: 12.5, marginTop: 0 }}>
-            Pick one of your editable playlists from the sidebar.
-          </p>
-          <input spellCheck={false} autoCorrect="off" autoCapitalize="off" placeholder="Filter playlists…" value={addQuery} onChange={(e) => setAddQuery(e.currentTarget.value)} style={{ width: "100%", marginBottom: 8 }} />
-          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            {addTargets.map((p) => (
-              <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => addSelectedTo(p)}>
-                <span className="pl-title">{p.title}</span>
-                {cache.tracksByPlaylist[p.id] && <span className="pl-meta">{cache.tracksByPlaylist[p.id].length}</span>}
-              </div>
-            ))}
-            {addTargets.length === 0 && <p className="empty">No editable playlists in the sidebar. Add some via Manage playlists.</p>}
-          </div>
-        </Overlay>
+        <PlaylistPickerDialog
+          title={`Add ${plural(selectedTracks.length, "song")} to…`}
+          playlists={addTargets}
+          filterable
+          emptyText="None of your sidebar playlists can be edited. Add playlists you own via Manage playlists."
+          meta={(p) => (cache.tracksByPlaylist[p.id] ? String(cache.tracksByPlaylist[p.id].length) : null)}
+          onPick={addSelectedTo}
+          onClose={() => setAddPicker(false)}
+        />
       )}
 
       {removePicker && (
-        <Overlay title={`Remove ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"} from…`} onClose={() => setRemovePicker(false)}>
-          {removeTargets.length === 0 ? (
-            <p className="empty">The selected songs aren’t in any of the loaded (selected) playlists.</p>
-          ) : (
-            <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-              {removeTargets.map((p) => (
-                <div key={p.id} className="pl-row" style={{ cursor: "pointer" }} onClick={() => removeSelectedFrom(p)}>
-                  <span className="pl-title">{p.title}</span>
-                  <span className="pl-meta">
-                    {(cache.tracksByPlaylist[p.id] ?? []).filter((t) => selectedSongs.has(t.videoId)).length} selected
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Overlay>
+        <PlaylistPickerDialog
+          title={`Remove ${plural(selectedTracks.length, "song")} from…`}
+          playlists={removeTargets}
+          filterable={false}
+          emptyText="The selected songs aren’t in any of the selected playlists."
+          meta={(p) => `${(cache.tracksByPlaylist[p.id] ?? []).filter((t) => selectedSongs.has(t.videoId)).length} selected`}
+          onPick={removeSelectedFrom}
+          onClose={() => setRemovePicker(false)}
+        />
       )}
 
-      {confirm && (
-        <Overlay title={confirm.title} onClose={() => setConfirm(null)}>
-          <p style={{ fontSize: 13, whiteSpace: "pre-line" }}>{confirm.body}</p>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            {/* Cancel is autofocused so Enter (and Esc) cancel — Enter never fires a destructive
-                confirm that has no other safeguard. */}
-            <button autoFocus onClick={() => setConfirm(null)}>Cancel</button>
-            <button
-              className="primary"
-              onClick={() => {
-                const fn = confirm.onConfirm;
-                setConfirm(null);
-                fn();
-              }}
-            >
-              Confirm
-            </button>
-          </div>
-        </Overlay>
-      )}
+      {confirm && <ConfirmDialog confirm={confirm} onClose={() => setConfirm(null)} />}
 
       {deleteTarget && (
-        <Overlay
-          title={`⚠️ Delete “${deleteTarget.title}”?`}
-          onClose={() => {
-            setDeleteTarget(null);
-            setDeleteText("");
-          }}
-        >
-          <p className="warn" style={{ fontSize: 13 }}>
-            This permanently deletes the playlist from your YouTube Music account — it can’t be undone there.
-          </p>
-          <p style={{ fontSize: 13 }}>
-            {cache.tracksByPlaylist[deleteTarget.id]
-              ? `Contains ${cache.tracksByPlaylist[deleteTarget.id].length} songs — its song list will be archived locally so you can recreate it from “Recently deleted.”`
-              : "It isn’t cached locally, so its song list can’t be archived — load its songs first if you want recovery."}
-          </p>
-          <p style={{ fontSize: 13, margin: "10px 0 4px" }}>
-            Type the playlist name <strong>{deleteTarget.title}</strong> to confirm:
-          </p>
-          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
-            autoFocus
-            value={deleteText}
-            placeholder={deleteTarget.title}
-            onChange={(e) => setDeleteText(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                // Enter only deletes once the name matches (the safeguard); otherwise it cancels.
-                if (deleteText.trim() === deleteTarget.title.trim()) doDelete(deleteTarget);
-                else {
-                  setDeleteTarget(null);
-                  setDeleteText("");
-                }
-              }
-            }}
-            style={{ width: "100%", marginBottom: 10 }}
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button className="primary" onClick={() => { setDeleteTarget(null); setDeleteText(""); }}>Cancel</button>
-            <button className="danger" disabled={deleteText.trim() !== deleteTarget.title.trim()} onClick={() => doDelete(deleteTarget)}>
-              Delete
-            </button>
-          </div>
-        </Overlay>
+        <DeletePlaylistDialog
+          playlist={deleteTarget}
+          cachedCount={cache.tracksByPlaylist[deleteTarget.id]?.length}
+          onDelete={() => doDelete(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
 
       {showDeleted && (
-        <Overlay title="Recently deleted playlists" onClose={() => setShowDeleted(false)}>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Local archive of song lists. “Recreate” makes a new playlist with the same songs.
-          </p>
-          {cache.deleted.length === 0 ? (
-            <p className="empty">Nothing archived.</p>
-          ) : (
-            <div className="panel" style={{ maxHeight: "55vh", overflow: "auto" }}>
-              {cache.deleted.map((d) => (
-                <div key={`${d.id}-${d.deletedAt}`} className="pl-row">
-                  <span className="pl-title">{d.title}</span>
-                  <span className="pl-meta">{d.tracks.length} songs · {relativeAge(d.deletedAt)}</span>
-                  <button className="small" onClick={() => recreateDeleted(d)}>Recreate</button>
-                  <button
-                    className="small"
-                    onClick={() =>
-                      persist({ ...cacheRef.current, deleted: cacheRef.current.deleted.filter((x) => !(x.id === d.id && x.deletedAt === d.deletedAt)) })
-                    }
-                  >
-                    Forget
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Overlay>
+        <RecentlyDeletedDialog
+          deleted={cache.deleted}
+          busy={busy}
+          onRecreate={recreateDeleted}
+          onForget={(d) =>
+            persist({ ...cacheRef.current, deleted: cacheRef.current.deleted.filter((x) => !(x.id === d.id && x.deletedAt === d.deletedAt)) })
+          }
+          onClose={() => setShowDeleted(false)}
+        />
       )}
 
       {createOpen && (
-        <Overlay title={`New playlist from ${selectedTracks.length} song${selectedTracks.length === 1 ? "" : "s"}`} onClose={() => setCreateOpen(false)}>
-          <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
-            autoFocus
-            placeholder="Playlist name"
-            value={newName}
-            onChange={(e) => setNewName(e.currentTarget.value)}
-            onKeyDown={(e) => e.key === "Enter" && !busy && createFromSelection()}
-            style={{ width: "100%", marginBottom: 10 }}
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setCreateOpen(false)}>Cancel</button>
-            <button className="primary" disabled={!newName.trim()} onClick={createFromSelection}>Create</button>
-          </div>
-        </Overlay>
+        <CreatePlaylistDialog
+          songCount={selectedTracks.length}
+          busy={busy}
+          onCreate={createFromSelection}
+          onClose={() => setCreateOpen(false)}
+        />
       )}
 
       {spotifyOpen && (
-        <Overlay title="Import a Spotify playlist" onClose={() => setSpotifyOpen(false)}>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Paste a public Spotify playlist link. (Unofficial Spotify access — it can occasionally
-            break when Spotify changes their site; just try again or report it.)
-          </p>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <input spellCheck={false} autoCorrect="off" autoCapitalize="off"
-              style={{ flex: 1 }}
-              placeholder="https://open.spotify.com/playlist/…"
-              value={spotifyUrl}
-              onChange={(e) => setSpotifyUrl(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && !spotifyLoading && readSpotify()}
-            />
-            <button className="primary" disabled={spotifyLoading || !spotifyUrl.trim()} onClick={readSpotify}>
-              Read
-            </button>
-          </div>
-          {spotifyProgress && <p style={{ fontSize: 13 }}>{spotifyProgress}</p>}
-          {spotifyResult && (
-            <>
-              <p style={{ margin: "6px 0" }}>
-                <strong>{spotifyResult.title}</strong> — {spotifyResult.tracks.length} tracks
-              </p>
-              <div className="panel" style={{ maxHeight: "40vh", overflow: "auto" }}>
-                {spotifyResult.tracks.map((t, i) => (
-                  <div key={i} className="pl-row">
-                    <span className="pl-title">{t.title}</span>
-                    <span className="pl-meta">{t.artist}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
-                <input spellCheck={false} autoCorrect="off" autoCapitalize="off" style={{ flex: 1 }} placeholder="New YouTube playlist name" value={spotifyName} onChange={(e) => setSpotifyName(e.currentTarget.value)} />
-                <button className="primary" disabled={busy || !spotifyName.trim()} onClick={transferSpotify}>
-                  Transfer to YouTube Music
-                </button>
-              </div>
-              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
-                Only confident title+artist matches are added; the rest are listed afterwards to find manually.
-              </p>
-            </>
-          )}
-        </Overlay>
+        <SpotifyImportDialog
+          busy={busy}
+          onOpenUrl={(url) => void openUrl(url)}
+          onFail={fail}
+          onTransfer={transferSpotify}
+          onClose={() => setSpotifyOpen(false)}
+        />
       )}
 
       {transferResult && (
-        <Overlay title="Transfer complete" onClose={() => setTransferResult(null)}>
-          <p>
-            <strong>{transferResult.name}</strong>: {transferResult.matched} song(s) added to YouTube Music.
-          </p>
-          {transferResult.unmatched.length > 0 ? (
-            <>
-              <p style={{ marginTop: 8, fontSize: 13 }}>
-                {transferResult.unmatched.length} couldn’t be confidently matched — search them manually:
-              </p>
-              <div className="panel" style={{ maxHeight: "40vh", overflow: "auto" }}>
-                {transferResult.unmatched.map((t, i) => (
-                  <div key={i} className="pl-row">
-                    <span className="pl-title">{t.title}</span>
-                    <span className="pl-meta">{t.artist}</span>
-                    <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
-                  </div>
-                ))}
-              </div>
-              <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
-                This list is saved — right-click the new playlist → “Unmatched from Spotify” to see it again.
-              </p>
-            </>
-          ) : (
-            <p style={{ color: "var(--muted)" }}>Everything matched. 🎉</p>
-          )}
-        </Overlay>
+        <TransferResultDialog result={transferResult} onSearch={searchSong} onClose={() => setTransferResult(null)} />
       )}
 
       {showRemoved && (
-        <Overlay title="Removed songs (archived on update)" onClose={() => setShowRemoved(null)}>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            Songs removed from this playlist — by you, or dropped when the playlist changed. “Open”
-            jumps straight to the song on YouTube Music.
-          </p>
-          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            {(cache.removedSongs[showRemoved] ?? []).map((t, i) => (
-              <div key={i} className="pl-row">
-                <span className="pl-title">{t.title}</span>
-                <span className="pl-meta">{t.artist} · {relativeAge(t.removedAt)}</span>
-                {t.videoId ? (
-                  <button className="small" onClick={() => openSong(t.videoId!)}>open</button>
-                ) : (
-                  <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
-                )}
-              </div>
-            ))}
-          </div>
-        </Overlay>
+        <RemovedSongsDialog
+          songs={cache.removedSongs[showRemoved] ?? []}
+          onOpenSong={openSong}
+          onSearch={searchSong}
+          onClose={() => setShowRemoved(null)}
+        />
       )}
 
       {showUnmatched && (
-        <Overlay title="Unmatched from Spotify" onClose={() => setShowUnmatched(null)}>
-          <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            {(cache.unmatched[showUnmatched] ?? []).map((t, i) => (
-              <div key={i} className="pl-row">
-                <span className="pl-title">{t.title}</span>
-                <span className="pl-meta">{t.artist}</span>
-                <button className="small" onClick={() => openUrl(ytSearchUrl(`${t.title} ${t.artist}`))}>search</button>
-              </div>
-            ))}
-          </div>
-        </Overlay>
+        <UnmatchedDialog tracks={cache.unmatched[showUnmatched] ?? []} onSearch={searchSong} onClose={() => setShowUnmatched(null)} />
       )}
 
       {showSettings && (
-        <Overlay title="Settings" onClose={() => setShowSettings(false)}>
-          <div className="settings-section">
-            <div className="settings-row">
-              <div className="settings-copy">
-                <strong>App version</strong>
-                <span>YouTube Music Manager {currentVersion}</span>
-              </div>
-              <button disabled={checkingForUpdates} onClick={checkUpdatesNow}>
-                {checkingForUpdates ? "Checking..." : "Check for updates"}
-              </button>
-              {update && canInstallInPlace(update) && (
-                <button className="small" disabled={installingUpdate !== null} onClick={installInPlace}>
-                  {installingUpdate !== null ? installingUpdate : "Update & restart"}
-                </button>
-              )}
-              {update && <button className="small" onClick={() => openUrl(update.url)}>Download manually</button>}
-            </div>
-            {updateCheckMessage && <p className="settings-note">{updateCheckMessage}</p>}
-            <label className="setting">
-              <input type="checkbox" checked={checkUpdates} onChange={(e) => setCheckUpdates(e.currentTarget.checked)} />
-              Check for updates on startup
-            </label>
-          </div>
-          <label className="setting">
-            <input type="checkbox" checked={replaceNames} onChange={(e) => setReplaceNames(e.currentTarget.checked)} />
-            Replace real titles with custom names (otherwise show both)
-          </label>
-          <label className="setting">
-            <input type="checkbox" checked={autoDeleteQueues} onChange={(e) => setAutoDeleteQueues(e.currentTarget.checked)} />
-            Delete leftover queues automatically when I quit
-          </label>
-          <label className="setting">
-            <input type="checkbox" checked={autoRefreshOnLaunch} onChange={(e) => setAutoRefreshOnLaunch(e.currentTarget.checked)} />
-            Refresh the playlist list automatically on launch
-          </label>
-          <label className="setting" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ flex: 1 }}>“Play in YouTube Music” queue visibility</span>
-            <select
-              className="small"
-              value={queuePrivacy}
-              onChange={(e) => setQueuePrivacy(e.currentTarget.value as PlaylistPrivacy)}
-              style={{ padding: "1px 4px", fontSize: 12 }}
-            >
-              <option value="UNLISTED">Unlisted</option>
-              <option value="PUBLIC">Public</option>
-              <option value="PRIVATE">Private</option>
-            </select>
-          </label>
-          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "-2px 0 0", paddingLeft: 2 }}>
-            {queuePrivacy === "PRIVATE"
-              ? "Private queues open only in a browser signed into this account — a different account (or signed out) sees a blank page."
-              : queuePrivacy === "PUBLIC"
-                ? "Public queues open in any browser and may appear on your channel and in search."
-                : "Unlisted queues open in any browser via the link, but aren't listed on your channel or in search. Recommended."}
-          </p>
-          <div style={{ borderTop: "1px solid var(--border-subtle)", marginTop: 12, paddingTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13 }}>
-              {account ? (
-                <>Signed in as <strong>{account.name}</strong>{account.handle ? ` · ${account.handle}` : ""}</>
-              ) : (
-                "Signed in to YouTube Music"
-              )}
-            </span>
-            <span style={{ flex: 1 }} />
-            <button
-              className="danger"
-              disabled={busy}
-              onClick={async () => {
-                setShowSettings(false);
-                await signOut();
-                setSignedIn(false);
-                setAccount(null);
-                // Wipe local state so the next account (or sign-in) starts clean — otherwise the
-                // previous account's playlists/tracks linger in memory and get re-saved to disk.
-                persist({ ...EMPTY_CACHE });
-                setSelected(new Set());
-                setSelectedSongs(new Set());
-                autoTried.current = new Set();
-                setStatus("Signed out");
-              }}
-            >
-              Sign out
-            </button>
-          </div>
-          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
-            YouTube Music Manager (beta)
-            <button className="small" onClick={() => openUrl("https://github.com/hruif/YouTubeMusicPlaylistManager")}>Source</button>
-          </p>
-        </Overlay>
+        <SettingsDialog
+          currentVersion={currentVersion}
+          checkingForUpdates={checkingForUpdates}
+          updateCheckMessage={updateCheckMessage}
+          canInstall={canInstallInPlace(update)}
+          hasUpdate={!!update}
+          installingUpdate={installingUpdate}
+          account={account}
+          busy={busy}
+          checkUpdates={checkUpdates}
+          replaceNames={replaceNames}
+          autoDeleteQueues={autoDeleteQueues}
+          autoRefreshOnLaunch={autoRefreshOnLaunch}
+          queuePrivacy={queuePrivacy}
+          theme={theme}
+          onCheckUpdates={checkUpdatesNow}
+          onInstall={installInPlace}
+          onDownload={() => update && openUrl(update.url)}
+          onChange={(patch) => {
+            if (patch.checkUpdates !== undefined) setCheckUpdates(patch.checkUpdates);
+            if (patch.replaceNames !== undefined) setReplaceNames(patch.replaceNames);
+            if (patch.autoDeleteQueues !== undefined) setAutoDeleteQueues(patch.autoDeleteQueues);
+            if (patch.autoRefreshOnLaunch !== undefined) setAutoRefreshOnLaunch(patch.autoRefreshOnLaunch);
+            if (patch.queuePrivacy !== undefined) setQueuePrivacy(patch.queuePrivacy);
+            if (patch.theme !== undefined) setTheme(patch.theme);
+          }}
+          onSignOut={signOutNow}
+          onOpenSource={() => openUrl("https://github.com/hruif/YouTubeMusicPlaylistManager")}
+          onClose={() => setShowSettings(false)}
+        />
       )}
 
       {showTemp && (
-        <Overlay title="Temporary playlists (queues)" onClose={() => setShowTemp(false)}>
-          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
-            {queuePrivacy === "PRIVATE" ? (
-              <>
-                Private playlists created by “Play in YouTube Music”. They only open in a browser
-                signed into{account ? <> <strong>{account.name}</strong></> : " this account"} — change
-                “Queue visibility” in Settings if links open blank elsewhere.
-              </>
-            ) : (
-              <>
-                {queuePrivacy === "PUBLIC" ? "Public" : "Unlisted"} playlists created by “Play in
-                YouTube Music” — the link opens in any browser, even one signed into a different
-                account{account ? <> than <strong>{account.name}</strong></> : ""} or signed out.
-              </>
-            )}{" "}
-            They live on your account until you delete them here.
-          </p>
-          {cache.tempPlaylists.length === 0 ? (
-            <p className="empty">No queues.</p>
-          ) : (
-            <>
-              <div className="panel" style={{ maxHeight: "50vh", overflow: "auto" }}>
-                {cache.tempPlaylists.map((t) => (
-                  <div key={t.id} className="pl-row">
-                    <span className="pl-title">{titleById.get(t.id) ?? t.title}</span>
-                    <span className="pl-meta">{relativeAge(t.createdAt)}</span>
-                    <button className="small" onClick={() => openPlaylist(t.id)}>open</button>
-                    <button className="small" disabled={busy} onClick={() => deleteTemp(t.id)}>delete</button>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                <button
-                  className="danger"
-                  disabled={busy}
-                  onClick={() =>
-                    confirmAction(
-                      `Delete all ${cache.tempPlaylists.length} queues?`,
-                      "Permanently deletes every temporary playlist from your YouTube Music account.",
-                      async () => {
-                        setBusy(true);
-                        const ids = cacheRef.current.tempPlaylists.map((t) => t.id);
-                        const failed = new Set<string>();
-                        for (const id of ids) {
-                          try {
-                            await deletePlaylist(id);
-                          } catch {
-                            failed.add(id); // keep it in the list to retry
-                          }
-                        }
-                        // Persist once at the end, off the latest cache, keeping only the failures.
-                        persist({
-                          ...cacheRef.current,
-                          tempPlaylists: cacheRef.current.tempPlaylists.filter((t) => failed.has(t.id)),
-                        });
-                        setBusy(false);
-                        setStatus(`Deleted ${ids.length - failed.size} queue(s)`);
-                      },
-                    )
-                  }
-                >
-                  Delete all
-                </button>
-              </div>
-            </>
-          )}
-        </Overlay>
+        <QueuesDialog
+          queues={cache.tempPlaylists}
+          titleById={titleById}
+          busy={busy}
+          onOpen={openPlaylist}
+          onDelete={deleteTemp}
+          onDeleteAll={deleteAllQueues}
+          onClose={() => setShowTemp(false)}
+        />
       )}
 
       {exitPrompt && (
-        <Overlay title="Leftover queues" onClose={() => setExitPrompt(false)}>
-          <p style={{ fontSize: 13 }}>
-            You have {cache.tempPlaylists.length} temporary “Play in YouTube Music” queue(s) on your
-            account. Delete them before closing?
-          </p>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-            <button onClick={() => setExitPrompt(false)}>Cancel</button>
-            <button
-              onClick={async () => {
-                closingRef.current = true;
-                await closeWindow();
-              }}
-            >
-              Keep &amp; close
-            </button>
-            <button
-              className="danger"
-              onClick={async () => {
-                closingRef.current = true;
-                setExitPrompt(false);
-                await deleteAllTemp();
-                await closeWindow();
-              }}
-            >
-              Delete &amp; close
-            </button>
-          </div>
-        </Overlay>
+        <ExitDialog
+          queueCount={cache.tempPlaylists.length}
+          onCancel={() => setExitPrompt(false)}
+          onKeep={async () => {
+            closingRef.current = true;
+            await closeWindow();
+          }}
+          onDelete={async () => {
+            closingRef.current = true;
+            setExitPrompt(false);
+            await deleteAllTemp();
+            await closeWindow();
+          }}
+        />
       )}
 
-      {error && (
-        <Overlay title="⚠️ Something went wrong" onClose={() => setError(null)}>
-          <p className="warn" style={{ fontSize: 13, wordBreak: "break-word" }}>{error}</p>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button className="primary" onClick={() => setError(null)}>OK</button>
-          </div>
-        </Overlay>
-      )}
+      {error && errorDetails && <ErrorDialog message={error.message} onClose={() => setErrorDetails(false)} />}
 
-      {menu && (
-        <>
-          {/* Full-screen catcher: the first click anywhere just dismisses the menu and is consumed
-              here, so it can't also close a modal, select a song, etc. The menu sits above it. */}
-          <div
-            className="menu-backdrop"
-            onClick={() => setMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu(null);
-            }}
-          />
-          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }}>
-            {menu.items.map((it) => (
-              <div
-                key={it.label}
-                className="ctx-item"
-                onClick={() => {
-                  it.onClick();
-                  setMenu(null);
-                }}
-              >
-                {it.label}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      <Toasts toasts={toasts} onExpire={dismissToast} />
+
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </main>
   );
 }

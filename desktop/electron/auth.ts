@@ -47,18 +47,33 @@ async function runHelper(): Promise<SignInResult> {
       { timeout: 6 * 60_000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout) => {
         app.removeListener("before-quit", killChild);
-        // The helper prints the JSON (or "null") as its last stdout line; AppKit may log noise.
-        const line = (stdout || "").trim().split("\n").filter(Boolean).pop() ?? "null";
-        if (err && !stdout) return reject(err);
-        if (line === "null") return resolve(null);
         try {
-          resolve(JSON.parse(line) as SignInResult);
-        } catch {
-          resolve(null);
+          resolve(parseHelperResult(err, stdout));
+        } catch (e) {
+          reject(e);
         }
       },
     );
   });
   if (!result) throw new Error("Sign-in was cancelled.");
   return result;
+}
+
+// Interpret the helper's exit: the captured session, null when the user closed the window without
+// signing in, or a readable error. The helper prints the JSON (or "null") as its last stdout line;
+// AppKit may log noise before it.
+export function parseHelperResult(
+  err: (Error & { killed?: boolean }) | null,
+  stdout: string | undefined,
+): SignInResult | null {
+  const line = (stdout || "").trim().split("\n").filter(Boolean).pop() ?? "null";
+  // execFile kills the helper at the timeout; report that plainly instead of "Command failed: <path>".
+  if (err && err.killed) throw new Error("Sign-in timed out. Please try again.");
+  if (err && !stdout) throw new Error("The sign-in window closed unexpectedly. Please try again.");
+  if (line === "null") return null;
+  try {
+    return JSON.parse(line) as SignInResult;
+  } catch {
+    return null;
+  }
 }

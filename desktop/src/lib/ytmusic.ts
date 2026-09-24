@@ -5,7 +5,14 @@
 import { invoke } from "./native";
 
 export type Playlist = { id: string; title: string };
-export type Track = { videoId: string; title: string; artist: string; thumb?: string };
+export type Track = {
+  videoId: string;
+  title: string;
+  artist: string;
+  thumb?: string;
+  album?: string;
+  duration?: number; // seconds
+};
 export type CombinedSong = Track & { playlists: string[] };
 export type MatchCandidate = { videoId: string; title: string; artist: string };
 
@@ -55,6 +62,14 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
 /** Keeps the first copy of each confirmed song and returns the number of extra entries removed. */
 export async function removeRepeatedVideos(playlistId: string, videoIds: string[]): Promise<number> {
   return invoke<number>("yt_remove_repeated_videos", { playlistId, videoIds });
+}
+
+/** Undo a removal: re-add songs and move each before its original successor (see yt.ts). */
+export async function restoreVideos(
+  playlistId: string,
+  items: { videoId: string; beforeVideoId: string | null }[],
+): Promise<boolean> {
+  return invoke<boolean>("yt_restore_videos", { playlistId, items });
 }
 
 // YouTube can acknowledge an edit before its browse response reflects it. Retry only the read;

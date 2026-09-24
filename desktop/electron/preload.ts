@@ -19,6 +19,11 @@ const api = {
     ipcRenderer.on("close-requested", listener);
     return () => ipcRenderer.removeListener("close-requested", listener);
   },
+  onTracksProgress: (cb: (p: { playlistId: string; loaded: number; total?: number }) => void): (() => void) => {
+    const listener = (_e: unknown, p: { playlistId: string; loaded: number; total?: number }) => cb(p);
+    ipcRenderer.on("tracks:progress", listener);
+    return () => ipcRenderer.removeListener("tracks:progress", listener);
+  },
   installUpdate: (zipUrl: string): Promise<boolean> => ipcRenderer.invoke("update:install", zipUrl),
   onUpdateProgress: (cb: (pct: number) => void): (() => void) => {
     const listener = (_e: unknown, pct: number) => cb(pct);

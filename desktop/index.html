@@ -2,19 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/icon.png" />
+    <link rel="icon" type="image/png" href="./icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>YouTube Music Manager</title>
+    <title>YouTube Music Playlist Manager</title>
     <!-- Critical styles inlined so the first paint already has the app background. Without this the
          page is default white until the JS bundle + App.css finish loading (a multi-second white
          flash). Colors mirror --app-bg in App.css. -->
     <style>
       :root { color-scheme: light dark; }
       html, body, #root { margin: 0; height: 100%; }
-      html, body { background: #f3f3f5; }
+      html, body { background: #faf6f6; }
       @media (prefers-color-scheme: dark) {
-        html, body { background: #1e1e21; }
+        html:not([data-theme="light"]), html:not([data-theme="light"]) body { background: #1b1718; }
       }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #1b1718; }
     </style>
   </head>
 

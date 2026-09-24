@@ -9,7 +9,14 @@
 import { Innertube, YTNodes } from "youtubei.js";
 
 export type Playlist = { id: string; title: string };
-export type Track = { videoId: string; title: string; artist: string; thumb?: string };
+export type Track = {
+  videoId: string;
+  title: string;
+  artist: string;
+  thumb?: string;
+  album?: string;
+  duration?: number; // seconds
+};
 export type MatchCandidate = { videoId: string; title: string; artist: string };
 
 let client: Innertube | null = null;
@@ -99,6 +106,32 @@ function extractThumb(item: any): string | undefined {
   return thumbs[0]?.url;
 }
 
+// "3:45" / "1:02:03" -> seconds; undefined when the text isn't a clock time.
+export function parseDuration(text: string): number | undefined {
+  if (!/^\d+(:\d{1,2}){1,2}$/.test(text.trim())) return undefined;
+  return text
+    .trim()
+    .split(":")
+    .reduce((total, part) => total * 60 + Number(part), 0);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractDuration(item: any): number | undefined {
+  if (typeof item?.duration?.seconds === "number" && item.duration.seconds > 0) return item.duration.seconds;
+  const fixed =
+    item?.fixed_columns?.[0]?.title ??
+    item?.fixed_columns?.[0]?.text ??
+    item?.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text;
+  return parseDuration(textFromMusicValue(fixed) || textFromMusicValue(item?.duration));
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractAlbum(item: any): string | undefined {
+  if (typeof item?.album?.name === "string" && item.album.name) return item.album.name;
+  // Playlist rows put the album in the third flex column (title · artist · album).
+  return flexColumnText(item, 2) || undefined;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function extractTrackFromPlaylistItem(rawItem: any): Track | null {
   const item = rawItem?.musicResponsiveListItemRenderer ?? rawItem;
@@ -106,7 +139,12 @@ export function extractTrackFromPlaylistItem(rawItem: any): Track | null {
   const videoId = extractVideoId(item);
   const title = textFromMusicValue(item?.title) || flexColumnText(item, 0) || item?.name || "";
   if (!videoId || !title) return null;
-  return { videoId, title, artist: extractArtist(item), thumb: extractThumb(item) };
+  const track: Track = { videoId, title, artist: extractArtist(item), thumb: extractThumb(item) };
+  const album = extractAlbum(item);
+  const duration = extractDuration(item);
+  if (album) track.album = album;
+  if (duration) track.duration = duration;
+  return track;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -332,7 +370,34 @@ export async function getLibraryPlaylists(): Promise<Playlist[]> {
   return out;
 }
 
-async function getPlaylistRows(playlistId: string) {
+// The header's song count ("1,234 songs"), so loading progress can be shown as a fraction. Best
+// effort: undefined when the header has no recognisable count (e.g. another UI language).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function rawPlaylistSongCount(root: any): number | undefined {
+  const header =
+    firstByKey(root, "musicResponsiveHeaderRenderer") ??
+    firstByKey(root, "musicEditablePlaylistDetailHeaderRenderer") ??
+    firstByKey(root, "musicDetailHeaderRenderer");
+  if (!header) return undefined;
+  const texts: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const collect = (node: any): void => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.text === "string") texts.push(node.text);
+    // Skip the title: a playlist called "50 songs I love" isn't a count.
+    for (const key in node) if (key !== "title") collect(node[key]);
+  };
+  collect(header);
+  for (const text of texts) {
+    const m = text.match(/^\s*([\d,.]+)\s+(?:songs?|tracks?|videos?)\b/i);
+    if (m) return Number(m[1].replace(/[,.]/g, ""));
+  }
+  return undefined;
+}
+
+export type LoadProgress = (loaded: number, total: number | undefined) => void;
+
+async function getPlaylistRows(playlistId: string, onProgress?: LoadProgress) {
   const actions = requireClient().actions as unknown as {
     execute(endpoint: string, args: Record<string, unknown>): Promise<{ data?: unknown }>;
   };
@@ -347,7 +412,9 @@ async function getPlaylistRows(playlistId: string) {
   let res = await actions.execute("/browse", { browseId, client: "YTMUSIC", parse: false });
   const editable = isPlaylistEditable(res?.data);
   const title = rawPlaylistTitle(res?.data);
+  const total = rawPlaylistSongCount(res?.data);
   take(res?.data);
+  onProgress?.(rows.length, total);
   let token = nextPlaylistSongsToken(res?.data);
   const visited = new Set<string>();
   while (token) {
@@ -357,6 +424,7 @@ async function getPlaylistRows(playlistId: string) {
     visited.add(token);
     res = await actions.execute("/browse", { continuation: token, client: "YTMUSIC", parse: false });
     take(res?.data);
+    onProgress?.(rows.length, total);
     token = nextPlaylistSongsToken(res?.data);
   }
   return { rows, editable, title };
@@ -364,8 +432,9 @@ async function getPlaylistRows(playlistId: string) {
 
 export async function getPlaylistTracks(
   playlistId: string,
+  onProgress?: LoadProgress,
 ): Promise<{ tracks: Track[]; editable: boolean; title: string }> {
-  const { rows, editable, title } = await getPlaylistRows(playlistId);
+  const { rows, editable, title } = await getPlaylistRows(playlistId, onProgress);
   const tracks = rows.map(extractTrackFromPlaylistItem).filter((track): track is Track => track !== null);
   return { tracks, editable, title };
 }
@@ -531,6 +600,43 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await endpoint.call(client.actions as any);
   return [...resolved.keys()];
+}
+
+// Undo a removal: re-add the songs, then move each back in front of the song that followed it
+// before it was removed (`beforeVideoId`; null = it was last, so the end is already right).
+// Adding always appends, so the re-added copy is the last row with that videoId. Returns false if
+// the songs came back but couldn't be moved into place (they're then at the end of the playlist).
+export async function restoreVideos(
+  playlistId: string,
+  items: { videoId: string; beforeVideoId: string | null }[],
+): Promise<boolean> {
+  const pid = normalizePlaylistId(playlistId);
+  if (!items.length) return true;
+  await addVideos(pid, items.map((i) => i.videoId));
+  const moves = items.filter((i) => i.beforeVideoId);
+  if (!moves.length) return true;
+
+  const { rows } = await getPlaylistRows(pid);
+  const slots = rows
+    .map((row) => ({ videoId: extractVideoId(row), setVideoId: row?.playlistItemData?.playlistSetVideoId }))
+    .filter((s): s is { videoId: string; setVideoId: string } => !!s.videoId && typeof s.setVideoId === "string");
+  const restoredIds = new Set(items.map((i) => i.videoId));
+  const lastSlot = (videoId: string) => [...slots].reverse().find((s) => s.videoId === videoId)?.setVideoId;
+  // The successor's own slot: its first copy that isn't one of the songs just re-added.
+  const successorSlot = (videoId: string) =>
+    slots.find((s) => s.videoId === videoId && !(restoredIds.has(videoId) && s.setVideoId === lastSlot(videoId)))?.setVideoId;
+
+  const editActions: { action: "ACTION_MOVE_VIDEO_BEFORE"; setVideoId: string; movedSetVideoIdSuccessor: string }[] = [];
+  for (const item of moves) {
+    const moved = lastSlot(item.videoId);
+    const successor = successorSlot(item.beforeVideoId!);
+    if (!moved || !successor) return false;
+    // In original order, so songs that shared a successor keep their relative order.
+    editActions.push({ action: "ACTION_MOVE_VIDEO_BEFORE", setVideoId: moved, movedSetVideoIdSuccessor: successor });
+  }
+  const endpoint = new YTNodes.NavigationEndpoint({ playlistEditEndpoint: { playlistId: pid, actions: editActions } });
+  const response = await endpoint.call(requireClient().actions, { client: "YTMUSIC", parse: false });
+  return !!response.success && response.status_code < 400 && response.data?.status === "STATUS_SUCCEEDED";
 }
 
 export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";

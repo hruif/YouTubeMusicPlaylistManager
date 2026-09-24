@@ -27,7 +27,8 @@ function useResizing(): boolean {
 
 type Props = {
   songs: CombinedSong[]; // already filtered/sorted (visibleSongs)
-  emptyMessage: string;
+  empty: React.ReactNode;
+  activeIndex: number | null; // keyboard cursor; kept scrolled into view
   selectedSongs: Set<string>;
   customNames: Record<string, string>;
   replaceNames: boolean;
@@ -41,7 +42,8 @@ type Props = {
 // for smooth resizing/scrolling. Memoized so unrelated App state changes don't re-render it.
 export const SongList = memo(function SongList({
   songs,
-  emptyMessage,
+  empty,
+  activeIndex,
   selectedSongs,
   customNames,
   replaceNames,
@@ -50,6 +52,14 @@ export const SongList = memo(function SongList({
 }: Props) {
   const v = useVirtual(songs.length);
   const resizing = useResizing();
+  const { el } = v;
+  // Keep the keyboard cursor visible when ↑/↓ move it past the viewport edge.
+  useEffect(() => {
+    if (!el || activeIndex === null) return;
+    const top = activeIndex * ROW_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW_H > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW_H - el.clientHeight;
+  }, [el, activeIndex]);
   // While resizing, cap the spacer to just past the visible rows so Chromium isn't re-evaluating a
   // 150k-px-tall scroll area each frame; restore the full height (for an accurate scrollbar) when the
   // drag settles. The scrollbar thumb briefly grows during the drag — an acceptable trade for smooth
@@ -60,9 +70,16 @@ export const SongList = memo(function SongList({
     // you're dragging the window, not scrolling, so there's nothing to lose.
     <div className={`song-scroll${resizing ? " resizing" : ""}`} ref={v.ref}>
       {songs.length === 0 ? (
-        <p className="empty">{emptyMessage}</p>
+        empty
       ) : (
-        <div className="song-inner" style={{ height: innerHeight }}>
+        <div
+          className="song-inner"
+          style={{ height: innerHeight }}
+          role="listbox"
+          aria-label="Songs"
+          aria-multiselectable="true"
+          aria-activedescendant={activeIndex !== null && songs[activeIndex] ? `song-${songs[activeIndex].videoId}` : undefined}
+        >
           {songs.slice(v.start, v.end).map((s, idx) => {
             const i = v.start + idx;
             return (
@@ -72,6 +89,7 @@ export const SongList = memo(function SongList({
                 index={i}
                 zebra={i % 2 === 1}
                 selected={selectedSongs.has(s.videoId)}
+                active={i === activeIndex}
                 customName={customNames[s.videoId]}
                 replaceName={replaceNames}
                 onClick={onSongClick}

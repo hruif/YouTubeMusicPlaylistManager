@@ -3,17 +3,29 @@
 // reaches it through a single generic `invoke(cmd, args)` channel that mirrors Tauri's invoke, plus
 // a few window-control channels. Auth/youtubei.js handlers are filled in by ./backend (Phase 2).
 
-import { app, BrowserWindow, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { registerBackend } from "./backend";
 import { stageUpdate } from "./updater";
+import { migrateLegacyUserData } from "./migrate";
 
 // Distinct app name + dock icon so this is easy to tell apart from other Electron apps (esp. in dev,
 // where the dock would otherwise show the generic Electron icon).
-app.setName("YouTube Music Manager");
+app.setName("YouTube Music Playlist Manager");
 
 const isDev = !app.isPackaged;
+
+// The app was called "YouTube Music Manager" until 0.3.5; carry its data folder over (see
+// ./migrate). The saved sign-in is encrypted with a keychain entry named after the app, so it may
+// not decrypt under the new name; if so, you're asked to sign in once.
+if (!isDev) {
+  try {
+    migrateLegacyUserData(app.getPath("appData"), app.getPath("userData"));
+  } catch {
+    /* best effort: at worst the app starts fresh */
+  }
+}
 const ICON_PATH = path.join(app.getAppPath(), "build", "icon.png");
 const DEV_URL = "http://localhost:1420";
 
@@ -69,6 +81,20 @@ export function registerCommand(name: string, handler: CommandHandler): void {
 registerCommand("read_cache", () => readCache());
 registerCommand("write_cache", (args) => writeCache(String(args.contents ?? "")));
 
+// Application menu. Electron's default menu binds ⌘R to "Reload", which would wipe the app mid-task
+// and swallow the renderer's own ⌘R (refresh selected playlists), so reload/devtools are dev-only.
+function buildMenu(): void {
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    { role: "editMenu" },
+    ...(isDev
+      ? [{ label: "Developer", submenu: [{ role: "reload" as const }, { role: "toggleDevTools" as const }] }]
+      : []),
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1120,
@@ -76,8 +102,8 @@ function createWindow(): void {
     minWidth: 880,
     minHeight: 560,
     show: false,
-    backgroundColor: "#1e1e21",
-    title: "YouTube Music Manager",
+    backgroundColor: "#1b1718",
+    title: "YouTube Music Playlist Manager",
     icon: ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -177,6 +203,7 @@ if (!app.requestSingleInstanceLock()) {
       }
     }
     registerBackend({ registerCommand, userAgent: LOGIN_USER_AGENT, getWindow: () => mainWindow });
+    buildMenu();
     createWindow();
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

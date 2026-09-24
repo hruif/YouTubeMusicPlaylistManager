@@ -15,8 +15,8 @@ cd desktop
 npm run electron:build    # vite build → bundle main/preload + helper → electron-builder
 ```
 Artifacts land in `release/`:
-- `release/mac-universal/YouTube Music Manager.app`
-- `release/YouTube Music Manager-<version>-universal.dmg`
+- `release/mac-universal/YouTube Music Playlist Manager.app`
+- `release/YouTube Music Playlist Manager-<version>-universal.dmg`
 
 Packaging is configured in [`electron-builder.yml`](electron-builder.yml). Notable choices:
 - **`mac.target: { dmg, arch: universal }`** — one DMG that runs on Apple Silicon **and** Intel.
@@ -34,7 +34,7 @@ The build is **unsigned** (`mac.identity: null`) — so a downloaded copy is blo
 first launch. Users approve it once:
 
 > **System Settings → Privacy & Security → Open Anyway**, or
-> `xattr -dr com.apple.quarantine "/Applications/YouTube Music Manager.app"`, or Control-click → Open.
+> `xattr -dr com.apple.quarantine "/Applications/YouTube Music Playlist Manager.app"`, or Control-click → Open.
 
 **To notarize** (removes the Gatekeeper prompt) you need a **paid Apple Developer ID** — the project
 has never had one, which is why neither app is notarized. With a Developer ID, set a signing identity
@@ -63,6 +63,6 @@ in `electron-builder.yml` (`mac.identity`) and configure electron-builder notari
   the installed app, or if the install dir needs admin. **Test the in-place path on an actual
   installed copy** before relying on it — it can't run in dev or from the read-only `.dmg` mount.
 - **Verified 2026-09-11:** the installed 0.3.4 app downloaded the staged 0.3.5 release ZIP through
-  its `installUpdate` bridge, replaced `/Applications/YouTube Music Manager.app`, and relaunched
+  its `installUpdate` bridge, replaced `/Applications/YouTube Music Playlist Manager.app`, and relaunched
   as 0.3.5. Settings confirmed the version and signed-in account; the library and selections
   were preserved. This exercised the installed updater before promoting the release to Latest.

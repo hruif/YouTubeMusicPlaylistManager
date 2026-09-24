@@ -90,25 +90,7 @@ export async function stageUpdate(zipUrl: string, onProgress: (pct: number) => v
   onProgress(100);
 
   const swapAndRelaunch = (): void => {
-    const q = (s: string) => s.replace(/(["$`\\])/g, "\\$1");
-    const script = `#!/bin/bash
-APP_PID="${process.pid}"
-SRC="${q(newApp)}"
-DEST="${q(dest)}"
-# Wait (up to ~60s) for the old app to fully exit so we can replace its bundle.
-for _ in $(seq 1 600); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.1; done
-rm -rf "$DEST.bak" 2>/dev/null
-if mv "$DEST" "$DEST.bak" && mv "$SRC" "$DEST"; then
-  rm -rf "$DEST.bak" 2>/dev/null
-  xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
-  open "$DEST"
-else
-  # Couldn't replace in place (e.g. the install dir needs admin) — restore the original and reveal
-  # the new app so the user can move it manually.
-  [ -d "$DEST.bak" ] && mv "$DEST.bak" "$DEST" 2>/dev/null
-  open -R "$SRC"
-fi
-`;
+    const script = swapScript({ pid: process.pid, newApp, dest, target: installTarget(dest, appName) });
     const scriptPath = path.join(dir, "swap.sh");
     // Write + spawn synchronously: we're about to quit, and the detached helper must already be
     // running (it watches our PID) before we go.
@@ -118,4 +100,36 @@ fi
   };
 
   return { swapAndRelaunch };
+}
+
+// Where the update lands: under the new build's own name next to the installed copy (the app may
+// have been renamed since it was installed). The swap script falls back to `dest` if something
+// else already sits at that path.
+export function installTarget(dest: string, newAppName: string): string {
+  return path.join(path.dirname(dest), newAppName);
+}
+
+// The detached helper that swaps the bundle once this process exits, then relaunches.
+export function swapScript({ pid, newApp, dest, target }: { pid: number; newApp: string; dest: string; target: string }): string {
+  const q = (s: string) => s.replace(/(["$`\\])/g, "\\$1");
+  return `#!/bin/bash
+APP_PID="${pid}"
+SRC="${q(newApp)}"
+DEST="${q(dest)}"
+FINAL="${q(target)}"
+if [ "$FINAL" != "$DEST" ] && [ -e "$FINAL" ]; then FINAL="$DEST"; fi
+# Wait (up to ~60s) for the old app to fully exit so we can replace its bundle.
+for _ in $(seq 1 600); do kill -0 "$APP_PID" 2>/dev/null || break; sleep 0.1; done
+rm -rf "$DEST.bak" 2>/dev/null
+if mv "$DEST" "$DEST.bak" && mv "$SRC" "$FINAL"; then
+  rm -rf "$DEST.bak" 2>/dev/null
+  xattr -dr com.apple.quarantine "$FINAL" 2>/dev/null
+  open "$FINAL"
+else
+  # Couldn't replace in place (e.g. the install dir needs admin) — restore the original and reveal
+  # the new app so the user can move it manually.
+  [ -d "$DEST.bak" ] && mv "$DEST.bak" "$DEST" 2>/dev/null
+  open -R "$SRC"
+fi
+`;
 }

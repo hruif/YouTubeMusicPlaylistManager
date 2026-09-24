@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ROW_H } from "../lib/format";
+import { ROW_H, formatDuration } from "../lib/format";
 import type { CombinedSong } from "../lib/ytmusic";
 
 type Props = {
@@ -7,6 +7,7 @@ type Props = {
   index: number; // absolute position in the list (stable per song) → also the virtual top offset
   zebra: boolean;
   selected: boolean;
+  active: boolean;
   customName?: string;
   replaceName: boolean; // true: show only the custom name; false: show custom + the real title
   onClick: (e: React.MouseEvent, index: number) => void;
@@ -15,10 +16,13 @@ type Props = {
 
 // Memoized so unrelated state changes (modals, busy/status, scrolling) don't re-render every visible
 // row — only rows whose own song/selection/customName (or the stable callbacks) change.
-export const SongRow = memo(function SongRow({ song, index, zebra, selected, customName, replaceName, onClick, onContextMenu }: Props) {
+export const SongRow = memo(function SongRow({ song, index, zebra, selected, active, customName, replaceName, onClick, onContextMenu }: Props) {
   return (
     <div
-      className={`song-row${zebra ? " zebra" : ""}${selected ? " selected" : ""}`}
+      id={`song-${song.videoId}`}
+      role="option"
+      aria-selected={selected}
+      className={`song-row${zebra ? " zebra" : ""}${selected ? " selected" : ""}${active ? " active" : ""}`}
       style={{ top: index * ROW_H }}
       onClick={(e) => onClick(e, index)}
       onContextMenu={(e) => onContextMenu(e, index)}
@@ -57,9 +61,11 @@ export const SongRow = memo(function SongRow({ song, index, zebra, selected, cus
         )}
       </div>
       <div className="cell muted">{song.artist}</div>
+      <div className="cell muted">{song.album}</div>
       <div className="cell muted" title={song.playlists.join(", ")}>
         {song.playlists.length === 1 ? song.playlists[0] : `${song.playlists.length} playlists`}
       </div>
+      <div className="cell muted num">{formatDuration(song.duration)}</div>
     </div>
   );
 });

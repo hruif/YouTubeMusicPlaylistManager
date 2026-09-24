@@ -25,5 +25,5 @@ export function useVirtual(count: number) {
   const h = height || 600;
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - overscan);
   const end = Math.min(count, Math.ceil((scrollTop + h) / ROW_H) + overscan);
-  return { ref: setEl, start, end };
+  return { ref: setEl, el, start, end };
 }
