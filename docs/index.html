@@ -49,9 +49,12 @@
         <p class="meta"><span id="release-status">Free</span> · macOS 12+ · Apple Silicon and Intel</p>
         <figure class="window">
           <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-          <img src="screenshots/main.png" width="2400" height="1456"
+          <!-- The real app UI with sample playlists (desktop/src/demo); a screenshot on small screens. -->
+          <iframe class="demo-frame" src="demo/" title="Live demo of the app with sample playlists"></iframe>
+          <img class="demo-fallback" src="screenshots/main.png" width="2400" height="1456"
                alt="The app showing two playlists combined into one song list">
         </figure>
+        <p class="demo-note">A live demo with sample playlists: select, filter, remove, and undo. Playing opens the real songs.</p>
       </section>
 
       <section class="features" aria-labelledby="features-title">

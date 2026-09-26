@@ -1,5 +1,5 @@
 // Website screenshots of the real UI with demo data (no account). From desktop/:
-//   npm run build && node scripts/screenshots/take.mjs
+//   npm run build:demo && node scripts/screenshots/take.mjs
 // Writes PNGs to ../docs/screenshots/.
 import { _electron as electron } from "playwright-core";
 import { mkdirSync } from "node:fs";

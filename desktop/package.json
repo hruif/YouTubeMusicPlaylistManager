@@ -14,7 +14,8 @@
     "electron:dev": "node electron/dev.mjs",
     "electron:bundle": "node electron/build.mjs",
     "electron:build": "vite build && node electron/build.mjs && electron-builder",
-    "e2e:live": "node e2e/live.mjs"
+    "e2e:live": "node e2e/live.mjs",
+    "build:demo": "vite build --config vite.demo.config.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

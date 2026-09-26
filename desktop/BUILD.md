@@ -96,13 +96,17 @@ Quit the app first (it runs one copy at a time).
   0.3.5's updater keeps the installed bundle's old file name ("YouTube Music Manager.app"); updates
   from 0.3.6 on install under the new name. 0.3.6 was then promoted to Latest.
 
-## Website screenshots
+## Website live demo and screenshot
 
-The site's screenshots (`docs/screenshots/`) are the real UI with made-up demo data, so no account
-data appears. To retake them after UI changes:
+The website embeds a **live demo**: the real renderer running against an in-memory backend with
+sample playlists (`src/demo/`: `data.ts` is the library, `bridge.ts` the pretend backend). Edits
+change only the demo's copy and reset on reload. Playing opens the real songs: one song in YouTube
+Music, several as a temporary YouTube queue (`watch_videos`), since a demo can't create playlists.
+The demo songs use their real YouTube Music video ids for that.
+
+Rebuild it after UI changes, and retake the screenshot shown on small screens and in link previews:
 
 ```bash
-npm run build && node scripts/screenshots/take.mjs
+npm run build:demo                         # → ../docs/demo/
+node scripts/screenshots/take.mjs          # → ../docs/screenshots/main.png (from the demo build)
 ```
-
-The scenes and demo library are in `scripts/screenshots/` (`take.mjs`, `demo-data.cjs`).

@@ -8,6 +8,7 @@
   --accent: #d4213f;
   --accent-fill: #d4213f;
   --shadow: 0 24px 60px rgba(60, 20, 28, 0.16);
+  --app-bg: #faf6f6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -19,6 +20,7 @@
     --accent: #ff5f7a;
     --accent-fill: #db2d4c;
     --shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+    --app-bg: #1b1718;
   }
 }
 
@@ -108,14 +110,47 @@ h1 {
   font-size: 0.88rem;
 }
 
-/* Screenshot framed as a Mac window */
+/* Live demo (or screenshot) framed as a Mac window; the frame matches the app's own background. */
 .window {
   margin: 56px 0 0;
   border-radius: 12px;
   overflow: hidden;
-  background: #1b1718;
+  background: var(--app-bg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
+}
+
+.demo-frame {
+  display: block;
+  width: 100%;
+  height: clamp(560px, 62vw, 700px);
+  border: 0;
+}
+
+.demo-fallback {
+  display: none;
+}
+
+.demo-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+/* Too narrow for the app's layout: show the screenshot instead. */
+@media (max-width: 760px) {
+  .demo-frame,
+  .demo-note {
+    display: none;
+  }
+
+  .demo-fallback {
+    display: block;
+  }
+
+  .window {
+    background: #1b1718; /* the screenshot is dark-themed */
+  }
 }
 
 .window-bar {
