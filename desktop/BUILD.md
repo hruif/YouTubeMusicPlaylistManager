@@ -83,11 +83,26 @@ Quit the app first (it runs one copy at a time).
   latest non-prerelease `desktop-v*` release. When running the packaged app on a release that ships
   the `…-mac.zip`, the banner/Settings offer **"Update & restart"**: it downloads the zip, strips the
   Gatekeeper quarantine, and a detached helper swaps the bundle in place + relaunches — no
-  drag/re-approve. Unsigned, so this is a custom swap (not Squirrel/electron-updater, which need a
-  Developer ID). Falls back to the manual `.dmg` if the release has no zip (pre-0.3.4), if not running
+  drag/re-approve. It's a custom swap (not Squirrel/electron-updater), kept after signing because
+  it already handles the rename and needs no update server. Falls back to the manual `.dmg` if the release has no zip (pre-0.3.4), if not running
   the installed app, or if the install dir needs admin. **Test the in-place path on an actual
   installed copy** before relying on it — it can't run in dev or from the read-only `.dmg` mount.
 - **Verified 2026-09-11:** the installed 0.3.4 app downloaded the staged 0.3.5 release ZIP through
-  its `installUpdate` bridge, replaced `/Applications/YouTube Music Playlist Manager.app`, and relaunched
+  its `installUpdate` bridge, replaced `/Applications/YouTube Music Manager.app`, and relaunched
   as 0.3.5. Settings confirmed the version and signed-in account; the library and selections
   were preserved. This exercised the installed updater before promoting the release to Latest.
+- **Verified 2026-09-26:** the real 0.3.5 release (downloaded from GitHub) found the published but
+  not-yet-Latest 0.3.6, and **Update & restart** swapped in the notarized 0.3.6 and relaunched it.
+  0.3.5's updater keeps the installed bundle's old file name ("YouTube Music Manager.app"); updates
+  from 0.3.6 on install under the new name. 0.3.6 was then promoted to Latest.
+
+## Website screenshots
+
+The site's screenshots (`docs/screenshots/`) are the real UI with made-up demo data, so no account
+data appears. To retake them after UI changes:
+
+```bash
+npm run build && node scripts/screenshots/take.mjs
+```
+
+The scenes and demo library are in `scripts/screenshots/` (`take.mjs`, `demo-data.cjs`).

@@ -296,12 +296,19 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
-  - **`desktop-v0.3.6` (2026-09-26): signed, notarized, renamed.** First Developer ID-signed and
-    notarized build (hardened runtime; `scripts/build-signed-mac.sh`, full Xcode for universal).
-    App renamed to "YouTube Music Playlist Manager"; the renamed app copies the old library cache
-    and settings on first launch (the saved sign-in can't carry over: keychain entry is per app
-    name). UI refresh, Undo for song add/remove with position restore, save-on-quit, new filters.
-    Checks: 158 unit/UI tests, typecheck, and `npm run e2e:live` 16/16 against a real account.
+  - **Released in `desktop-v0.3.6` (2026-09-26): signed, notarized, renamed.**
+    - First Developer ID-signed and notarized build (hardened runtime; `scripts/build-signed-mac.sh`,
+      full Xcode for universal). Universal DMG and updater ZIP are published and **Latest**; the
+      uploaded SHA-256 digests match the local build (DMG `022df6ea…4ab9`, ZIP `1029e96b…3f49`),
+      and both pass Gatekeeper as notarized with stapled tickets.
+    - App renamed to "YouTube Music Playlist Manager". The renamed app copies the old library cache
+      and settings on first launch; the saved sign-in can't carry over (its keychain entry is per
+      app name), so users sign in once.
+    - The real 0.3.5 release updated in place to 0.3.6 before promotion. 0.3.5's updater keeps the
+      bundle's old file name ("YouTube Music Manager.app"); later updates use the new one.
+    - UI refresh, Undo for song add/remove with position restore, save-on-quit, new filters.
+    - Checks: 158 unit/UI tests, typecheck, and `npm run e2e:live` 16/16 against a real account.
+    - Website redesigned with screenshots of the real UI on demo data (`desktop/scripts/screenshots/`).
   - **Released in `desktop-v0.3.5` (2026-09-11).** The universal DMG and updater ZIP are published
     on GitHub, and 0.3.5 is confirmed as **Latest** on the live desktop update channel. Both
     uploaded asset SHA-256 digests match the local build. The final package passed the live

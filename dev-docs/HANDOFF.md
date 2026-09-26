@@ -26,7 +26,8 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** `desktop-v0.3.6` is the first **signed and notarized** release (Developer ID,
+- **Current state:** `desktop-v0.3.6` (published and Latest, 2026-09-26; the 0.3.5→0.3.6 in-place
+  update was verified before promotion) is the first **signed and notarized** release (Developer ID,
   Xintech LLC) and renames the app to **YouTube Music Playlist Manager** (the old data folder is
   copied over on first launch; users sign in once). It refreshes the UI (context bar, toasts and
   header errors with Retry, loading pies, Filter menu with in-every/repeated filters, Album and Time
