@@ -308,7 +308,7 @@ for architecture/layout.
       bundle's old file name ("YouTube Music Manager.app"); later updates use the new one.
     - UI refresh, Undo for song add/remove with position restore, save-on-quit, new filters.
     - Checks: 158 unit/UI tests, typecheck, and `npm run e2e:live` 16/16 against a real account.
-    - Website redesigned with screenshots of the real UI on demo data (`desktop/scripts/screenshots/`).
+    - Website redesigned: a minimal page with one screenshot of the real UI on demo data (`desktop/scripts/screenshots/`).
   - **Released in `desktop-v0.3.5` (2026-09-11).** The universal DMG and updater ZIP are published
     on GitHub, and 0.3.5 is confirmed as **Latest** on the live desktop update channel. Both
     uploaded asset SHA-256 digests match the local build. The final package passed the live

@@ -11,11 +11,11 @@
     <link rel="apple-touch-icon" href="icon.png">
     <meta property="og:type" content="website">
     <meta property="og:title" content="YouTube Music Playlist Manager">
-    <meta property="og:description" content="A free Mac app for organizing, cleaning up, and combining your YouTube Music playlists.">
+    <meta property="og:description" content="A free Mac app for organizing your YouTube Music playlists.">
     <meta property="og:url" content="https://hruif.github.io/YouTubeMusicPlaylistManager/">
     <meta property="og:image" content="https://hruif.github.io/YouTubeMusicPlaylistManager/screenshots/main.png">
     <meta name="twitter:card" content="summary_large_image">
-    <title>YouTube Music Playlist Manager: organize your playlists on Mac</title>
+    <title>YouTube Music Playlist Manager</title>
     <link rel="stylesheet" href="styles.css">
     <script type="application/ld+json">
       {
@@ -24,7 +24,7 @@
         "name": "YouTube Music Playlist Manager",
         "applicationCategory": "MusicApplication",
         "operatingSystem": "macOS 12 or later",
-        "description": "A free Mac app for organizing YouTube Music playlists: combine several playlists into one list, find songs they share or repeat, remove repeats, and undo edits.",
+        "description": "A free Mac app for organizing YouTube Music playlists: combine several playlists into one list, find songs they share or repeat, and undo edits.",
         "url": "https://hruif.github.io/YouTubeMusicPlaylistManager/",
         "downloadUrl": "https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest",
         "codeRepository": "https://github.com/hruif/YouTubeMusicPlaylistManager",
@@ -38,276 +38,59 @@
     </script>
   </head>
   <body>
-    <header class="nav">
-      <a class="brand" href="#top">
-        <img src="icon.png" alt="" width="28" height="28">
-        <span>YouTube Music Playlist Manager</span>
-      </a>
-      <nav aria-label="Sections">
-        <a href="#features">Features</a>
-        <a href="#install">Install</a>
-        <a href="#faq">FAQ</a>
-        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager">GitHub</a>
-      </nav>
-    </header>
-
-    <main id="top">
+    <main>
       <section class="hero" aria-labelledby="page-title">
-        <img class="hero-icon" src="icon.png" alt="" width="96" height="96">
-        <h1 id="page-title">Your YouTube Music playlists, organized.</h1>
-        <p class="lede">
-          See several playlists as one list, find the songs they share or repeat, and tidy them up,
-          with an undo when you change your mind. Free for Mac.
-        </p>
-        <div class="actions">
-          <a id="download-link" class="button primary" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest">
-            Download for Mac
-          </a>
-          <a class="button secondary" href="https://github.com/hruif/YouTubeMusicPlaylistManager">View on GitHub</a>
-        </div>
-        <p class="meta">
-          <span id="release-status">Latest release</span>
-          <span aria-hidden="true">·</span> Apple Silicon and Intel
-          <span aria-hidden="true">·</span> Signed and notarized by Apple
-        </p>
-        <figure class="window hero-shot">
+        <img class="hero-icon" src="icon.png" alt="" width="88" height="88">
+        <h1 id="page-title">YouTube Music Playlist Manager</h1>
+        <p class="lede">Organize, clean up, and combine your YouTube Music playlists.</p>
+        <a id="download-link" class="button" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/latest">
+          Download for Mac
+        </a>
+        <p class="meta"><span id="release-status">Free</span> · macOS 12+ · Apple Silicon and Intel</p>
+        <figure class="window">
           <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
           <img src="screenshots/main.png" width="2400" height="1456"
-               alt="The app showing two playlists combined into one song list, with title, artist, album, playlist and time columns">
+               alt="The app showing two playlists combined into one song list">
         </figure>
       </section>
 
-      <section id="features" class="features" aria-label="Features">
-        <article class="feature">
-          <div class="feature-copy">
-            <p class="kicker">One list</p>
-            <h2>See every playlist at once, then act on it</h2>
-            <p>
-              Tick the playlists you want and their songs appear together, each song once. Select
-              songs to play them in YouTube Music, add them to another playlist, or start a new one.
-            </p>
-          </div>
-          <figure class="window">
-            <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-            <img src="screenshots/select.png" width="2400" height="1456" loading="lazy"
-                 alt="Three selected songs with Play, Add to, Remove from and New playlist actions above the list">
-          </figure>
-        </article>
-
-        <article class="feature reverse">
-          <div class="feature-copy">
-            <p class="kicker">Filters</p>
-            <h2>Find what they share, or what's repeated</h2>
-            <p>
-              Show only songs in more than one playlist, songs every selected playlist has in common,
-              songs listed twice in the same playlist, or songs that are no longer available.
-            </p>
-          </div>
-          <figure class="window">
-            <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-            <img src="screenshots/filter.png" width="2400" height="1456" loading="lazy"
-                 alt="The Filter menu showing songs that appear in more than one of three playlists">
-          </figure>
-        </article>
-
-        <article class="feature">
-          <div class="feature-copy">
-            <p class="kicker">Undo</p>
-            <h2>Change your mind</h2>
-            <p>
-              Add or remove songs and your playlists on YouTube Music update right away. Removed the
-              wrong ones? Click Undo, or press ⌘Z, and they go back exactly where they were.
-            </p>
-          </div>
-          <figure class="window">
-            <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i></div>
-            <img src="screenshots/undo.png" width="2400" height="1456" loading="lazy"
-                 alt="A message reading Removed 2 from Road Trip, with an Undo button">
-          </figure>
-        </article>
-
-        <article class="feature reverse">
-          <div class="feature-copy">
-            <p class="kicker">Details</p>
-            <h2>Every song, in light or dark</h2>
-            <p>
-              Open any song to see which playlists it's in, add it to another, or give it your own
-              searchable name. The app follows your Mac's appearance, or pick light or dark.
-            </p>
-          </div>
-          <figure class="window">
-            <div class="window-bar light" aria-hidden="true"><i></i><i></i><i></i></div>
-            <img src="screenshots/details-light.png" width="2400" height="1456" loading="lazy"
-                 alt="Song details for Holocene in the light theme, showing the three playlists it's in">
-          </figure>
-        </article>
-
-        <ul class="grid" aria-label="More features">
-          <li>
-            <h3>Play in YouTube Music</h3>
-            <p>Turn any selection into a queue and open it in YouTube Music with one click.</p>
-          </li>
-          <li>
-            <h3>Remove repeats</h3>
-            <p>Clear out extra copies of a song in a playlist, keeping the first in its place.</p>
-          </li>
-          <li>
-            <h3>Recently deleted</h3>
-            <p>Deleted a playlist by mistake? Recreate it with the same songs.</p>
-          </li>
-          <li>
-            <h3>Export to CSV</h3>
-            <p>Save any playlist's songs as a spreadsheet.</p>
-          </li>
-          <li>
-            <h3>Keyboard friendly</h3>
-            <p>Arrow keys, ⌘A, ⌘F, Delete and ⌘Z work the way you'd expect.</p>
-          </li>
-          <li>
-            <h3>Add any public playlist</h3>
-            <p>Paste a link to bring in playlists you don't own, alongside your own.</p>
-          </li>
+      <section class="features" aria-labelledby="features-title">
+        <h2 id="features-title">What it does</h2>
+        <ul>
+          <li><strong>One list</strong> See songs from several playlists together, each song once.</li>
+          <li><strong>Find overlaps</strong> Filter to songs they share, or songs repeated in a playlist.</li>
+          <li><strong>Edit safely</strong> Add, remove, or clear out repeats, with an undo.</li>
+          <li><strong>Quick play</strong> Send any selection to YouTube Music as a queue.</li>
         </ul>
-      </section>
-
-      <section id="install" class="install" aria-labelledby="install-title">
-        <h2 id="install-title">Get started in a minute</h2>
-        <ol class="steps">
-          <li>
-            <h3>Download</h3>
-            <p>Get the latest <code>.dmg</code> using the button above.</p>
-          </li>
-          <li>
-            <h3>Install</h3>
-            <p>Open it and drag <strong>YouTube Music Playlist Manager</strong> into Applications.</p>
-          </li>
-          <li>
-            <h3>Sign in</h3>
-            <p>Sign in with Google on Google's own page, then pick the playlists you want to see.</p>
-          </li>
-        </ol>
-        <p class="note">
-          Requires macOS 12 or later. Already have it? Use <strong>Settings → Check for updates</strong>
-          in the app.
-        </p>
-      </section>
-
-      <section id="faq" class="faq" aria-labelledby="faq-title">
-        <h2 id="faq-title">Questions</h2>
-        <details>
-          <summary>Is my account safe?</summary>
-          <p>
-            You sign in on Google's own page, and the app never stores your password. It keeps the
-            session Google gives it, encrypted with a key held in your Mac's keychain, and your library
-            is saved only on your Mac. The app has no analytics or tracking.
-          </p>
-        </details>
-        <details>
-          <summary>Is it free?</summary>
-          <p>
-            Yes, and it's open source. The code is on
-            <a href="https://github.com/hruif/YouTubeMusicPlaylistManager">GitHub</a>.
-          </p>
-        </details>
-        <details>
-          <summary>Can I bring in playlists from Spotify?</summary>
-          <p>
-            The app can copy a public Spotify playlist into YouTube Music, matching songs where it's
-            confident. YouTube Music can also transfer playlists itself, under Settings → Privacy &amp;
-            data → Transfer playlists.
-          </p>
-        </details>
-        <details>
-          <summary>Is there a Windows or Linux version?</summary>
-          <p>
-            Not of this app. An older, simpler Python version runs on Windows and Linux; its downloads
-            are below.
-          </p>
-          <div id="legacy-download-links" class="legacy-links">
-            <a class="legacy-link" href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">
-              Open the legacy release
-            </a>
-          </div>
-        </details>
-        <details>
-          <summary>Is this made by YouTube?</summary>
-          <p>
-            No. It's an independent project, not affiliated with or endorsed by YouTube or Google.
-          </p>
-        </details>
       </section>
     </main>
 
     <footer class="footer">
       <p>
-        YouTube Music Playlist Manager ·
-        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager">Source on GitHub</a> ·
-        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases">All releases</a>
+        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager">Source</a> ·
+        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases">Releases</a> ·
+        <a href="https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0">Windows and Linux (older version)</a>
       </p>
-      <p class="fine">Not affiliated with YouTube or Google.</p>
+      <p class="fine">Signed and notarized by Apple. Not affiliated with YouTube or Google.</p>
     </footer>
 
     <script>
-      const releaseStatus = document.getElementById("release-status");
-      const downloadLink = document.getElementById("download-link");
-      const legacyDownloadLinks = document.getElementById("legacy-download-links");
-      const latestReleaseApiUrl = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/latest";
-      const legacyReleaseUrl = "https://github.com/hruif/YouTubeMusicPlaylistManager/releases/tag/v0.6.0";
-      const legacyReleaseApiUrl = "https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/tags/v0.6.0";
-
-      const legacyTargets = [
-        { label: "Python for Windows", patterns: [/python-windows.*\.zip$/i, /windows.*\.zip$/i] },
-        { label: "Python for Linux", patterns: [/python-linux.*\.tar\.gz$/i, /python-linux.*\.zip$/i, /linux.*\.(tar\.gz|zip)$/i] },
-        { label: "Python for macOS", patterns: [/python-macos.*\.zip$/i, /macos\.zip$/i] }
-      ];
-
-      const findAsset = (assets, patterns) =>
-        assets.find((asset) => patterns.some((pattern) => pattern.test(asset.name || "")));
-
-      function makeLink(label, href) {
-        const link = document.createElement("a");
-        link.className = "legacy-link";
-        link.href = href;
-        link.textContent = label;
-        return link;
-      }
-
-      async function getJson(url) {
-        const response = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
-        if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-        return response.json();
-      }
-
       // Point the download button straight at the latest release's .dmg (universal).
-      async function wireLatestRelease() {
+      (async function () {
         try {
-          const release = await getJson(latestReleaseApiUrl);
-          const version = (release.tag_name || "").replace(/^desktop-v/, "");
+          const response = await fetch("https://api.github.com/repos/hruif/YouTubeMusicPlaylistManager/releases/latest", {
+            headers: { Accept: "application/vnd.github+json" }
+          });
+          if (!response.ok) return;
+          const release = await response.json();
           const dmg = (release.assets || []).find((asset) => /\.dmg$/i.test(asset.name || ""));
-          if (dmg && dmg.browser_download_url) downloadLink.href = dmg.browser_download_url;
-          releaseStatus.textContent = version ? `Version ${version}` : "Latest release";
+          if (dmg && dmg.browser_download_url) document.getElementById("download-link").href = dmg.browser_download_url;
+          const version = (release.tag_name || "").replace(/^desktop-v/, "");
+          if (version) document.getElementById("release-status").textContent = `Free · Version ${version}`;
         } catch (error) {
-          releaseStatus.textContent = "Latest release";
+          /* keep the link to the releases page */
         }
-      }
-
-      async function wireLegacyDownloads() {
-        try {
-          const release = await getJson(legacyReleaseApiUrl);
-          const links = legacyTargets
-            .map((target) => {
-              const asset = findAsset(release.assets || [], target.patterns);
-              return asset && asset.browser_download_url ? makeLink(target.label, asset.browser_download_url) : null;
-            })
-            .filter(Boolean);
-          if (links.length) legacyDownloadLinks.replaceChildren(...links, makeLink("All legacy files", release.html_url || legacyReleaseUrl));
-        } catch (error) {
-          /* keep the link to the release page */
-        }
-      }
-
-      wireLatestRelease();
-      wireLegacyDownloads();
+      })();
     </script>
 
     <!--
