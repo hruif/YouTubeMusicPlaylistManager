@@ -95,6 +95,8 @@ Quit the app first (it runs one copy at a time).
   not-yet-Latest 0.3.6, and **Update & restart** swapped in the notarized 0.3.6 and relaunched it.
   0.3.5's updater keeps the installed bundle's old file name ("YouTube Music Manager.app"); updates
   from 0.3.6 on install under the new name. 0.3.6 was then promoted to Latest.
+- **Verified 2026-09-26:** the real 0.3.6 release updated in place to the published, not-yet-Latest
+  0.3.7 and relaunched it (same file name, notarized) before 0.3.7 was promoted.
 
 ## Website live demo and screenshot
 

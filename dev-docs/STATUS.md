@@ -296,11 +296,17 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
-  - **`desktop-v0.3.7` (2026-09-26): playing.** Queues open on their first song so playback starts;
-    Shuffle reorders the list and Play all plays it as shown; optional background play (Settings →
-    When playing) via AppleScript to the default browser, with the Apple Events entitlement,
-    permission asked when chosen, and a switch back on refusal. Verified by hand: the app stayed in
-    front and music played in Chrome. Quicker (250ms) tips for cut-off playlist names.
+  - **Released in `desktop-v0.3.7` (2026-09-26): playing.**
+    - Queues open on their first song so playback starts; Shuffle reorders the list and Play all
+      plays it as shown; optional background play (Settings → When playing) via AppleScript to the
+      default browser, with the Apple Events entitlement, permission asked when chosen, and a switch
+      back on refusal. Quicker (250ms) tips for cut-off playlist names.
+    - Universal DMG and updater ZIP published and **Latest**; SHA-256 digests match the local build
+      (DMG `38a1dc24…3755`, ZIP `c669230b…2f30`), both notarized with stapled tickets and the Apple
+      Events entitlement.
+    - Checks: 182 unit/UI tests, typecheck, `npm run e2e:live` 16/16, background play by hand (the
+      app stayed in front and music played in Chrome), and the real 0.3.6 release updated in place
+      to 0.3.7 (same file name) before promotion.
   - **Released in `desktop-v0.3.6` (2026-09-26): signed, notarized, renamed.**
     - First Developer ID-signed and notarized build (hardened runtime; `scripts/build-signed-mac.sh`,
       full Xcode for universal). Universal DMG and updater ZIP are published and **Latest**; the

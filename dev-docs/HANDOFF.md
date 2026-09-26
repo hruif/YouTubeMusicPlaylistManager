@@ -26,7 +26,8 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** `desktop-v0.3.7` plays automatically (queues open on their first song),
+- **Current state:** `desktop-v0.3.7` (published and Latest, 2026-09-26; the 0.3.6→0.3.7 in-place
+  update was verified before promotion) plays automatically (queues open on their first song),
   shuffles the song list (Play all plays the list as shown), can keep the app in front while
   playing (Settings → When playing; AppleScript to the default browser, see
   `desktop/electron/backgroundOpen.ts`), and shows quicker tips for cut-off playlist names.
