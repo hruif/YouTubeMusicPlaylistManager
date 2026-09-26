@@ -9,6 +9,8 @@ import {
   installUpdate,
   onUpdateProgress,
   onTracksProgress,
+  playExternal,
+  requestBackgroundPermission,
 } from "./lib/native";
 import {
   signIn,
@@ -40,11 +42,12 @@ import type { SpotifyTrack } from "./lib/spotify";
 import { checkForUpdate, checkForUpdateStrict, getCurrentVersion, type UpdateInfo } from "./lib/update";
 import { STALE_MS } from "./lib/format";
 import { DOUBLE_CLICK_MS } from "./hooks/useDoubleClick";
-import { planRestore, repeatedWithinPlaylists, visibleSongsFor } from "./lib/songs";
-import { applyTheme, loadUi, saveUi, type PlaylistSort, type SongFilters, type SortKey, type Theme } from "./lib/settings";
+import { planRestore, repeatedWithinPlaylists, shuffleOrder, visibleSongsFor } from "./lib/songs";
+import { applyTheme, loadUi, saveUi, type PlayMode, type PlaylistSort, type SongFilters, type SortKey, type Theme } from "./lib/settings";
 import { StatusArea, Toasts, type Progress, type Toast, type ToastAction } from "./components/Feedback";
 import { HistoryMenu } from "./components/HistoryMenu";
 import { GearIcon } from "./components/icons";
+import { HoverTip } from "./components/HoverTip";
 import { ContextMenu, menuAt, type MenuItem, type MenuState } from "./components/ContextMenu";
 import { Welcome, type SignInPhase } from "./components/Welcome";
 import { Sidebar } from "./components/Sidebar";
@@ -79,6 +82,8 @@ function App() {
   const [selected, setSelected] = useState<Set<string>>(() => new Set(ui0.selected));
   const [sortKey, setSortKey] = useState<SortKey>(ui0.sortKey);
   const [sortAsc, setSortAsc] = useState(ui0.sortAsc);
+  // Set while the song list is shuffled (not saved: a fresh launch shows the usual sort).
+  const [shuffledOrder, setShuffledOrder] = useState<Map<string, number> | null>(null);
   const [filters, setFilters] = useState<SongFilters>(ui0.filters);
   const [query, setQuery] = useState("");
   const [showManage, setShowManage] = useState(false);
@@ -113,6 +118,7 @@ function App() {
   const [queuePrivacy, setQueuePrivacy] = useState<PlaylistPrivacy>(ui0.queuePrivacy);
   const [playlistSort, setPlaylistSort] = useState<PlaylistSort>(ui0.playlistSort);
   const [theme, setTheme] = useState<Theme>(ui0.theme);
+  const [playMode, setPlayMode] = useState<PlayMode>(ui0.playMode);
   const [exitPrompt, setExitPrompt] = useState(false);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [checkingForUpdates, setCheckingForUpdates] = useState(false);
@@ -367,11 +373,13 @@ function App() {
   // follows the "Queue visibility" setting (default UNLISTED): unlisted/public links open even when
   // the user's browser is signed into a different Google account than the app, or signed out, whereas
   // a private queue shows a blank page there. The temp playlist is tracked for cleanup (Queues panel).
+  // It opens on its first song with the queue attached, so YouTube Music starts playing right away
+  // (the playlist page would wait for a click).
   async function playInYouTube(videoIds: string[], title: string) {
     if (videoIds.length === 0) return;
-    // A single song needs no queue — just open the song directly.
+    // A single song needs no queue — just play it.
     if (videoIds.length === 1) {
-      openSong(videoIds[0]);
+      void play(`https://music.youtube.com/watch?v=${videoIds[0]}`);
       return;
     }
     setBusy(true);
@@ -393,8 +401,8 @@ function App() {
         // blank page. A short wait makes the opened page actually show the songs.
         showProgress(`Building queue “${title}”`);
         await new Promise((r) => setTimeout(r, 1500));
-        await openPlaylist(newId);
-        notify(`Opened “${title}” (${videoIds.length} songs) in YouTube Music`);
+        void play(`https://music.youtube.com/watch?v=${videoIds[0]}&list=${newId}`);
+        notify(`Playing “${title}” (${videoIds.length} songs) in YouTube Music`);
       } else {
         fail("Created the queue, but couldn't open it. Find it under Queues.");
       }
@@ -468,6 +476,28 @@ function App() {
   }
 
   const openSong = (videoId: string) => void openUrl(`https://music.youtube.com/watch?v=${videoId}`);
+  // Playing follows "When playing" in Settings; if the background way isn't possible, it plays the
+  // usual way and says why. If it never will be (permission refused, unsupported browser), the
+  // setting switches back rather than failing the same way on every play.
+  async function play(url: string) {
+    const fellBack = await playExternal(url, playMode === "background");
+    if (!fellBack) return;
+    if (fellBack.lasting) {
+      setPlayMode("front");
+      notify(`${fellBack.reason} Switched back to bringing the browser to the front.`);
+    } else {
+      notify(fellBack.reason);
+    }
+  }
+  // Switching to background play asks for permission right away; returns why it can't, if so.
+  async function choosePlayMode(mode: PlayMode): Promise<string | null> {
+    if (mode === "background") {
+      const reason = await requestBackgroundPermission();
+      if (reason) return reason;
+    }
+    setPlayMode(mode);
+    return null;
+  }
   const openPlaylist = (id: string) => void openUrl(`https://music.youtube.com/playlist?list=${id}`);
   function openMenu(e: React.MouseEvent, items: MenuItem[]) {
     e.preventDefault();
@@ -517,8 +547,8 @@ function App() {
 
   // Persist UI state on change.
   useEffect(() => {
-    saveUi({ selected: [...selected], sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme });
-  }, [selected, sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme]);
+    saveUi({ selected: [...selected], sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme, playMode });
+  }, [selected, sortKey, sortAsc, filters, replaceNames, autoDeleteQueues, checkUpdates, autoRefreshOnLaunch, playlistSort, queuePrivacy, theme, playMode]);
   useEffect(() => applyTheme(theme), [theme]);
 
   // The shift-click range anchor indexes into visibleSongs; reset it when that ordering changes
@@ -526,7 +556,7 @@ function App() {
   useEffect(() => {
     lastSongIndex.current = null;
     setActiveIndex(null);
-  }, [sortKey, sortAsc, query, filters]);
+  }, [sortKey, sortAsc, query, filters, shuffledOrder]);
 
   // Per-page loading progress for the sidebar's pies. Only playlists runUpdate is loading are
   // tracked, so other fetches (export, repeat checks) don't flash a pie.
@@ -1362,8 +1392,9 @@ function App() {
         customNames: cache.customNames,
         playlistCount: selectedPlaylists.length,
         repeated,
+        order: shuffledOrder ?? undefined,
       }),
-    [songs, query, filters, sortKey, sortAsc, cache.customNames, selectedPlaylists.length, repeated],
+    [songs, query, filters, sortKey, sortAsc, cache.customNames, selectedPlaylists.length, repeated, shuffledOrder],
   );
 
   // Any modal open? Song shortcuts are suppressed while one is, so they can't act in the background.
@@ -1479,7 +1510,12 @@ function App() {
     }
   };
 
+  // A column click sorts by it; while shuffled, it first returns to the usual sort.
   function sortBy(key: SortKey) {
+    if (shuffledOrder) {
+      setShuffledOrder(null);
+      if (sortKey === key) return;
+    }
     if (sortKey === key) setSortAsc((a) => !a);
     else {
       setSortKey(key);
@@ -1528,7 +1564,8 @@ function App() {
   const onSongContextMenu = useCallback(
     (e: React.MouseEvent, index: number) => {
       const s = visibleSongs[index];
-      const ids = selectedSongs.has(s.videoId) ? [...selectedSongs] : [s.videoId];
+      // In the order shown, so a shuffled list plays shuffled.
+      const ids = selectedSongs.has(s.videoId) ? visibleSongs.filter((v) => selectedSongs.has(v.videoId)).map((v) => v.videoId) : [s.videoId];
       const count = ids.length;
       if (!selectedSongs.has(s.videoId)) {
         setSelectedSongs(new Set([s.videoId]));
@@ -1694,13 +1731,21 @@ function App() {
               onSongClick={onSongClick}
               onSongContextMenu={onSongContextMenu}
               onRefresh={() => runUpdate(selectedPlaylists, 4, true)}
+              shuffled={!!shuffledOrder}
+              onShuffle={() => setShuffledOrder(shuffleOrder(songs.map((s) => s.videoId)))}
+              // Play what's shown, in the order shown (search, filters, and any shuffle apply).
               onPlayAll={() =>
                 playInYouTube(
-                  songs.map((s) => s.videoId),
-                  `▶ ${selectedPlaylists.map((p) => p.title).join(", ").slice(0, 80) || "Queue"}`,
+                  visibleSongs.map((s) => s.videoId),
+                  `▶ ${selectedPlaylists.map((p) => p.title).join(", ").slice(0, 80) || "Queue"}${shuffledOrder ? " (shuffled)" : ""}`,
                 )
               }
-              onPlaySelected={() => playInYouTube([...selectedSongs], `▶ Queue — ${selectedSongs.size} songs`)}
+              onPlaySelected={() =>
+                playInYouTube(
+                  visibleSongs.filter((s) => selectedSongs.has(s.videoId)).map((s) => s.videoId),
+                  `▶ Queue — ${selectedSongs.size} songs`,
+                )
+              }
               onAddSelected={() => setAddPicker(true)}
               onRemoveSelected={() => setRemovePicker(true)}
               onNewPlaylist={() => setCreateOpen(true)}
@@ -1879,6 +1924,8 @@ function App() {
           autoRefreshOnLaunch={autoRefreshOnLaunch}
           queuePrivacy={queuePrivacy}
           theme={theme}
+          playMode={playMode}
+          onChoosePlayMode={choosePlayMode}
           onCheckUpdates={checkUpdatesNow}
           onInstall={installInPlace}
           onDownload={() => update && openUrl(update.url)}
@@ -1928,6 +1975,8 @@ function App() {
       {error && errorDetails && <ErrorDialog message={error.message} onClose={() => setErrorDetails(false)} />}
 
       <Toasts toasts={toasts} onExpire={dismissToast} />
+
+      <HoverTip />
 
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </main>

@@ -62,7 +62,7 @@ export const SongRow = memo(function SongRow({ song, index, zebra, selected, act
       </div>
       <div className="cell muted">{song.artist}</div>
       <div className="cell muted">{song.album}</div>
-      <div className="cell muted" title={song.playlists.join(", ")}>
+      <div className="cell muted" data-tip={song.playlists.join(", ")}>
         {song.playlists.length === 1 ? song.playlists[0] : `${song.playlists.length} playlists`}
       </div>
       <div className="cell muted num">{formatDuration(song.duration)}</div>

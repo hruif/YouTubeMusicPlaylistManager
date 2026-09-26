@@ -12,7 +12,13 @@ export type SongView = {
   customNames: Record<string, string>;
   playlistCount: number; // how many playlists are selected (for "in every selected playlist")
   repeated: Set<string>; // videoIds that appear more than once within a single selected playlist
+  order?: Map<string, number>; // a shuffle: position by videoId, used instead of the column sort
 };
+
+// A random order for the given songs (see SongView.order).
+export function shuffleOrder(videoIds: string[], random: () => number = Math.random): Map<string, number> {
+  return new Map(shuffled(videoIds, random).map((id, i) => [id, i]));
+}
 
 // Songs listed more than once within the same playlist (the view shows each song once, so repeats
 // are otherwise invisible).
@@ -44,6 +50,11 @@ export function visibleSongsFor(songs: CombinedSong[], v: SongView): CombinedSon
   if (v.filters.repeated) filtered = filtered.filter((s) => v.repeated.has(s.videoId));
   if (v.filters.unavailable) filtered = filtered.filter((s) => isUnavailableTitle(s.title));
   const copy = [...filtered];
+  if (v.order) {
+    // Songs that arrived after the shuffle (e.g. a playlist was added) go at the end.
+    const at = (s: CombinedSong) => v.order!.get(s.videoId) ?? Number.MAX_SAFE_INTEGER;
+    return copy.sort((a, b) => at(a) - at(b));
+  }
   copy.sort((a, b) => {
     let cmp = 0;
     if (v.sortKey === "title") cmp = a.title.localeCompare(b.title);
@@ -53,6 +64,16 @@ export function visibleSongsFor(songs: CombinedSong[], v: SongView): CombinedSon
     else cmp = a.playlists.length - b.playlists.length;
     return v.sortAsc ? cmp : -cmp;
   });
+  return copy;
+}
+
+// A shuffled copy (Fisher–Yates), for "Shuffle": every order equally likely.
+export function shuffled<T>(items: T[], random: () => number = Math.random): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
   return copy;
 }
 

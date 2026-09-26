@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planRestore, repeatedWithinPlaylists, visibleSongsFor, type SongView } from "./songs";
+import { planRestore, repeatedWithinPlaylists, shuffleOrder, shuffled, visibleSongsFor, type SongView } from "./songs";
 import { NO_FILTERS } from "./settings";
 import type { CombinedSong, Track } from "./ytmusic";
 
@@ -57,6 +57,12 @@ describe("visibleSongsFor", () => {
     expect(ids(visibleSongsFor(songs, view({ sortKey: "count", sortAsc: false })))[0]).toBe("a");
   });
 
+  it("a shuffle order replaces the column sort; songs added after the shuffle go last", () => {
+    const order = new Map([["c", 0], ["a", 1]]);
+    expect(ids(visibleSongsFor(songs, view({ order })))).toEqual(["c", "a", "b"]);
+    expect(shuffleOrder(["x", "y", "z"], () => 0)).toEqual(new Map([["y", 0], ["z", 1], ["x", 2]]));
+  });
+
   it("doesn't mutate its input", () => {
     const copy = [...songs];
     visibleSongsFor(songs, view({ sortKey: "duration" }));
@@ -70,6 +76,22 @@ describe("repeatedWithinPlaylists", () => {
     const playlists = [{ id: "p", title: "P" }, { id: "q", title: "Q" }];
     const tracks = { p: [t("a"), t("b"), t("a")], q: [t("b"), t("c")] };
     expect([...repeatedWithinPlaylists(playlists, tracks)]).toEqual(["a"]);
+  });
+});
+
+describe("shuffled", () => {
+  it("returns a reordered copy with the same songs, leaving the input alone", () => {
+    const input = ["a", "b", "c", "d", "e"];
+    const out = shuffled(input, () => 0); // always swap with the first: a deterministic order
+    expect(out).toEqual(["b", "c", "d", "e", "a"]);
+    expect([...out].sort()).toEqual(input);
+    expect(input).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("can produce every order", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i++) seen.add(shuffled([1, 2, 3]).join(""));
+    expect(seen.size).toBe(6);
   });
 });
 

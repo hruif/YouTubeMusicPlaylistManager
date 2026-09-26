@@ -32,6 +32,8 @@ function pane(overrides: Partial<Parameters<typeof SongPane>[0]> = {}) {
     replaceNames: false,
     onSongClick: vi.fn(),
     onSongContextMenu: vi.fn(),
+    shuffled: false,
+    onShuffle: vi.fn(),
     onRefresh: vi.fn(),
     onPlayAll: vi.fn(),
     onPlaySelected: vi.fn(),
@@ -66,15 +68,18 @@ describe("SongPane", () => {
     expect(screen.getByText("Gym, Drive · 1 of 2 songs")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await userEvent.click(screen.getByRole("button", { name: /Play all/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
     expect(p.onRefresh).toHaveBeenCalled();
     expect(p.onPlayAll).toHaveBeenCalled();
+    expect(p.onShuffle).toHaveBeenCalled();
   });
 
   it("context bar: switches to selection actions when songs are selected", async () => {
     const p = pane({ selectedSongs: new Set(["a", "b"]) });
     expect(screen.getByRole("toolbar", { name: "Selected songs" })).toHaveTextContent("2 selected");
+    expect(screen.queryByRole("button", { name: /Shuffle/ })).not.toBeInTheDocument();
     for (const [name, fn] of [
-      [/Play/, p.onPlaySelected],
+      [/^▶ Play/, p.onPlaySelected],
       [/Add to/, p.onAddSelected],
       [/Remove from/, p.onRemoveSelected],
       [/New playlist/, p.onNewPlaylist],
@@ -83,6 +88,12 @@ describe("SongPane", () => {
       await userEvent.click(screen.getByRole("button", { name }));
       expect(fn).toHaveBeenCalled();
     }
+  });
+
+  it("while shuffled, Shuffle shows as on and no column claims the sort", () => {
+    pane({ shuffled: true, sortKey: "title" });
+    expect(screen.getByRole("button", { name: /Shuffle/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("columnheader", { name: /Title/ })).toHaveAttribute("aria-sort", "none");
   });
 
   it("sortable headers are buttons that report the sort direction", async () => {

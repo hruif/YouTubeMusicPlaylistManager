@@ -32,6 +32,8 @@ type Props = {
   onSongClick: (e: React.MouseEvent, index: number) => void;
   onSongContextMenu: (e: React.MouseEvent, index: number) => void;
   onRefresh: () => void;
+  shuffled: boolean;
+  onShuffle: () => void;
   onPlayAll: () => void;
   onPlaySelected: () => void;
   onAddSelected: () => void;
@@ -77,11 +79,20 @@ function ContextBar(p: Props) {
   const total = p.songs.length;
   return (
     <div className="context-bar" role="toolbar" aria-label="Playlists">
-      <span className="context-summary" title={p.playlistNames.join(", ")}>
+      <span className="context-summary" data-tip={p.playlistNames.join(", ")}>
         {p.playlistNames.join(", ")} · {shown === total ? `${total} songs` : `${shown} of ${total} songs`}
       </span>
       <button className="small" disabled={p.busy} title="Load the latest songs for these playlists (⌘R)" onClick={p.onRefresh}>↻ Refresh</button>
-      <button className="small primary" disabled={p.busy || total === 0} title="Open these songs as a queue in YouTube Music" onClick={p.onPlayAll}>▶ Play all</button>
+      <button
+        className={`small${p.shuffled ? " toggle-on" : ""}`}
+        aria-pressed={p.shuffled}
+        disabled={total < 2}
+        title={p.shuffled ? "Shuffle again (click a column to sort normally)" : "Put the list in random order"}
+        onClick={p.onShuffle}
+      >
+        ⤮ Shuffle
+      </button>
+      <button className="small primary" disabled={p.busy || shown === 0} title="Play the list as shown in YouTube Music" onClick={p.onPlayAll}>▶ Play all</button>
     </div>
   );
 }
@@ -142,7 +153,7 @@ export function SongPane(p: Props) {
 
       <div className="song-head" role="row">
         {COLUMNS.map((c) => {
-          const sorted = p.sortKey === c.key;
+          const sorted = !p.shuffled && p.sortKey === c.key;
           return (
             <div key={c.key} role="columnheader" aria-sort={sorted ? (p.sortAsc ? "ascending" : "descending") : "none"} className={c.className}>
               <button className="col" onClick={() => p.onSort(c.key)}>

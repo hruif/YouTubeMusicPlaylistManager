@@ -14,6 +14,9 @@ const api = {
   allowCloseAndQuit: (): Promise<void> => ipcRenderer.invoke("window:allow-close-and-quit"),
   deferClose: (): Promise<void> => ipcRenderer.invoke("window:defer-close"),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("open-external", url),
+  playExternal: (url: string, background: boolean): Promise<{ reason: string; lasting: boolean } | null> =>
+    ipcRenderer.invoke("play-external", url, background),
+  requestBackgroundPermission: (): Promise<string | null> => ipcRenderer.invoke("background-permission"),
   onCloseRequested: (cb: () => void): (() => void) => {
     const listener = () => cb();
     ipcRenderer.on("close-requested", listener);

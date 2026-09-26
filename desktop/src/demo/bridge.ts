@@ -148,7 +148,7 @@ export function createDemoBackend() {
     },
   };
 
-  return {
+  const api = {
     isElectron: true as const,
     invoke: async (cmd: string, args: Args = {}) => {
       const handler = commands[cmd];
@@ -165,12 +165,21 @@ export function createDemoBackend() {
     openExternal: async (url: string) => {
       const u = new URL(url);
       if (!/(^|\.)youtube\.com$/.test(u.hostname)) return void openInNewTab(url);
-      const song = u.searchParams.get("v");
-      if (song && catalog.has(song)) return void openInNewTab(`https://music.youtube.com/watch?v=${song}`);
+      // A queue link is "first song + list"; the list decides what plays.
       const list = u.searchParams.get("list");
-      if (!list || openedQueues.has(list) || !tracks[list]?.length) return;
-      openInNewTab(queueUrl(tracks[list].map((t) => t.videoId)));
+      if (list && tracks[list]) {
+        if (!openedQueues.has(list) && tracks[list].length) openInNewTab(queueUrl(tracks[list].map((t) => t.videoId)));
+        return;
+      }
+      const song = u.searchParams.get("v");
+      if (song && catalog.has(song)) openInNewTab(`https://music.youtube.com/watch?v=${song}`);
     },
+    // In the demo, playing is the same as opening (above); background play needs the Mac app.
+    playExternal: async (url: string): Promise<{ reason: string; lasting: boolean } | null> => {
+      await api.openExternal(url);
+      return null;
+    },
+    requestBackgroundPermission: async () => "Keeping the window in front while playing is available in the Mac app.",
     showWindow: async () => {},
     setBackgroundColor: async () => {},
     allowCloseAndQuit: async () => {},
@@ -179,4 +188,5 @@ export function createDemoBackend() {
     installUpdate: async () => false,
     onUpdateProgress: () => () => {},
   };
+  return api;
 }

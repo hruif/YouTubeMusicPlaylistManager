@@ -1,5 +1,6 @@
 import type { AccountInfo, PlaylistPrivacy } from "../../lib/ytmusic";
-import type { Theme } from "../../lib/settings";
+import { useState } from "react";
+import type { PlayMode, Theme } from "../../lib/settings";
 import { Overlay } from "../Overlay";
 
 export const SHORTCUTS: { keys: string; action: string }[] = [
@@ -29,6 +30,8 @@ type Props = {
   autoRefreshOnLaunch: boolean;
   queuePrivacy: PlaylistPrivacy;
   theme: Theme;
+  playMode: PlayMode;
+  onChoosePlayMode: (mode: PlayMode) => Promise<string | null>;
   onCheckUpdates: () => void;
   onInstall: () => void;
   onDownload: () => void;
@@ -86,6 +89,13 @@ const PRIVACY_NOTE: Record<PlaylistPrivacy, string> = {
 };
 
 export function SettingsDialog(p: Props) {
+  const [playNote, setPlayNote] = useState<string | null>(null);
+  const [checkingPlay, setCheckingPlay] = useState(false);
+  async function choose(mode: PlayMode) {
+    setCheckingPlay(true);
+    setPlayNote(await p.onChoosePlayMode(mode));
+    setCheckingPlay(false);
+  }
   return (
     <Overlay title="Settings" onClose={p.onClose}>
       <div className="settings-section">
@@ -128,6 +138,25 @@ export function SettingsDialog(p: Props) {
             </label>
           ))}
         </div>
+      </div>
+      <div className="setting setting-stack" role="radiogroup" aria-labelledby="play-mode-label">
+        <span id="play-mode-label">When playing</span>
+        <label className="radio-row">
+          <input type="radio" name="play-mode" checked={p.playMode === "front"} disabled={checkingPlay} onChange={() => choose("front")} />
+          Bring the browser to the front
+        </label>
+        <label className="radio-row">
+          <input type="radio" name="play-mode" checked={p.playMode === "background"} disabled={checkingPlay} onChange={() => choose("background")} />
+          Keep this window in front
+        </label>
+        <p className="settings-note" role="status">
+          {checkingPlay
+            ? "Checking with your browser…"
+            : playNote ??
+              (p.playMode === "background"
+                ? "Songs open in a background tab. macOS asks once for permission to control your browser."
+                : "No permissions needed.")}
+        </p>
       </div>
       <label className="setting">
         <input type="checkbox" checked={p.replaceNames} onChange={(e) => p.onChange({ replaceNames: e.currentTarget.checked })} />

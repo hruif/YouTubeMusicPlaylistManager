@@ -15,6 +15,8 @@ type ElectronAPI = {
   allowCloseAndQuit: () => Promise<void>;
   deferClose: () => Promise<void>;
   openExternal: (url: string) => Promise<void>;
+  playExternal: (url: string, background: boolean) => Promise<PlayFallback>;
+  requestBackgroundPermission: () => Promise<string | null>;
   onCloseRequested: (cb: () => void) => () => void;
   installUpdate: (zipUrl: string) => Promise<boolean>;
   onUpdateProgress: (cb: (pct: number) => void) => () => void;
@@ -88,6 +90,26 @@ export async function deferClose(): Promise<void> {
 export async function openExternal(url: string): Promise<void> {
   if (isElectron) return electron!.openExternal(url);
   await tauriOpenUrl(url);
+}
+
+// Why a background play opened the usual way instead. `lasting`: it won't work next time either
+// (permission refused, or the browser can't), so stop trying.
+export type PlayFallback = { reason: string; lasting: boolean } | null;
+
+// Open a song or queue to play. With `background`, the browser opens it behind this window (macOS,
+// supported browsers, with permission); otherwise, or if that isn't possible, the usual way.
+// Resolves to why it couldn't be done in the background, or null.
+export async function playExternal(url: string, background: boolean): Promise<PlayFallback> {
+  if (isElectron) return electron!.playExternal(url, background);
+  await tauriOpenUrl(url);
+  return null;
+}
+
+// Ask for permission to control the default browser (for background play). Resolves to why it
+// can't be used, or null when it can.
+export async function requestBackgroundPermission(): Promise<string | null> {
+  if (isElectron) return electron!.requestBackgroundPermission();
+  return "Playing in the background isn't available here.";
 }
 
 // In-place update (Electron only): download the new build and swap the bundle, then relaunch.

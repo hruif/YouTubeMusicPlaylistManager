@@ -9,6 +9,7 @@ import { promises as fs } from "node:fs";
 import { registerBackend } from "./backend";
 import { stageUpdate } from "./updater";
 import { migrateLegacyUserData } from "./migrate";
+import { openInBackground, requestPermission } from "./backgroundOpen";
 
 // Distinct app name + dock icon so this is easy to tell apart from other Electron apps (esp. in dev,
 // where the dock would otherwise show the generic Electron icon).
@@ -171,6 +172,36 @@ ipcMain.handle("update:install", async (_e, zipUrl: string) => {
   setTimeout(() => app.quit(), 250);
   return true;
 });
+// Play a link: in the background (the browser opens a tab behind this window, via AppleScript) when
+// asked, else the usual way. Falls back to the usual way on any problem and returns why (and whether
+// it's lasting, so the app switches back); null when it went as asked.
+const isWebUrl = (url: string): boolean => {
+  try {
+    return ["https:", "http:"].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+};
+const defaultBrowser = (): string => app.getApplicationNameForProtocol("https://");
+type PlayFallback = { reason: string; lasting: boolean } | null;
+ipcMain.handle("play-external", async (_e, url: string, background: boolean): Promise<PlayFallback> => {
+  if (!isWebUrl(url)) return null;
+  if (background && process.platform === "darwin") {
+    const result = await openInBackground(defaultBrowser(), url);
+    if (result.ok) return null;
+    await shell.openExternal(url);
+    return { reason: result.reason, lasting: result.lasting };
+  }
+  await shell.openExternal(url);
+  return null;
+});
+// Ask for permission to control the default browser now (Settings), not on the first play.
+ipcMain.handle("background-permission", async (): Promise<string | null> => {
+  if (process.platform !== "darwin") return "Playing in the background is only available on macOS.";
+  const result = await requestPermission(defaultBrowser());
+  return result.ok ? null : result.reason;
+});
+
 ipcMain.handle("open-external", (_e, url: string) => {
   // Only ever hand the OS a web URL — never file://, custom schemes, etc.
   try {

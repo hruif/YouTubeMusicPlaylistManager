@@ -13,6 +13,9 @@ const invoke = vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => 
   return h(args);
 });
 let closeRequested: () => void = () => {};
+const openExternal = vi.fn(async (_url: string) => {});
+const playExternal = vi.fn(async (_url: string, _background: boolean): Promise<{ reason: string; lasting: boolean } | null> => null);
+const requestBackgroundPermission = vi.fn(async (): Promise<string | null> => null);
 const order: string[] = [];
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a);
 
@@ -25,7 +28,9 @@ const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(
     order.push("close");
   },
   deferClose: async () => {},
-  openExternal: async () => {},
+  openExternal,
+  playExternal,
+  requestBackgroundPermission,
   onCloseRequested: (cb: () => void) => {
     closeRequested = cb;
     return () => {};
@@ -191,6 +196,115 @@ describe("dialogs and keyboard", () => {
     expect(screen.getByRole("toolbar", { name: "Selected songs" })).toHaveTextContent("3 selected");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("toolbar", { name: "Selected songs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("playing", () => {
+  it("Play all makes a queue and opens its first song, so YouTube Music starts playing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    signedIn();
+    handlers.yt_create_playlist = () => "PLqueue";
+    await renderApp();
+    playExternal.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: /Play all/ }));
+    await vi.advanceTimersByTimeAsync(2000); // the app waits briefly for YouTube to index the queue
+    expect(calls("yt_create_playlist")[0]).toMatchObject({ videoIds: ["a", "b", "c", "d"] });
+    expect(playExternal).toHaveBeenCalledWith("https://music.youtube.com/watch?v=a&list=PLqueue", false);
+    vi.useRealTimers();
+  });
+
+  it("Shuffle reorders the list; Play all then plays it in that order; a column click undoes it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    signedIn();
+    handlers.yt_create_playlist = () => "PLqueue";
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    await renderApp();
+    const order = () =>
+      within(screen.getByRole("listbox", { name: "Songs" }))
+        .getAllByRole("option")
+        .map((o) => o.textContent?.match(/Alpha|Bravo|Charlie|Delta/)?.[0]);
+    expect(order()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    await userEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
+    expect(order()).toEqual(["Bravo", "Charlie", "Delta", "Alpha"]);
+    expect(calls("yt_create_playlist")).toHaveLength(0); // shuffling alone doesn't play
+
+    playExternal.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: /Play all/ }));
+    await vi.advanceTimersByTimeAsync(2000);
+    const created = calls("yt_create_playlist")[0] as { title: string; videoIds: string[] };
+    expect(created.videoIds).toEqual(["b", "c", "d", "a"]);
+    expect(created.title).toMatch(/\(shuffled\)$/);
+    expect(playExternal).toHaveBeenCalledWith("https://music.youtube.com/watch?v=b&list=PLqueue", false);
+
+    await userEvent.click(screen.getByRole("button", { name: /Title/ }));
+    expect(order()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("Play all plays only what's shown, e.g. after a search", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    signedIn();
+    handlers.yt_create_playlist = () => "PLqueue";
+    await renderApp();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search songs" }), "a"); // Alpha, Bravo, Charlie, Delta all contain "a"
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Search songs" }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search songs" }), "ha"); // Alpha, Charlie
+    await userEvent.click(screen.getByRole("button", { name: /Play all/ }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(calls("yt_create_playlist")[0]).toMatchObject({ videoIds: ["a", "c"] });
+    vi.useRealTimers();
+  });
+
+  it("a single song plays directly, with no queue", async () => {
+    signedIn();
+    await renderApp();
+    playExternal.mockClear();
+    await userEvent.click(screen.getByText("Charlie"));
+    await userEvent.click(screen.getByRole("button", { name: /^▶ Play$/ }));
+    expect(playExternal).toHaveBeenCalledWith("https://music.youtube.com/watch?v=c", false);
+    expect(calls("yt_create_playlist")).toHaveLength(0);
+  });
+
+  it("in background mode, plays behind the window and says so if it had to come to the front", async () => {
+    signedIn();
+    localStorage.setItem("ytm.ui", JSON.stringify({ selected: ["gym"], autoRefreshOnLaunch: false, checkUpdates: false, playMode: "background" }));
+    playExternal.mockResolvedValueOnce({ reason: "Google Chrome couldn't open a tab in the background.", lasting: false });
+    await renderApp();
+    await userEvent.click(screen.getByText("Charlie"));
+    await userEvent.click(screen.getByRole("button", { name: /^▶ Play$/ }));
+    expect(playExternal).toHaveBeenLastCalledWith("https://music.youtube.com/watch?v=c", true);
+    expect(await screen.findByText(/couldn't open a tab in the background/)).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("ytm.ui")!).playMode).toBe("background"); // a one-off: keep trying
+  });
+
+  it("switches back to front when permission is refused at play time, instead of failing every time", async () => {
+    signedIn();
+    localStorage.setItem("ytm.ui", JSON.stringify({ selected: ["gym"], autoRefreshOnLaunch: false, checkUpdates: false, playMode: "background" }));
+    playExternal.mockResolvedValueOnce({ reason: "Permission to control Google Chrome wasn't given.", lasting: true });
+    await renderApp();
+    await userEvent.click(screen.getByText("Charlie"));
+    await userEvent.click(screen.getByRole("button", { name: /^▶ Play$/ }));
+    expect(await screen.findByText(/Switched back to bringing the browser to the front/)).toBeInTheDocument();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("ytm.ui")!).playMode).toBe("front"));
+  });
+
+  it("choosing background play in Settings asks for permission, and stays put if it's refused", async () => {
+    signedIn();
+    await renderApp();
+    await userEvent.keyboard("{Meta>},{/Meta}");
+    const settings = await screen.findByRole("dialog", { name: "Settings" });
+    const front = within(settings).getByRole("radio", { name: "Bring the browser to the front" });
+    const behind = within(settings).getByRole("radio", { name: "Keep this window in front" });
+
+    requestBackgroundPermission.mockResolvedValueOnce("Permission to control Google Chrome wasn't given.");
+    await userEvent.click(behind);
+    expect(await within(settings).findByText("Permission to control Google Chrome wasn't given.")).toBeInTheDocument();
+    expect(front).toBeChecked();
+
+    await userEvent.click(behind);
+    await waitFor(() => expect(behind).toBeChecked());
+    expect(JSON.parse(localStorage.getItem("ytm.ui")!).playMode).toBe("background");
   });
 });
 

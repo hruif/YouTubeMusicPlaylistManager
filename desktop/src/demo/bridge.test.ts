@@ -57,7 +57,7 @@ describe("demo backend", () => {
     await api.openExternal(`https://music.youtube.com/watch?v=${song(0)}`);
     // A queue opens as soon as it's created (inside the click), and isn't opened again after.
     const queue = (await api.invoke("yt_create_playlist", { title: "Queue", videoIds: [song(3), song(4)], privacy: "UNLISTED" })) as string;
-    await api.openExternal(`https://music.youtube.com/playlist?list=${queue}`);
+    await api.openExternal(`https://music.youtube.com/watch?v=${song(3)}&list=${queue}`);
     // A demo playlist opened from its menu plays as a queue too.
     await api.openExternal("https://music.youtube.com/playlist?list=focus");
     await api.openExternal("https://music.youtube.com/watch?v=notADemoSong");

@@ -7,6 +7,7 @@ import { setBackgroundColor } from "./native";
 export type SortKey = "title" | "artist" | "album" | "count" | "duration";
 export type PlaylistSort = "name" | "updated" | "count";
 export type Theme = "system" | "light" | "dark";
+export type PlayMode = "front" | "background"; // where the browser opens when playing
 export type SongFilters = {
   duplicates: boolean; // in more than one selected playlist
   inAll: boolean; // in every selected playlist
@@ -27,6 +28,7 @@ export type UiState = {
   playlistSort: PlaylistSort;
   queuePrivacy: PlaylistPrivacy;
   theme: Theme;
+  playMode: PlayMode;
 };
 
 export const UI_KEY = "ytm.ui";
@@ -43,6 +45,7 @@ export const DEFAULT_UI: UiState = {
   playlistSort: "name",
   queuePrivacy: "UNLISTED",
   theme: "system",
+  playMode: "front",
 };
 
 export function loadUi(): UiState {

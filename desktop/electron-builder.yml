@@ -44,6 +44,9 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    # Shown in macOS's permission prompt when "Keep this window in front" first controls the browser.
+    NSAppleEventsUsageDescription: Lets YouTube Music Playlist Manager open songs in your browser without bringing it to the front.
 
 dmg:
   writeUpdateInfo: false

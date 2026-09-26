@@ -265,6 +265,25 @@ button.icon-btn:hover:not(:disabled) {
   transition: stroke-dasharray 0.25s;
 }
 
+/* Hover tip for cut-off text (see HoverTip) */
+.hover-tip {
+  position: fixed;
+  z-index: 40;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 12.5px;
+  pointer-events: none;
+  animation: tip-in 0.1s ease-out;
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* Toasts: results of what you did; bottom-right, fade on their own */
 .toasts {
   position: fixed;
@@ -308,6 +327,10 @@ button.icon-btn:hover:not(:disabled) {
 }
 .context-bar strong {
   font-weight: 600;
+}
+button.toggle-on {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .context-summary {
   flex: 1;
@@ -1071,6 +1094,13 @@ button.history-item:hover:not(:disabled) {
 .filter-clear {
   align-self: flex-start;
   margin: 4px 6px 2px;
+}
+
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
 }
 
 /* Appearance picker */

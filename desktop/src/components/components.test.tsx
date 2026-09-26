@@ -262,3 +262,25 @@ describe("PlaylistInfoDialog", () => {
     expect(screen.queryByText("Cached Data")).not.toBeInTheDocument();
   });
 });
+
+describe("HoverTip", () => {
+  it("shows an element's data-tip shortly after the pointer rests on it, and hides on leave", async () => {
+    vi.useFakeTimers();
+    const { HoverTip, TIP_DELAY_MS } = await import("./HoverTip");
+    render(
+      <>
+        <span data-tip="check, check chill-fire">2 playlists</span>
+        <span>elsewhere</span>
+        <HoverTip />
+      </>,
+    );
+    fireEvent.mouseOver(screen.getByText("2 playlists"));
+    act(() => vi.advanceTimersByTime(TIP_DELAY_MS - 50));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(60));
+    expect(screen.getByRole("tooltip")).toHaveTextContent("check, check chill-fire");
+    fireEvent.mouseOver(screen.getByText("elsewhere"));
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+});
