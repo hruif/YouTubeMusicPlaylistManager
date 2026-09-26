@@ -57,8 +57,8 @@ xcrun notarytool store-credentials ytmpm-notary --apple-id you@example.com --tea
 It prompts for an app-specific password (appleid.apple.com → Sign-In and Security → App-Specific
 Passwords). Then pass `APPLE_KEYCHAIN_PROFILE=ytmpm-notary` as above.
 
-`--universal` needs a toolchain that can link the x86_64 slice of the Swift login helper; without
-one, build it in CI.
+`--universal` needs full Xcode installed (the Command Line Tools alone can't link the x86_64 slice
+of the Swift login helper). The script uses `/Applications/Xcode.app` automatically if it's there.
 
 ## Live end-to-end check
 

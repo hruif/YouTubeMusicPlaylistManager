@@ -61,6 +61,12 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN
 security list-keychains -d user -s "$KEYCHAIN" "${ORIGINAL_KEYCHAINS[@]}"
 echo "Signing as: $IDENTITY"
 
+# The Intel slice of the Swift login helper needs full Xcode (the Command Line Tools ship arm64-only
+# Swift libraries). Use Xcode for this build if it's installed but not the selected toolchain.
+if [[ -z "${DEVELOPER_DIR:-}" && "$(xcode-select -p)" == /Library/Developer/CommandLineTools && -d /Applications/Xcode.app ]]; then
+  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
+
 npx vite build
 if [[ "${1:-}" == "--universal" ]]; then
   node electron/build.mjs

@@ -15,7 +15,7 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Project layout (quick)
 - **Two coexisting apps:** the original **Python/Tkinter** app at the root (legacy fallback), and the
   native **Electron (React/TS)** rewrite in [`desktop/`](../desktop/), now the primary download
-  (latest public release `desktop-v0.3.5`, universal `.dmg`). See the **Desktop app** section just
+  (latest public release `desktop-v0.3.6`, universal `.dmg`, signed and notarized). See the **Desktop app** section just
   below for it; the Python-specific rules in the rest of this handoff are for the root app.
 - `main.py` (entry point) is the only code file at the root; all application code is under `app/`
   — `app/ui.py` (controller), `app/app_*` (core/config), `app/views/`, `app/services/`.
@@ -26,7 +26,14 @@ Orientation for **humans and AI agents** working in this repo. The detailed conv
 ## Desktop app (Electron — now the primary product)
 The shipped app is the Electron rewrite in `desktop/`; **its own docs are the source of truth**
 (`desktop/README.md`, `desktop/BUILD.md`). Quick orientation:
-- **Current state:** `desktop-v0.3.5` fixes **Remove repeats** on YouTube Music: delete only extra
+- **Current state:** `desktop-v0.3.6` is the first **signed and notarized** release (Developer ID,
+  Xintech LLC) and renames the app to **YouTube Music Playlist Manager** (the old data folder is
+  copied over on first launch; users sign in once). It refreshes the UI (context bar, toasts and
+  header errors with Retry, loading pies, Filter menu with in-every/repeated filters, Album and Time
+  columns, themes), adds **Undo** for adding/removing songs (restores original positions), and
+  ships `npm run e2e:live`, a live check on a throwaway playlist. Signed builds come from
+  `desktop/scripts/build-signed-mac.sh` (needs full Xcode for `--universal`).
+- **Previously:** `desktop-v0.3.5` fixes **Remove repeats** on YouTube Music: delete only extra
   playlist entries, retain the first copy and its position, and refresh from the account with
   bounded retries for delayed browse results. The confirmation counts extra copies and puts its
   note on a new line. 0.3.4 introduced an **in-place updater** (downloads the new build's zipped

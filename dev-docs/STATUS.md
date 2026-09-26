@@ -185,7 +185,7 @@ for architecture/layout.
   React/TypeScript desktop app in `desktop/` that fixes the manual-header auth friction with in-app
   sign-in. **Prototyped on Tauri, then re-platformed to Electron** for smooth window resizing —
   keeping the native macOS WKWebView sign-in (what gets past Google's embedded-webview block) as a
-  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.5`, universal `.dmg`);
+  Swift helper sidecar. Now the **primary download** (latest release `desktop-v0.3.6`, universal `.dmg`, signed and notarized);
   the Python app is demoted but still available. The original Tauri-vs-Qt/Electron rationale is in
   `dev-docs/FUTURE_DIRECTIONS.md`. **The Tauri-specific build/size claims in the phases below are
   historical** — current Electron build is in `desktop/BUILD.md` (`npm run electron:build`, ~176 MB
@@ -296,6 +296,12 @@ for architecture/layout.
       until manual refresh" seen after updating across the 0.3.1 artist-parse change: stored rows
       reflect the parser that wrote them, so a parse fix only reaches them via re-fetch. Going forward,
       any parse/shape change just bumps `CACHE_VERSION`.
+  - **`desktop-v0.3.6` (2026-09-26): signed, notarized, renamed.** First Developer ID-signed and
+    notarized build (hardened runtime; `scripts/build-signed-mac.sh`, full Xcode for universal).
+    App renamed to "YouTube Music Playlist Manager"; the renamed app copies the old library cache
+    and settings on first launch (the saved sign-in can't carry over: keychain entry is per app
+    name). UI refresh, Undo for song add/remove with position restore, save-on-quit, new filters.
+    Checks: 158 unit/UI tests, typecheck, and `npm run e2e:live` 16/16 against a real account.
   - **Released in `desktop-v0.3.5` (2026-09-11).** The universal DMG and updater ZIP are published
     on GitHub, and 0.3.5 is confirmed as **Latest** on the live desktop update channel. Both
     uploaded asset SHA-256 digests match the local build. The final package passed the live
@@ -331,7 +337,7 @@ for architecture/layout.
     in-app sign-in path still needs to be validated on an actual Linux desktop before it can ship.
   - Remaining risks: the embedded-login + spotapi paths depend on continuing to evade Google's /
     Spotify's changes (fragile by nature; Chrome extension is the immune fallback for YouTube auth).
-  Cutover done: the Electron app (`desktop-v0.3.5`) is the featured download; the Python app is the
+  Cutover done: the Electron app (`desktop-v0.3.6`) is the featured download; the Python app is the
   legacy fallback.
 - [ ] Include Spotify playlists in the queue flow (currently skipped with a notice). Could now
   reuse `services/spotify_matcher.py` to match Spotify tracks to YouTube videos before queueing.
