@@ -499,7 +499,14 @@ input,
   /* Title · Artist · Album · In playlists · Time — shared by the header and every row. */
   --song-cols: minmax(0, 36fr) minmax(0, 20fr) minmax(0, 20fr) minmax(0, 15fr) 52px;
 }
+.songpane-empty {
+  justify-content: center;
+}
 .song-head {
+  /* Reserve the same scrollbar gutter as the list below, so header columns line up with rows. */
+  overflow: hidden;
+  scrollbar-gutter: stable;
+  flex: 0 0 auto; /* overflow: hidden would otherwise let the pane squash it */
   display: grid;
   grid-template-columns: var(--song-cols);
   padding: 4px 10px;
@@ -509,13 +516,6 @@ input,
   border: 1px solid var(--border);
   border-radius: 9px 9px 0 0;
   background: var(--panel-bg);
-}
-.song-head[hidden] {
-  display: none;
-}
-.song-head[hidden] + .song-scroll {
-  border-top: 1px solid var(--border);
-  border-radius: 9px;
 }
 .song-head .col {
   width: 100%;
@@ -598,6 +598,15 @@ input,
 }
 .cell.muted {
   color: var(--muted);
+}
+.one-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.no-shrink {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .title-cell {
   display: flex;
@@ -766,11 +775,18 @@ input,
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.info-actions {
-  display: flex;
-  flex-wrap: wrap;
+/* Small actions that sit beside the value they act on (e.g. "3 repeated · Remove repeats"). */
+.info-inline {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-left: 10px;
+  color: var(--muted);
+}
+.dialog-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Update-available banner */
@@ -831,10 +847,13 @@ input,
   min-height: 20px;
   max-width: 480px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 11.5px;
+  opacity: 0.85;
 }
 .welcome-note.warn {
+  font-size: 13px;
   font-weight: 500;
+  opacity: 1;
 }
 button.big {
   min-width: 240px;
@@ -967,7 +986,7 @@ button.icon-only {
   justify-content: center;
   padding: 5px 8px;
 }
-button.icon-only svg {
+button.icon-only svg.icon {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -1052,6 +1071,55 @@ button.history-item:hover:not(:disabled) {
 .filter-clear {
   align-self: flex-start;
   margin: 4px 6px 2px;
+}
+
+/* Appearance picker */
+.setting-stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+.theme-picker {
+  display: flex;
+  gap: 10px;
+}
+.theme-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-option:hover {
+  background: var(--hover);
+}
+.theme-option.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.theme-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.theme-preview {
+  width: 64px;
+  height: 42px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
 }
 
 /* Settings extras */

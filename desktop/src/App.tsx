@@ -39,10 +39,12 @@ import { loadCache, saveCache, EMPTY_CACHE, type DeletedPlaylist, type LibraryCa
 import type { SpotifyTrack } from "./lib/spotify";
 import { checkForUpdate, checkForUpdateStrict, getCurrentVersion, type UpdateInfo } from "./lib/update";
 import { STALE_MS } from "./lib/format";
-import { planRestore, visibleSongsFor } from "./lib/songs";
+import { DOUBLE_CLICK_MS } from "./hooks/useDoubleClick";
+import { planRestore, repeatedWithinPlaylists, visibleSongsFor } from "./lib/songs";
 import { applyTheme, loadUi, saveUi, type PlaylistSort, type SongFilters, type SortKey, type Theme } from "./lib/settings";
 import { StatusArea, Toasts, type Progress, type Toast, type ToastAction } from "./components/Feedback";
 import { HistoryMenu } from "./components/HistoryMenu";
+import { GearIcon } from "./components/icons";
 import { ContextMenu, menuAt, type MenuItem, type MenuState } from "./components/ContextMenu";
 import { Welcome, type SignInPhase } from "./components/Welcome";
 import { Sidebar } from "./components/Sidebar";
@@ -313,6 +315,14 @@ function App() {
     await saveCache(next);
     if (failed) fail(`Couldn't delete ${failed} queue${failed === 1 ? "" : "s"}. They're still on your account.`);
   }
+  // Changes are saved to disk a moment after they happen (debounced), so a quit right after a
+  // change would lose it. Every way out saves first.
+  async function saveAndClose() {
+    await saveCache(cacheRef.current).catch(() => {});
+    await closeWindow();
+  }
+  const saveAndCloseRef = useRef(saveAndClose);
+  saveAndCloseRef.current = saveAndClose;
   useEffect(() => {
     // The window is held open until we call closeWindow() (Tauri: preventDefault+destroy; Electron:
     // main vetoes then we allow-close). So every path through the handler must end in closeWindow()
@@ -321,14 +331,14 @@ function App() {
       if (closingRef.current) return;
       if (cacheRef.current.tempPlaylists.length === 0) {
         closingRef.current = true;
-        await closeWindow();
+        await saveAndCloseRef.current();
         return;
       }
       if (autoDeleteQueuesRef.current) {
         closingRef.current = true;
         await deferClose(); // deleting on the network may take longer than the force-quit timer
         await deleteAllTemp();
-        await closeWindow();
+        await saveAndCloseRef.current();
       } else {
         await deferClose(); // we're asking the user — stop the shell's force-quit timer
         setExitPrompt(true);
@@ -468,7 +478,6 @@ function App() {
   function openPlaylistDetailFromRow(e: React.MouseEvent, playlist: Playlist) {
     const target = e.target as HTMLElement;
     if (target.closest("button,input,select")) return;
-    e.preventDefault();
     setPlaylistDetail(playlist);
   }
 
@@ -1339,9 +1348,22 @@ function App() {
     );
   }
 
+  const repeated = useMemo(
+    () => repeatedWithinPlaylists(selectedPlaylists, cache.tracksByPlaylist),
+    [selectedPlaylists, cache.tracksByPlaylist],
+  );
   const visibleSongs = useMemo(
-    () => visibleSongsFor(songs, { query, filters, sortKey, sortAsc, customNames: cache.customNames }),
-    [songs, query, filters, sortKey, sortAsc, cache.customNames],
+    () =>
+      visibleSongsFor(songs, {
+        query,
+        filters,
+        sortKey,
+        sortAsc,
+        customNames: cache.customNames,
+        playlistCount: selectedPlaylists.length,
+        repeated,
+      }),
+    [songs, query, filters, sortKey, sortAsc, cache.customNames, selectedPlaylists.length, repeated],
   );
 
   // Any modal open? Song shortcuts are suppressed while one is, so they can't act in the background.
@@ -1474,7 +1496,7 @@ function App() {
       const song = visibleSongs[index];
       const id = song.videoId;
       const prev = lastClick.current;
-      if (prev && prev.id === id && e.timeStamp - prev.t < 350) {
+      if (prev && prev.id === id && e.timeStamp - prev.t < DOUBLE_CLICK_MS) {
         lastClick.current = null;
         openDetailsRef.current(song);
         return;
@@ -1628,7 +1650,9 @@ function App() {
                 onQueues={() => setShowTemp(true)}
                 onDeleted={() => setShowDeleted(true)}
               />
-              <button disabled={busy} onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings (⌘,)">⚙</button>
+              <button className="icon-only" disabled={busy} onClick={() => setShowSettings(true)} aria-label="Settings" title="Settings (⌘,)">
+                <GearIcon />
+              </button>
             </span>
           </header>
 
@@ -1890,13 +1914,13 @@ function App() {
           onCancel={() => setExitPrompt(false)}
           onKeep={async () => {
             closingRef.current = true;
-            await closeWindow();
+            await saveAndClose();
           }}
           onDelete={async () => {
             closingRef.current = true;
             setExitPrompt(false);
             await deleteAllTemp();
-            await closeWindow();
+            await saveAndClose();
           }}
         />
       )}

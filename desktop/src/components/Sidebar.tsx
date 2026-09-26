@@ -1,6 +1,7 @@
 import type { Playlist, Track } from "../lib/ytmusic";
 import type { PlaylistSort } from "../lib/settings";
 import { relativeAge } from "../lib/format";
+import { useDoubleClick } from "../hooks/useDoubleClick";
 
 type Props = {
   playlists: Playlist[]; // sidebar playlists, already sorted
@@ -56,6 +57,7 @@ export function PlaylistSortSelect({ value, onChange }: { value: PlaylistSort; o
 export function Sidebar(p: Props) {
   // One button that flips between the two, so the header stays on one line.
   const allSelected = p.playlists.length > 0 && p.playlists.every((pl) => p.selected.has(pl.id));
+  const isDoubleClick = useDoubleClick();
   return (
     <section className="sidebar" aria-label="Playlists">
       <div className="sidebar-head">
@@ -74,7 +76,7 @@ export function Sidebar(p: Props) {
             <div
               key={pl.id}
               className="pl-row"
-              onDoubleClick={(e) => p.onOpenDetails(e, pl)}
+              onClick={(e) => isDoubleClick(pl.id) && p.onOpenDetails(e, pl)}
               onContextMenu={(e) => p.onContextMenu(e, pl)}
             >
               <input type="checkbox" aria-label={pl.title} checked={p.selected.has(pl.id)} onChange={() => p.onToggle(pl.id)} />

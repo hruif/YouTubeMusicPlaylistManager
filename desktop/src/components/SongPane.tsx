@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import type { CombinedSong } from "../lib/ytmusic";
-import type { SongFilters, SortKey } from "../lib/settings";
+import { NO_FILTERS, type SongFilters, type SortKey } from "../lib/settings";
 import { FilterMenu } from "./FilterMenu";
 import { SongList } from "./SongList";
 
@@ -73,7 +73,6 @@ function ContextBar(p: Props) {
       </div>
     );
   }
-  if (p.playlistNames.length === 0) return null;
   const shown = p.visibleSongs.length;
   const total = p.songs.length;
   return (
@@ -88,15 +87,22 @@ function ContextBar(p: Props) {
 }
 
 export function SongPane(p: Props) {
-  const filtering = p.query.trim() !== "" || p.filters.duplicates || p.filters.unavailable;
+  // Nothing selected: no search bar or empty list frame, just the prompt (the full song pane
+  // appears once a playlist is picked).
+  if (p.playlistNames.length === 0) {
+    return (
+      <section className="songpane songpane-empty" aria-label="Songs">
+        <div className="empty empty-center">
+          <PickPlaylistArt />
+          <p className="empty-title">Pick a playlist to see its songs</p>
+          <p className="empty-body">Select one or more on the left. Songs in several show up once.</p>
+        </div>
+      </section>
+    );
+  }
+  const filtering = p.query.trim() !== "" || Object.values(p.filters).some(Boolean);
   const empty =
-    p.playlistNames.length === 0 ? (
-      <div className="empty empty-center">
-        <PickPlaylistArt />
-        <p className="empty-title">Pick a playlist to see its songs</p>
-        <p className="empty-body">Select one or more on the left. Songs in several show up once.</p>
-      </div>
-    ) : p.songs.length === 0 ? (
+    p.songs.length === 0 ? (
       <p className="empty empty-center">{p.busy ? "Loading songs…" : "These playlists have no songs."}</p>
     ) : (
       <div className="empty empty-center">
@@ -106,7 +112,7 @@ export function SongPane(p: Props) {
             className="small"
             onClick={() => {
               p.onQueryChange("");
-              p.onFiltersChange({ duplicates: false, unavailable: false });
+              p.onFiltersChange(NO_FILTERS);
             }}
           >
             Clear search and filters
@@ -134,7 +140,7 @@ export function SongPane(p: Props) {
       </div>
       <ContextBar {...p} />
 
-      <div className="song-head" role="row" hidden={p.playlistNames.length === 0}>
+      <div className="song-head" role="row">
         {COLUMNS.map((c) => {
           const sorted = p.sortKey === c.key;
           return (

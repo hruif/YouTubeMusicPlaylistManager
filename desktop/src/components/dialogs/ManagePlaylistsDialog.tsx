@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useDoubleClick } from "../../hooks/useDoubleClick";
 import type { Playlist } from "../../lib/ytmusic";
 import type { PlaylistSort } from "../../lib/settings";
 import { Overlay } from "../Overlay";
@@ -35,6 +36,7 @@ export function ManagePlaylistsDialog({
 }) {
   const [url, setUrl] = useState("");
   const [query, setQuery] = useState("");
+  const isDoubleClick = useDoubleClick();
   const q = query.trim().toLowerCase();
   const list = q ? playlists.filter((p) => p.title.toLowerCase().includes(q)) : playlists;
   const add = () => url.trim() && !busy && onAddByUrl(url);
@@ -92,7 +94,7 @@ export function ManagePlaylistsDialog({
           <label
             key={p.id}
             className="pl-row"
-            onDoubleClick={(e) => onOpenDetails(e, p)}
+            onClick={(e) => isDoubleClick(p.id) && onOpenDetails(e, p)}
             onContextMenu={(e) => onContextMenu(e, p)}
           >
             <input type="checkbox" checked={shown.has(p.id)} onChange={(e) => onSetShown(p.id, e.currentTarget.checked)} />

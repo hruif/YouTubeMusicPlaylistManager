@@ -59,18 +59,10 @@ export function PlaylistInfoDialog({
   onClose: () => void;
 }) {
   const ownedText = owned ? "Yes" : external || tracks ? "No" : "Unknown";
+  const unique = tracks ? new Set(tracks.map((t) => t.videoId)).size : 0;
+  const repeats = tracks ? tracks.length - unique : 0;
   return (
     <Overlay title={p.title} onClose={onClose}>
-      <div className="info-actions">
-        <button className="small" onClick={onOpen}>Open in YouTube Music</button>
-        <button className="small" onClick={onExport}>Export CSV</button>
-        <button className="small" onClick={onToggleSidebar}>{inSidebar ? "Remove from sidebar" : "Show in sidebar"}</button>
-        {owned && (
-          <button className="small" disabled={busy || !tracks} onClick={onRemoveRepeats}>Remove repeats</button>
-        )}
-        {removedCount > 0 && <button className="small" onClick={onShowRemoved}>Removed songs</button>}
-        {unmatchedCount > 0 && <button className="small" onClick={onShowUnmatched}>Unmatched</button>}
-      </div>
       <div className="scroll-62">
         <InfoSection title="General" />
         <InfoRow label="Source">{external ? "Added by link" : "Your library"}</InfoRow>
@@ -79,11 +71,36 @@ export function PlaylistInfoDialog({
         <InfoRow label="Playlist ID"><code>{p.id}</code></InfoRow>
 
         <InfoSection title="Songs" />
-        <InfoRow label="Songs">{tracks ? tracks.length : "Not loaded"}</InfoRow>
-        {tracks && <InfoRow label="Unique songs">{new Set(tracks.map((t) => t.videoId)).size}</InfoRow>}
+        <InfoRow label="Songs">
+          {tracks ? tracks.length : "Not loaded"}
+          {repeats > 0 && (
+            <span className="info-inline">
+              {repeats} repeated
+              {owned && (
+                <button className="small" disabled={busy} onClick={onRemoveRepeats}>Remove repeats</button>
+              )}
+            </span>
+          )}
+        </InfoRow>
         <InfoRow label="Last refreshed">{timestampLabel(updatedAt)}</InfoRow>
-        {removedCount > 0 && <InfoRow label="Removed songs">{removedCount}</InfoRow>}
-        {unmatchedCount > 0 && <InfoRow label="Unmatched songs">{unmatchedCount}</InfoRow>}
+        {removedCount > 0 && (
+          <InfoRow label="Removed songs">
+            {removedCount}
+            <button className="small info-inline" onClick={onShowRemoved}>View</button>
+          </InfoRow>
+        )}
+        {unmatchedCount > 0 && (
+          <InfoRow label="Unmatched songs">
+            {unmatchedCount}
+            <button className="small info-inline" onClick={onShowUnmatched}>View</button>
+          </InfoRow>
+        )}
+      </div>
+      <div className="dialog-actions dialog-footer">
+        <button onClick={onToggleSidebar}>{inSidebar ? "Remove from sidebar" : "Show in sidebar"}</button>
+        <button onClick={onExport}>Export CSV</button>
+        <span className="grow-input" />
+        <button className="primary" onClick={onOpen}>Open in YouTube Music</button>
       </div>
     </Overlay>
   );

@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "electron:dev": "node electron/dev.mjs",
     "electron:bundle": "node electron/build.mjs",
-    "electron:build": "vite build && node electron/build.mjs && electron-builder"
+    "electron:build": "vite build && node electron/build.mjs && electron-builder",
+    "e2e:live": "node e2e/live.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -35,6 +36,7 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "jsdom": "^30.1.1",
+    "playwright-core": "^1.63.0",
     "typescript": "~5.8.3",
     "vite": "^7.3.6",
     "vitest": "^4.1.9"

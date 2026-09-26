@@ -16,9 +16,9 @@ app.setName("YouTube Music Playlist Manager");
 
 const isDev = !app.isPackaged;
 
-// The app was called "YouTube Music Manager" until 0.3.5; carry its data folder over (see
-// ./migrate). The saved sign-in is encrypted with a keychain entry named after the app, so it may
-// not decrypt under the new name; if so, you're asked to sign in once.
+// The app was called "YouTube Music Manager" until 0.3.5; carry its library and settings over on
+// the first run under the new name (see ./migrate). The saved sign-in can't come along (it's
+// encrypted with a keychain entry named after the old app), so you sign in once.
 if (!isDev) {
   try {
     migrateLegacyUserData(app.getPath("appData"), app.getPath("userData"));

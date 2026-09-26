@@ -45,6 +45,40 @@ type Props = {
   onClose: () => void;
 };
 
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "Match system" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+// A tiny window drawing in each theme's colors; "Match system" is split light/dark.
+function ThemePreview({ theme }: { theme: Theme }) {
+  const light = { bg: "#faf6f6", panel: "#ffffff", line: "#d9cfd1" };
+  const dark = { bg: "#1b1718", panel: "#2c2627", line: "#4a4143" };
+  const drawWindow = (c: typeof light, clip?: string) => (
+    <g clipPath={clip}>
+      <rect x="0" y="0" width="64" height="42" rx="6" fill={c.bg} />
+      <rect x="5" y="9" width="16" height="28" rx="2" fill={c.panel} />
+      <rect x="24" y="9" width="35" height="28" rx="2" fill={c.panel} />
+      <rect x="27" y="14" width="22" height="3" rx="1.5" fill={c.line} />
+      <rect x="27" y="20" width="28" height="3" rx="1.5" fill={c.line} />
+      <rect x="27" y="26" width="16" height="3" rx="1.5" fill={c.line} />
+      <circle cx="8" cy="5" r="1.4" fill="#ff5f7a" />
+    </g>
+  );
+  return (
+    <svg className="theme-preview" viewBox="0 0 64 42" aria-hidden="true">
+      <defs>
+        <clipPath id="half-dark">
+          <polygon points="64,0 64,42 0,42" />
+        </clipPath>
+      </defs>
+      {theme === "dark" ? drawWindow(dark) : drawWindow(light)}
+      {theme === "system" && drawWindow(dark, "url(#half-dark)")}
+    </svg>
+  );
+}
+
 const PRIVACY_NOTE: Record<PlaylistPrivacy, string> = {
   PRIVATE: "Private queues open only in a browser signed into this account. Anywhere else shows a blank page.",
   PUBLIC: "Public queues open in any browser and may appear on your channel and in search.",
@@ -77,14 +111,24 @@ export function SettingsDialog(p: Props) {
         </label>
       </div>
 
-      <label className="setting">
-        <span className="grow-input">Appearance</span>
-        <select className="small" value={p.theme} onChange={(e) => p.onChange({ theme: e.currentTarget.value as Theme })}>
-          <option value="system">Match system</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
-      </label>
+      <div className="setting setting-stack">
+        <span id="appearance-label">Appearance</span>
+        <div className="theme-picker" role="radiogroup" aria-labelledby="appearance-label">
+          {THEMES.map((t) => (
+            <label key={t.value} className={`theme-option${p.theme === t.value ? " on" : ""}`}>
+              <input
+                type="radio"
+                name="theme"
+                className="visually-hidden"
+                checked={p.theme === t.value}
+                onChange={() => p.onChange({ theme: t.value })}
+              />
+              <ThemePreview theme={t.value} />
+              <span>{t.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
       <label className="setting">
         <input type="checkbox" checked={p.replaceNames} onChange={(e) => p.onChange({ replaceNames: e.currentTarget.checked })} />
         Show only custom names (hide the real titles)

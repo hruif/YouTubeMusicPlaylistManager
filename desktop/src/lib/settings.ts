@@ -7,7 +7,13 @@ import { setBackgroundColor } from "./native";
 export type SortKey = "title" | "artist" | "album" | "count" | "duration";
 export type PlaylistSort = "name" | "updated" | "count";
 export type Theme = "system" | "light" | "dark";
-export type SongFilters = { duplicates: boolean; unavailable: boolean };
+export type SongFilters = {
+  duplicates: boolean; // in more than one selected playlist
+  inAll: boolean; // in every selected playlist
+  repeated: boolean; // appears more than once within a single playlist
+  unavailable: boolean;
+};
+export const NO_FILTERS: SongFilters = { duplicates: false, inAll: false, repeated: false, unavailable: false };
 
 export type UiState = {
   selected: string[];
@@ -29,7 +35,7 @@ export const DEFAULT_UI: UiState = {
   selected: [],
   sortKey: "title",
   sortAsc: true,
-  filters: { duplicates: false, unavailable: false },
+  filters: NO_FILTERS,
   replaceNames: false,
   autoDeleteQueues: false,
   checkUpdates: true,
@@ -45,9 +51,9 @@ export function loadUi(): UiState {
     if (!raw) return DEFAULT_UI;
     const parsed = JSON.parse(raw) as Partial<UiState> & { dupOnly?: boolean; unavailableOnly?: boolean };
     // Before the combined Filter menu, the two filters were stored as separate flags.
-    const filters: SongFilters = parsed.filters ?? {
-      duplicates: parsed.dupOnly ?? false,
-      unavailable: parsed.unavailableOnly ?? false,
+    const filters: SongFilters = {
+      ...NO_FILTERS,
+      ...(parsed.filters ?? { duplicates: parsed.dupOnly ?? false, unavailable: parsed.unavailableOnly ?? false }),
     };
     return { ...DEFAULT_UI, ...parsed, filters };
   } catch {
@@ -70,10 +76,11 @@ const BACKGROUNDS: Record<"light" | "dark", [number, number, number]> = {
   dark: [27, 23, 24],
 };
 
-const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
+// Looked up on use rather than at import, so non-browser code (and tests) can import this module.
+const darkMq = () => window.matchMedia("(prefers-color-scheme: dark)");
 
 export function resolvedTheme(theme: Theme): "light" | "dark" {
-  if (theme === "system") return darkMq.matches ? "dark" : "light";
+  if (theme === "system") return darkMq().matches ? "dark" : "light";
   return theme;
 }
 
@@ -88,6 +95,7 @@ export function applyTheme(theme: Theme): void {
 // Re-apply when the OS appearance changes (only matters while following the system).
 export function watchSystemTheme(getTheme: () => Theme): () => void {
   const onChange = () => applyTheme(getTheme());
-  darkMq.addEventListener("change", onChange);
-  return () => darkMq.removeEventListener("change", onChange);
+  const mq = darkMq();
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
 }

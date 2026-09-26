@@ -28,19 +28,44 @@ Packaging is configured in [`electron-builder.yml`](electron-builder.yml). Notab
 - `electronLanguages: en-US` and `compression: maximum` trim the build; even so the `.dmg` is
   ~176 MB — Electron bundles its own Chromium runtime (that's the floor, not app bloat).
 
-## Signing & notarization (current state)
+## Signing & notarization
 
-The build is **unsigned** (`mac.identity: null`) — so a downloaded copy is blocked by Gatekeeper on
-first launch. Users approve it once:
+Builds are signed with a Developer ID Application certificate (hardened runtime, entitlements in
+`build/entitlements.mac.plist`) when one is available, and notarized when Apple credentials are too.
+Without them (e.g. CI today) the app is built unsigned, and users approve it once on first launch:
 
 > **System Settings → Privacy & Security → Open Anyway**, or
 > `xattr -dr com.apple.quarantine "/Applications/YouTube Music Playlist Manager.app"`, or Control-click → Open.
 
-**To notarize** (removes the Gatekeeper prompt) you need a **paid Apple Developer ID** — the project
-has never had one, which is why neither app is notarized. With a Developer ID, set a signing identity
-in `electron-builder.yml` (`mac.identity`) and configure electron-builder notarization
-(`mac.notarize`, or an `afterSign` notarize hook with `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
-`APPLE_TEAM_ID` in the environment). It's purely credentials + config — no app code change.
+**Local signed build:**
+
+```bash
+CERT_DIR=/path/to/Developer-ID-certs scripts/build-signed-mac.sh               # .app for this Mac → release/mac-<arch>/
+CERT_DIR=... APPLE_KEYCHAIN_PROFILE=ytmpm-notary scripts/build-signed-mac.sh --universal   # signed + notarized DMG/zip
+```
+
+`CERT_DIR` holds `developerID_application.cer` and its private key (`*.key`). The script puts them
+in a throwaway keychain for the build and restores your keychain search list afterwards; your login
+keychain isn't modified. (It works around an electron-builder bug in its own `CSC_LINK` import.)
+
+**Notarization credentials** are stored once in your keychain, never in the repo or environment:
+
+```bash
+xcrun notarytool store-credentials ytmpm-notary --apple-id you@example.com --team-id Y97FTNGTB8
+```
+
+It prompts for an app-specific password (appleid.apple.com → Sign-In and Security → App-Specific
+Passwords). Then pass `APPLE_KEYCHAIN_PROFILE=ytmpm-notary` as above.
+
+`--universal` needs a toolchain that can link the x86_64 slice of the Swift login helper; without
+one, build it in CI.
+
+## Live end-to-end check
+
+`npm run e2e:live` drives the built app (`release/mac-<arch>/`) against your signed-in account to
+check undo, feedback and errors for real. It works on a throwaway "zz ytmpm e2e …" playlist copied
+from one of your sidebar playlists and deletes it afterwards; your own playlists are only read.
+Quit the app first (it runs one copy at a time).
 
 ## Distribution / updates
 

@@ -5,6 +5,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SongPane } from "./SongPane";
 import type { CombinedSong } from "../lib/ytmusic";
+import { NO_FILTERS } from "../lib/settings";
 
 const songs: CombinedSong[] = [
   { videoId: "a", title: "Dreams", artist: "Fleetwood Mac", album: "Rumours", duration: 257, playlists: ["Gym"] },
@@ -16,7 +17,7 @@ function pane(overrides: Partial<Parameters<typeof SongPane>[0]> = {}) {
     searchRef: createRef<HTMLInputElement>(),
     query: "",
     onQueryChange: vi.fn(),
-    filters: { duplicates: false, unavailable: false },
+    filters: NO_FILTERS,
     onFiltersChange: vi.fn(),
     sortKey: "title",
     sortAsc: true,
@@ -45,11 +46,13 @@ function pane(overrides: Partial<Parameters<typeof SongPane>[0]> = {}) {
 }
 
 describe("SongPane", () => {
-  it("with no playlist selected, shows the empty state and hides the column headers", () => {
+  it("with no playlist selected, shows only the prompt: no search, filter, headers, or list", () => {
     pane({ playlistNames: [], songs: [], visibleSongs: [] });
     expect(screen.getByText("Pick a playlist to see its songs")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Filter" })).not.toBeInTheDocument();
     expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
-    expect(screen.getByRole("row", { hidden: true })).not.toBeVisible();
+    expect(screen.queryByRole("row")).not.toBeInTheDocument();
   });
 
   it("shows album and time columns", () => {
@@ -94,6 +97,6 @@ describe("SongPane", () => {
     const p = pane({ visibleSongs: [], query: "zzz" });
     await userEvent.click(screen.getByRole("button", { name: "Clear search and filters" }));
     expect(p.onQueryChange).toHaveBeenCalledWith("");
-    expect(p.onFiltersChange).toHaveBeenCalledWith({ duplicates: false, unavailable: false });
+    expect(p.onFiltersChange).toHaveBeenCalledWith(NO_FILTERS);
   });
 });

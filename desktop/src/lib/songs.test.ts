@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { planRestore, visibleSongsFor, type SongView } from "./songs";
+import { planRestore, repeatedWithinPlaylists, visibleSongsFor, type SongView } from "./songs";
+import { NO_FILTERS } from "./settings";
 import type { CombinedSong, Track } from "./ytmusic";
 
 const song = (videoId: string, title: string, extra: Partial<CombinedSong> = {}): CombinedSong => ({
@@ -11,10 +12,12 @@ const song = (videoId: string, title: string, extra: Partial<CombinedSong> = {})
 });
 const view = (v: Partial<SongView> = {}): SongView => ({
   query: "",
-  filters: { duplicates: false, unavailable: false },
+  filters: NO_FILTERS,
   sortKey: "title",
   sortAsc: true,
   customNames: {},
+  playlistCount: 1,
+  repeated: new Set(),
   ...v,
 });
 const ids = (s: CombinedSong[]) => s.map((x) => x.videoId);
@@ -33,8 +36,18 @@ describe("visibleSongsFor", () => {
   });
 
   it("applies the duplicates and unavailable filters", () => {
-    expect(ids(visibleSongsFor(songs, view({ filters: { duplicates: true, unavailable: false } })))).toEqual(["a"]);
-    expect(ids(visibleSongsFor(songs, view({ filters: { duplicates: false, unavailable: true } })))).toEqual(["c"]);
+    expect(ids(visibleSongsFor(songs, view({ filters: { ...NO_FILTERS, duplicates: true } })))).toEqual(["a"]);
+    expect(ids(visibleSongsFor(songs, view({ filters: { ...NO_FILTERS, unavailable: true } })))).toEqual(["c"]);
+  });
+
+  it("\"in every selected playlist\" keeps only songs all selected playlists share", () => {
+    expect(ids(visibleSongsFor(songs, view({ filters: { ...NO_FILTERS, inAll: true }, playlistCount: 2 })))).toEqual(["a"]);
+    expect(visibleSongsFor(songs, view({ filters: { ...NO_FILTERS, inAll: true }, playlistCount: 3 }))).toEqual([]);
+  });
+
+  it("\"repeated within a playlist\" keeps songs listed more than once in one playlist", () => {
+    const repeated = new Set(["b"]);
+    expect(ids(visibleSongsFor(songs, view({ filters: { ...NO_FILTERS, repeated: true }, repeated })))).toEqual(["b"]);
   });
 
   it("sorts by each column, both directions, with missing album/duration first", () => {
@@ -48,6 +61,15 @@ describe("visibleSongsFor", () => {
     const copy = [...songs];
     visibleSongsFor(songs, view({ sortKey: "duration" }));
     expect(songs).toEqual(copy);
+  });
+});
+
+describe("repeatedWithinPlaylists", () => {
+  const t = (videoId: string): Track => ({ videoId, title: videoId, artist: "" });
+  it("finds songs repeated inside one playlist, not songs merely shared between playlists", () => {
+    const playlists = [{ id: "p", title: "P" }, { id: "q", title: "Q" }];
+    const tracks = { p: [t("a"), t("b"), t("a")], q: [t("b"), t("c")] };
+    expect([...repeatedWithinPlaylists(playlists, tracks)]).toEqual(["a"]);
   });
 });
 

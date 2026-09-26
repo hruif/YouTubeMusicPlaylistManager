@@ -22,13 +22,13 @@ describe("loadUi", () => {
   it("converts the old separate filter flags into the Filter menu's settings", () => {
     localStorage.setItem(UI_KEY, JSON.stringify({ dupOnly: true, unavailableOnly: false, sortKey: "artist" }));
     const ui = loadUi();
-    expect(ui.filters).toEqual({ duplicates: true, unavailable: false });
+    expect(ui.filters).toEqual({ duplicates: true, inAll: false, repeated: false, unavailable: false });
     expect(ui.sortKey).toBe("artist");
     expect(ui.theme).toBe("system"); // new settings get their defaults
   });
 
   it("round-trips through saveUi", () => {
-    const ui = { ...DEFAULT_UI, theme: "dark" as const, filters: { duplicates: false, unavailable: true } };
+    const ui = { ...DEFAULT_UI, theme: "dark" as const, filters: { ...DEFAULT_UI.filters, unavailable: true } };
     saveUi(ui);
     expect(loadUi()).toEqual(ui);
   });

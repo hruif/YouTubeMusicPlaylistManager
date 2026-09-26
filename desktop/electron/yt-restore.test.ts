@@ -42,18 +42,28 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("restoreVideos", () => {
-  it("re-adds the songs, then moves each re-added copy before its original successor, in order", async () => {
-    // Before removal: A B C D. B and C were removed (successor of both: D). After re-adding: A D B C.
-    execute.mockImplementation(async (endpoint: string) =>
-      endpoint === "/browse" ? page([song("A", "a"), song("D", "d"), song("B", "b2"), song("C", "c2")]) : succeeded,
-    );
+// Answers /browse with each page in turn (repeating the last), and edits with `edit`.
+function browseSequence(pages: ReturnType<typeof song>[][], edit: unknown = succeeded) {
+  let n = 0;
+  execute.mockImplementation(async (endpoint: string) => {
+    if (endpoint !== "/browse") return edit;
+    return page(pages[Math.min(n++, pages.length - 1)]);
+  });
+}
+const moveCalls = () => execute.mock.calls.filter(([e]) => e === "browse/edit_playlist").map(([, a]) => (a as { actions: unknown }).actions);
 
+describe("restoreVideos", () => {
+  it("re-adds the songs, then moves each new entry before its original successor, in order", async () => {
+    // Before removal: A B C D. B and C were removed (successor of both: D). After re-adding: A D B C.
+    browseSequence([
+      [song("A", "a"), song("D", "d")],
+      [song("A", "a"), song("D", "d"), song("B", "b2"), song("C", "c2")],
+    ]);
     await expect(
       restoreVideos("VLPLcheck", [
         { videoId: "B", beforeVideoId: "D" },
         { videoId: "C", beforeVideoId: "D" },
-      ]),
+      ], 0),
     ).resolves.toBe(true);
 
     expect(playlistAddVideos).toHaveBeenCalledWith("PLcheck", ["B", "C"]);
@@ -69,27 +79,42 @@ describe("restoreVideos", () => {
     );
   });
 
-  it("only re-adds a song that was last (no successor, so no move)", async () => {
-    await expect(restoreVideos("PLcheck", [{ videoId: "Z", beforeVideoId: null }])).resolves.toBe(true);
+  it("waits for YouTube Music to list the new entries before moving them", async () => {
+    browseSequence([
+      [song("A", "a"), song("D", "d")], // before
+      [song("A", "a"), song("D", "d")], // right after the add: not listed yet
+      [song("A", "a"), song("D", "d"), song("B", "b2")],
+    ]);
+    await expect(restoreVideos("PLcheck", [{ videoId: "B", beforeVideoId: "D" }], 0)).resolves.toBe(true);
+    expect(moveCalls()).toEqual([[{ action: "ACTION_MOVE_VIDEO_BEFORE", setVideoId: "b2", movedSetVideoIdSuccessor: "d" }]]);
+  });
+
+  it("gives up (songs stay at the end) if the new entries never show up", async () => {
+    browseSequence([[song("A", "a"), song("D", "d")]]);
+    await expect(restoreVideos("PLcheck", [{ videoId: "B", beforeVideoId: "D" }], 0)).resolves.toBe(false);
+    expect(moveCalls()).toEqual([]);
+  });
+
+  it("only re-adds a song that was last (no successor, so no reads or moves)", async () => {
+    await expect(restoreVideos("PLcheck", [{ videoId: "Z", beforeVideoId: null }], 0)).resolves.toBe(true);
     expect(playlistAddVideos).toHaveBeenCalledWith("PLcheck", ["Z"]);
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("moves the newly added copy, not an older copy of the same song", async () => {
-    execute.mockImplementation(async (endpoint: string) =>
-      endpoint === "/browse" ? page([song("A", "a1"), song("B", "b"), song("A", "a2")]) : succeeded,
-    );
-    await restoreVideos("PLcheck", [{ videoId: "A", beforeVideoId: "B" }]);
-    expect(execute).toHaveBeenLastCalledWith(
-      "browse/edit_playlist",
-      expect.objectContaining({ actions: [{ action: "ACTION_MOVE_VIDEO_BEFORE", setVideoId: "a2", movedSetVideoIdSuccessor: "b" }] }),
-    );
+  it("moves the newly added copy, not a copy that was already there", async () => {
+    browseSequence([
+      [song("A", "a1"), song("B", "b")],
+      [song("A", "a1"), song("B", "b"), song("A", "a3")],
+    ]);
+    await restoreVideos("PLcheck", [{ videoId: "A", beforeVideoId: "B" }], 0);
+    expect(moveCalls()).toEqual([[{ action: "ACTION_MOVE_VIDEO_BEFORE", setVideoId: "a3", movedSetVideoIdSuccessor: "b" }]]);
   });
 
   it("reports false when YouTube Music rejects the move (songs stay at the end)", async () => {
-    execute.mockImplementation(async (endpoint: string) =>
-      endpoint === "/browse" ? page([song("D", "d"), song("B", "b2")]) : { success: true, status_code: 200, data: { status: "STATUS_FAILED" } },
+    browseSequence(
+      [[song("D", "d")], [song("D", "d"), song("B", "b2")]],
+      { success: true, status_code: 200, data: { status: "STATUS_FAILED" } },
     );
-    await expect(restoreVideos("PLcheck", [{ videoId: "B", beforeVideoId: "D" }])).resolves.toBe(false);
+    await expect(restoreVideos("PLcheck", [{ videoId: "B", beforeVideoId: "D" }], 0)).resolves.toBe(false);
   });
 });

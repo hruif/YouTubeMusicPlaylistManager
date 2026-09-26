@@ -8,6 +8,7 @@ import { StatusArea, Toasts } from "./Feedback";
 import { Sidebar } from "./Sidebar";
 import { HistoryMenu } from "./HistoryMenu";
 import { Welcome } from "./Welcome";
+import { NO_FILTERS } from "../lib/settings";
 
 describe("Overlay", () => {
   it("closes only from its Close button, never from a click on the backdrop", async () => {
@@ -38,20 +39,20 @@ describe("Overlay", () => {
 describe("FilterMenu", () => {
   it("toggles filters and shows how many are on", async () => {
     const onChange = vi.fn();
-    const { rerender } = render(<FilterMenu filters={{ duplicates: false, unavailable: false }} onChange={onChange} />);
+    const { rerender } = render(<FilterMenu filters={NO_FILTERS} onChange={onChange} />);
     await userEvent.click(screen.getByRole("button", { name: "Filter" }));
     await userEvent.click(screen.getByLabelText("Unavailable"));
-    expect(onChange).toHaveBeenCalledWith({ duplicates: false, unavailable: true });
-    rerender(<FilterMenu filters={{ duplicates: true, unavailable: true }} onChange={onChange} />);
+    expect(onChange).toHaveBeenCalledWith({ ...NO_FILTERS, unavailable: true });
+    rerender(<FilterMenu filters={{ ...NO_FILTERS, duplicates: true, unavailable: true }} onChange={onChange} />);
     expect(screen.getByRole("button", { name: "Filter · 2" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    expect(onChange).toHaveBeenLastCalledWith({ duplicates: false, unavailable: false });
+    expect(onChange).toHaveBeenLastCalledWith(NO_FILTERS);
   });
 
   it("Esc closes the popover without reaching the window's handler", async () => {
     const onWindowKey = vi.fn();
     window.addEventListener("keydown", onWindowKey);
-    render(<FilterMenu filters={{ duplicates: false, unavailable: false }} onChange={() => {}} />);
+    render(<FilterMenu filters={NO_FILTERS} onChange={() => {}} />);
     await userEvent.click(screen.getByRole("button", { name: "Filter" }));
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByLabelText("Unavailable")).not.toBeInTheDocument();
@@ -187,5 +188,77 @@ describe("Welcome", () => {
     expect(screen.getByText("Sign-in timed out. Please try again.")).toBeInTheDocument();
     rerender(<Welcome phase="booting" error={null} onSignIn={() => {}} />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("double-click timing", () => {
+  const base = {
+    playlists: [{ id: "a", title: "Gym" }],
+    tracksByPlaylist: {},
+    updatedAt: {},
+    playlistSort: "name" as const,
+    loading: {},
+    selected: new Set<string>(),
+    isStale: () => false,
+    onSortChange: () => {},
+    onSelectAll: () => {},
+    onClear: () => {},
+    onToggle: () => {},
+    onHide: () => {},
+    onContextMenu: () => {},
+    onManage: () => {},
+  };
+
+  it("opens playlist info only when the two clicks are within 250ms", () => {
+    const onOpenDetails = vi.fn();
+    render(<Sidebar {...base} onOpenDetails={onOpenDetails} />);
+    const now = vi.spyOn(performance, "now");
+    const row = screen.getByText("Gym");
+    now.mockReturnValue(1000);
+    fireEvent.click(row);
+    now.mockReturnValue(1400); // too slow: two single clicks
+    fireEvent.click(row);
+    expect(onOpenDetails).not.toHaveBeenCalled();
+    now.mockReturnValue(1600); // 200ms after the previous click
+    fireEvent.click(row);
+    expect(onOpenDetails).toHaveBeenCalledOnce();
+    now.mockRestore();
+  });
+});
+
+describe("PlaylistInfoDialog", () => {
+  it("keeps the main actions in a footer and puts Remove repeats beside the song count", async () => {
+    const { PlaylistInfoDialog } = await import("./dialogs/PlaylistInfoDialog");
+    const t = (videoId: string) => ({ videoId, title: videoId, artist: "" });
+    const onRemoveRepeats = vi.fn();
+    const noop = () => {};
+    render(
+      <PlaylistInfoDialog
+        playlist={{ id: "p", title: "Gym" }}
+        tracks={[t("a"), t("b"), t("a")]}
+        updatedAt={Date.now()}
+        removedCount={0}
+        unmatchedCount={0}
+        owned
+        external={false}
+        inSidebar
+        queueCreatedAt={undefined}
+        busy={false}
+        onOpen={noop}
+        onExport={noop}
+        onToggleSidebar={noop}
+        onRemoveRepeats={onRemoveRepeats}
+        onShowRemoved={noop}
+        onShowUnmatched={noop}
+        onClose={noop}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Gym" });
+    const buttons = [...dialog.querySelectorAll("button")].map((b) => b.textContent);
+    expect(buttons.slice(-3)).toEqual(["Remove from sidebar", "Export CSV", "Open in YouTube Music"]);
+    expect(screen.getByText("1 repeated")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Remove repeats" }));
+    expect(onRemoveRepeats).toHaveBeenCalled();
+    expect(screen.queryByText("Cached Data")).not.toBeInTheDocument();
   });
 });

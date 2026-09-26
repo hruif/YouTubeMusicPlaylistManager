@@ -36,8 +36,14 @@ mac:
       arch: universal # one DMG that runs on Apple Silicon + Intel
     - target: zip
       arch: universal # zipped .app — the in-app updater downloads this to swap the bundle in place
-  # Unsigned for the beta (same as the Tauri build); set an identity later to sign/notarize.
-  identity: null
+  # Signed with the Developer ID certificate when one is provided (CSC_LINK + CSC_KEY_PASSWORD, or
+  # an identity in the keychain), otherwise left unsigned. Notarized when Apple credentials are in
+  # the environment (APPLE_KEYCHAIN_PROFILE, or APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD +
+  # APPLE_TEAM_ID); skipped otherwise. See BUILD.md.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
 
 dmg:
   writeUpdateInfo: false

@@ -602,41 +602,59 @@ export async function removeVideos(playlistId: string, videoIds: string[]): Prom
   return [...resolved.keys()];
 }
 
+type Slot = { videoId: string; setVideoId: string };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const slotsOf = (rows: any[]): Slot[] =>
+  rows
+    .map((row) => ({ videoId: extractVideoId(row), setVideoId: row?.playlistItemData?.playlistSetVideoId }))
+    .filter((s): s is Slot => !!s.videoId && typeof s.setVideoId === "string");
+
 // Undo a removal: re-add the songs, then move each back in front of the song that followed it
 // before it was removed (`beforeVideoId`; null = it was last, so the end is already right).
-// Adding always appends, so the re-added copy is the last row with that videoId. Returns false if
-// the songs came back but couldn't be moved into place (they're then at the end of the playlist).
+// The re-added copies are told apart from any existing copies by comparing the playlist's entries
+// before and after the add. YouTube Music can take a moment to list newly added entries, so the
+// read after the add is retried. Returns false if the songs came back but couldn't be moved into
+// place (they're then at the end of the playlist).
 export async function restoreVideos(
   playlistId: string,
   items: { videoId: string; beforeVideoId: string | null }[],
+  retryDelayMs = 1500,
 ): Promise<boolean> {
   const pid = normalizePlaylistId(playlistId);
   if (!items.length) return true;
-  await addVideos(pid, items.map((i) => i.videoId));
   const moves = items.filter((i) => i.beforeVideoId);
-  if (!moves.length) return true;
+  const before = moves.length ? new Set(slotsOf((await getPlaylistRows(pid)).rows).map((s) => s.setVideoId)) : null;
+  await addVideos(pid, items.map((i) => i.videoId));
+  if (!moves.length || !before) return true;
 
-  const { rows } = await getPlaylistRows(pid);
-  const slots = rows
-    .map((row) => ({ videoId: extractVideoId(row), setVideoId: row?.playlistItemData?.playlistSetVideoId }))
-    .filter((s): s is { videoId: string; setVideoId: string } => !!s.videoId && typeof s.setVideoId === "string");
-  const restoredIds = new Set(items.map((i) => i.videoId));
-  const lastSlot = (videoId: string) => [...slots].reverse().find((s) => s.videoId === videoId)?.setVideoId;
-  // The successor's own slot: its first copy that isn't one of the songs just re-added.
-  const successorSlot = (videoId: string) =>
-    slots.find((s) => s.videoId === videoId && !(restoredIds.has(videoId) && s.setVideoId === lastSlot(videoId)))?.setVideoId;
+  let slots: Slot[] = [];
+  let added = new Map<string, string>(); // videoId -> its new entry
+  for (let attempt = 0; attempt < 6; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, retryDelayMs));
+    slots = slotsOf((await getPlaylistRows(pid)).rows);
+    added = new Map(slots.filter((s) => !before.has(s.setVideoId)).map((s) => [s.videoId, s.setVideoId]));
+    if (moves.every((m) => added.has(m.videoId))) break;
+  }
+  const newSlots = new Set(added.values());
+  // The successor's own entry: its first copy that isn't one of the entries just added.
+  const successorSlot = (videoId: string) => slots.find((s) => s.videoId === videoId && !newSlots.has(s.setVideoId))?.setVideoId;
 
   const editActions: { action: "ACTION_MOVE_VIDEO_BEFORE"; setVideoId: string; movedSetVideoIdSuccessor: string }[] = [];
   for (const item of moves) {
-    const moved = lastSlot(item.videoId);
+    const moved = added.get(item.videoId);
     const successor = successorSlot(item.beforeVideoId!);
-    if (!moved || !successor) return false;
+    if (!moved || !successor) {
+      console.warn(`restoreVideos: ${moved ? "successor" : "re-added entry"} for ${item.videoId} not found; leaving it at the end`);
+      return false;
+    }
     // In original order, so songs that shared a successor keep their relative order.
     editActions.push({ action: "ACTION_MOVE_VIDEO_BEFORE", setVideoId: moved, movedSetVideoIdSuccessor: successor });
   }
   const endpoint = new YTNodes.NavigationEndpoint({ playlistEditEndpoint: { playlistId: pid, actions: editActions } });
   const response = await endpoint.call(requireClient().actions, { client: "YTMUSIC", parse: false });
-  return !!response.success && response.status_code < 400 && response.data?.status === "STATUS_SUCCEEDED";
+  const ok = !!response.success && response.status_code < 400 && response.data?.status === "STATUS_SUCCEEDED";
+  if (!ok) console.warn(`restoreVideos: move rejected (HTTP ${response.status_code}, ${JSON.stringify(response.data?.status)})`);
+  return ok;
 }
 
 export type PlaylistPrivacy = "PRIVATE" | "UNLISTED" | "PUBLIC";

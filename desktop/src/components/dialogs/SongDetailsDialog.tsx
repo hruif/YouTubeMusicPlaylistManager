@@ -36,8 +36,8 @@ export function SongDetailsDialog({
   return (
     <Overlay title={song.title} onClose={onClose}>
       <div className="row-gap" style={{ alignItems: "center", marginBottom: 10 }}>
-        <span className="muted grow-input">{facts || "Unknown artist"}</span>
-        <button className="small" onClick={onOpenSong}>Open in YouTube Music</button>
+        <span className="muted grow-input one-line" title={facts}>{facts || "Unknown artist"}</span>
+        <button className="small no-shrink" onClick={onOpenSong}>Open in YouTube Music</button>
       </div>
 
       <p className="dialog-label">Custom name</p>

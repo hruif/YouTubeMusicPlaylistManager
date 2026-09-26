@@ -12,6 +12,8 @@ const invoke = vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => 
   if (!h) return null;
   return h(args);
 });
+let closeRequested: () => void = () => {};
+const order: string[] = [];
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a);
 
 (globalThis as unknown as { electronAPI: unknown }).electronAPI = {
@@ -19,10 +21,15 @@ const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(
   invoke,
   showWindow: async () => {},
   setBackgroundColor: async () => {},
-  allowCloseAndQuit: async () => {},
+  allowCloseAndQuit: async () => {
+    order.push("close");
+  },
   deferClose: async () => {},
   openExternal: async () => {},
-  onCloseRequested: () => () => {},
+  onCloseRequested: (cb: () => void) => {
+    closeRequested = cb;
+    return () => {};
+  },
   installUpdate: async () => false,
   onUpdateProgress: () => () => {},
   onTracksProgress: () => () => {},
@@ -184,5 +191,20 @@ describe("dialogs and keyboard", () => {
     expect(screen.getByRole("toolbar", { name: "Selected songs" })).toHaveTextContent("3 selected");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("toolbar", { name: "Selected songs" })).not.toBeInTheDocument();
+  });
+});
+
+describe("quitting", () => {
+  it("saves the latest changes before the window closes", async () => {
+    signedIn();
+    handlers.write_cache = () => {
+      order.push("save");
+      return null;
+    };
+    await renderApp();
+    order.length = 0;
+    closeRequested();
+    await waitFor(() => expect(order).toContain("close"));
+    expect(order).toEqual(["save", "close"]);
   });
 });

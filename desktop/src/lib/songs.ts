@@ -1,6 +1,6 @@
 // Pure song-list logic, kept out of App so it can be unit-tested.
 
-import type { CombinedSong, Track } from "./ytmusic";
+import type { CombinedSong, Playlist, Track } from "./ytmusic";
 import type { SongFilters, SortKey } from "./settings";
 import { isUnavailableTitle } from "./format";
 
@@ -10,7 +10,23 @@ export type SongView = {
   sortKey: SortKey;
   sortAsc: boolean;
   customNames: Record<string, string>;
+  playlistCount: number; // how many playlists are selected (for "in every selected playlist")
+  repeated: Set<string>; // videoIds that appear more than once within a single selected playlist
 };
+
+// Songs listed more than once within the same playlist (the view shows each song once, so repeats
+// are otherwise invisible).
+export function repeatedWithinPlaylists(playlists: Playlist[], tracksByPlaylist: Record<string, Track[]>): Set<string> {
+  const repeated = new Set<string>();
+  for (const p of playlists) {
+    const seen = new Set<string>();
+    for (const t of tracksByPlaylist[p.id] ?? []) {
+      if (seen.has(t.videoId)) repeated.add(t.videoId);
+      else seen.add(t.videoId);
+    }
+  }
+  return repeated;
+}
 
 // Search (title, artist, or your custom name), then filters, then sort. Never mutates `songs`.
 export function visibleSongsFor(songs: CombinedSong[], v: SongView): CombinedSong[] {
@@ -24,6 +40,8 @@ export function visibleSongsFor(songs: CombinedSong[], v: SongView): CombinedSon
         (v.customNames[s.videoId]?.toLowerCase().includes(q) ?? false),
     );
   if (v.filters.duplicates) filtered = filtered.filter((s) => s.playlists.length > 1);
+  if (v.filters.inAll) filtered = filtered.filter((s) => s.playlists.length >= v.playlistCount);
+  if (v.filters.repeated) filtered = filtered.filter((s) => v.repeated.has(s.videoId));
   if (v.filters.unavailable) filtered = filtered.filter((s) => isUnavailableTitle(s.title));
   const copy = [...filtered];
   copy.sort((a, b) => {

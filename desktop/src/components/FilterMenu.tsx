@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { SongFilters } from "../lib/settings";
+import { NO_FILTERS, type SongFilters } from "../lib/settings";
 
 // One "Filter" button in place of separate toggles, so more filters can be added without widening
 // the search bar. Shows how many filters are on.
 const OPTIONS: { key: keyof SongFilters; label: string; hint: string }[] = [
   { key: "duplicates", label: "In more than one playlist", hint: "Songs that appear in two or more of the selected playlists" },
+  { key: "inAll", label: "In every selected playlist", hint: "Songs the selected playlists all have in common" },
+  { key: "repeated", label: "Repeated within a playlist", hint: "Songs listed more than once in the same playlist" },
   { key: "unavailable", label: "Unavailable", hint: "Deleted, private, or otherwise unplayable videos (best-effort)" },
 ];
 
@@ -56,7 +58,7 @@ export function FilterMenu({ filters, onChange }: { filters: SongFilters; onChan
           {active > 0 && (
             <button
               className="small filter-clear"
-              onClick={() => onChange(Object.fromEntries(OPTIONS.map((o) => [o.key, false])) as SongFilters)}
+              onClick={() => onChange(NO_FILTERS)}
             >
               Clear filters
             </button>

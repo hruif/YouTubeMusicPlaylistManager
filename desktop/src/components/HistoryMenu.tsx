@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { HistoryIcon } from "./icons";
 
 // One header button for Queues and Recently deleted, instead of a button each. A dot shows when
 // either has something in it.
@@ -53,10 +54,7 @@ export function HistoryMenu({
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-          <path d="M12 8v4l2 2" />
-          <path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5" />
-        </svg>
+        <HistoryIcon />
       </button>
       {open && (
         <div className="history-pop" role="menu">
