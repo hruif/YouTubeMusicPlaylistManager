@@ -1,8 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Innertube } from "youtubei.js";
-import { clearSession, getPlaylistTracks, removeRepeatedVideos, setSession } from "./yt";
+import {
+  addVideos,
+  clearSession,
+  createPlaylist,
+  deletePlaylist,
+  getPlaylistTracks,
+  removeRepeatedVideos,
+  removeVideos,
+  setSession,
+} from "./yt";
 
 const execute = vi.fn();
+const playlistAddVideos = vi.fn();
+const playlistCreate = vi.fn();
 
 function song(videoId: string, setVideoId?: string, watchVideoId = videoId) {
   return {
@@ -39,7 +50,12 @@ const succeeded = { success: true, status_code: 200, data: { status: "STATUS_SUC
 
 beforeEach(async () => {
   execute.mockReset();
-  vi.spyOn(Innertube, "create").mockResolvedValue({ actions: { execute } } as unknown as Innertube);
+  playlistAddVideos.mockReset();
+  playlistCreate.mockReset();
+  vi.spyOn(Innertube, "create").mockResolvedValue({
+    actions: { execute },
+    playlist: { addVideos: playlistAddVideos, create: playlistCreate },
+  } as unknown as Innertube);
   await setSession("");
 });
 
@@ -149,5 +165,80 @@ describe("removeRepeatedVideos", () => {
     execute.mockResolvedValueOnce(page([song("A", "a1"), song("A", "a2")]))
       .mockResolvedValueOnce(response);
     await expect(removeRepeatedVideos("PLcheck", ["A"])).rejects.toThrow("rejected");
+  });
+});
+
+describe("playlist mutations", () => {
+  it("normalizes the browse prefix when adding videos", async () => {
+    playlistAddVideos.mockResolvedValue(undefined);
+
+    await addVideos("VLPLcheck", ["A", "B"]);
+
+    expect(playlistAddVideos).toHaveBeenCalledWith("PLcheck", ["A", "B"]);
+  });
+
+  it("removes only selected rows that exist and returns the removed video IDs", async () => {
+    execute.mockResolvedValueOnce(page([song("A", "slot-a"), song("B", "slot-b")]))
+      .mockResolvedValueOnce(succeeded);
+
+    await expect(removeVideos("VLPLcheck", ["A", "missing"])).resolves.toEqual(["A"]);
+    expect(execute).toHaveBeenLastCalledWith("browse/edit_playlist", expect.objectContaining({
+      playlistId: "PLcheck",
+      actions: [{ action: "ACTION_REMOVE_VIDEO", setVideoId: "slot-a" }],
+    }));
+  });
+
+  it("refuses removal when none of the selected songs can be located", async () => {
+    execute.mockResolvedValueOnce(page([song("B", "slot-b")]));
+
+    await expect(removeVideos("PLcheck", ["A"])).rejects.toThrow("Couldn't find");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the stable helper for private playlist creation", async () => {
+    playlistCreate.mockResolvedValue({ playlist_id: "PLnew" });
+
+    await expect(createPlaylist("New", ["A"], "PRIVATE")).resolves.toBe("PLnew");
+    expect(playlistCreate).toHaveBeenCalledWith("New", ["A"]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("creates a public or unlisted playlist through the privacy-aware endpoint", async () => {
+    execute.mockResolvedValue({ data: { playlistId: "PLpublic" } });
+
+    await expect(createPlaylist("New", ["A"], "UNLISTED")).resolves.toBe("PLpublic");
+    expect(execute).toHaveBeenCalledWith("/playlist/create", {
+      title: "New",
+      videoIds: ["A"],
+      privacyStatus: "UNLISTED",
+      parse: false,
+    });
+    expect(playlistCreate).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a private playlist if privacy-aware creation is rejected", async () => {
+    execute.mockRejectedValue(new Error("endpoint changed"));
+    playlistCreate.mockResolvedValue({ playlist_id: "PLfallback" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(createPlaylist("New", ["A"], "PUBLIC")).resolves.toBe("PLfallback");
+    expect(playlistCreate).toHaveBeenCalledWith("New", ["A"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("endpoint changed"));
+  });
+
+  it("treats an already-missing playlist as successfully deleted", async () => {
+    execute.mockResolvedValue({ success: false, status_code: 404 });
+
+    await expect(deletePlaylist("VLPLgone")).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith("/playlist/delete", {
+      playlistId: "PLgone",
+      parse: false,
+    });
+  });
+
+  it("surfaces a rejected playlist deletion", async () => {
+    execute.mockResolvedValue({ success: false, status_code: 403 });
+
+    await expect(deletePlaylist("PLowned")).rejects.toThrow("rejected the delete");
   });
 });

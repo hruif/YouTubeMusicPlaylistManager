@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const invokeMock = vi.fn();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
-import { loadCache, EMPTY_CACHE, CACHE_VERSION } from "./cache";
+import { loadCache, saveCache, EMPTY_CACHE, CACHE_VERSION } from "./cache";
 
 describe("loadCache", () => {
   beforeEach(() => invokeMock.mockReset());
@@ -26,6 +26,7 @@ describe("loadCache", () => {
     expect(c.unmatched).toEqual({});
     expect(c.customNames).toEqual({});
     expect(c.removedSongs).toEqual({});
+    expect(c.tempPlaylists).toEqual([]);
     expect(c.version).toBe(CACHE_VERSION);
   });
 
@@ -63,5 +64,25 @@ describe("loadCache", () => {
   it("falls back to an empty cache on corrupt JSON (never throws)", async () => {
     invokeMock.mockResolvedValue("{ not valid json");
     expect(await loadCache()).toEqual({ cache: EMPTY_CACHE, migrated: false });
+  });
+});
+
+describe("saveCache", () => {
+  beforeEach(() => invokeMock.mockReset());
+
+  it("writes the complete cache as JSON through the native bridge", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const cache = {
+      ...EMPTY_CACHE,
+      playlists: [{ id: "A", title: "Playlist" }],
+      shown: ["A"],
+      tempPlaylists: [{ id: "queue", title: "Queue", createdAt: 123 }],
+    };
+
+    await saveCache(cache);
+
+    expect(invokeMock).toHaveBeenCalledWith("write_cache", {
+      contents: JSON.stringify(cache),
+    });
   });
 });

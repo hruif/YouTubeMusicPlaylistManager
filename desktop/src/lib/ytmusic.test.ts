@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { bestYoutubeMatch, combineFromCache, parseYouTubePlaylistId, getPlaylistTracksAfterRepeatRemoval } from "./ytmusic";
+import {
+  bestYoutubeMatch,
+  combineFromCache,
+  fetchTracksForPlaylists,
+  parseYouTubePlaylistId,
+  getPlaylistTracksAfterRepeatRemoval,
+} from "./ytmusic";
 import { invoke } from "./native";
 vi.mock("./native", () => ({ invoke: vi.fn() }));
 // These moved to the Electron main process (they operate on youtubei.js internals).
@@ -43,6 +49,60 @@ describe("playlist refresh after repeat removal", () => {
     expect((await pending).tracks).toHaveLength(2);
     expect(invokeMock).toHaveBeenCalledTimes(4);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("fetchTracksForPlaylists", () => {
+  const invokeMock = vi.mocked(invoke);
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("classifies missing and transient failures while reporting progress", async () => {
+    const playlists = [
+      { id: "owned", title: "Owned" },
+      { id: "gone", title: "Gone" },
+      { id: "offline", title: "Offline" },
+    ];
+    invokeMock.mockImplementation((async (_command, args) => {
+      const id = args?.playlistId;
+      if (id === "gone") throw new Error("Request failed with status code 404");
+      if (id === "offline") throw new Error("Offline");
+      return { tracks: [cand("v1", "Song", "Artist")], editable: true, title: "Owned" };
+    }) as typeof invoke);
+    const progress = vi.fn();
+
+    const result = await fetchTracksForPlaylists(playlists, 2, progress);
+
+    expect(result).toEqual({
+      tracksByPlaylist: { owned: [cand("v1", "Song", "Artist")] },
+      editableIds: ["owned"],
+      notFoundIds: ["gone"],
+      failures: [playlists[2]],
+    });
+    expect(progress).toHaveBeenCalledTimes(3);
+    expect(progress.mock.calls.map((call) => call[0]).sort()).toEqual([1, 2, 3]);
+    expect(progress.mock.calls.filter((call) => call[3] === false)).toHaveLength(2);
+  });
+
+  it("never starts more requests than the configured concurrency", async () => {
+    const playlists = ["A", "B", "C"].map((id) => ({ id, title: id }));
+    let active = 0;
+    let maxActive = 0;
+    invokeMock.mockImplementation((async (_command, args) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return { tracks: [], editable: false, title: String(args?.playlistId) };
+    }) as typeof invoke);
+
+    await expect(fetchTracksForPlaylists(playlists, 2)).resolves.toMatchObject({
+      tracksByPlaylist: { A: [], B: [], C: [] },
+      failures: [],
+    });
+    expect(maxActive).toBe(2);
   });
 });
 
