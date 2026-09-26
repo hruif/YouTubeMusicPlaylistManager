@@ -9,10 +9,14 @@
     <style>
       :root { color-scheme: light dark; }
       html, body, #root { margin: 0; height: 100%; }
+      /* Same as the app's index.html: follow the system, unless Settings forces light or dark. */
       html, body { background: #faf6f6; }
-      @media (prefers-color-scheme: dark) { html, body { background: #1b1718; } }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]), html:not([data-theme="light"]) body { background: #1b1718; }
+      }
+      html[data-theme="dark"], html[data-theme="dark"] body { background: #1b1718; }
     </style>
-    <script type="module" crossorigin src="./assets/index-DbWVTVo7.js"></script>
+    <script type="module" crossorigin src="./assets/index-_7jZJtHQ.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/cacheVersion-CK5DnZJy.js">
   </head>
   <body>
