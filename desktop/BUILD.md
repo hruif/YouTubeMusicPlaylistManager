@@ -1,9 +1,14 @@
 # Building & packaging the desktop (Electron) app
 
 ## Develop
+Use Node 24.22.1 from the repository's `.nvmrc` (`nvm install && nvm use` at the
+repository root). `npm ci` explicitly installs the Electron binary through the
+project postinstall step. Approved native build scripts are pinned in
+`package.json`; review those approvals when updating their packages.
+
 ```bash
 cd desktop
-npm install
+npm ci
 npm run electron:dev      # bundles main/preload (esbuild) + the Swift login-helper, starts Vite,
                           # then launches Electron pointed at the dev server
 ```

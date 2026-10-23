@@ -152,7 +152,7 @@ Spotify playlists use the same shape with a `spotify:PLAYLIST_ID` key and `track
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+ (Pillow 13 security fixes require Python 3.11 or later)
 - ytmusicapi
 - tkinter (built-in with Python)
 - spotapi (optional, for public Spotify playlist support)
@@ -253,3 +253,13 @@ Working on the project (or handing it off to another person or AI agent)? Start 
 
 AI agents and new contributors get a short orientation in
 [`dev-docs/HANDOFF.md`](dev-docs/HANDOFF.md).
+
+### Refreshing legacy build dependencies
+
+`requirements-build.in` declares the dependencies; `requirements-build.txt` pins
+all transitive packages and hashes for Python 3.11 or later. Regenerate with
+uv 0.13.5 or later:
+
+```sh
+uv pip compile requirements-build.in --universal --python-version 3.11 --generate-hashes --upgrade -o requirements-build.txt
+```

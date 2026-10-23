@@ -1,0 +1,5 @@
+pyinstaller
+Pillow>=13.0.0
+ytmusicapi
+spotapi
+certifi>=2026.10.19
